@@ -52,7 +52,7 @@ jobs:
             app/src/main/assets/kernel
             app/src/main/assets/licenses
             app/src/main/jniLibs
-          key: kernel-${{ runner.os }}-${{ hashFiles('rootfs/**', 'node-host/package-lock.json', 'node-host/src/**', 'plugins/**') }}
+          key: kernel-v3-${{ runner.os }}-${{ hashFiles('rootfs/**', 'node-host/package-lock.json') }}
       - name: Prepare embedded runtimes for both ABIs
         if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: python3 rootfs/prepare.py
@@ -64,6 +64,9 @@ jobs:
             app/src/main/assets/licenses
             app/src/main/jniLibs
           key: ${{ steps.kernel-cache.outputs.cache-primary-key }}
+      - name: Refresh compiled host and plugins in cached runtimes
+        if: steps.kernel-cache.outputs.cache-hit == 'true'
+        run: python3 rootfs/prepare.py --refresh-host
       - name: Build APK and unit tests
         run: |
           chmod +x gradlew

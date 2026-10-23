@@ -34,6 +34,7 @@ row('sandbox', 'sandbox-local');
 row('sandbox-policy', 'sandbox-policy', { mode: 'danger-full-access', workspaceRoot: bootstrap.workspace });
 row('tool-fs', 'tool-fs', { read: true, write: true, edit: false, readImage: false });
 row('sessions', 'session-persistence-jsonl', { root: resolve(bootstrap.home, 'sessions'), compression: 'none' });
+row('session-checkpoint-policy');
 row('attachment-local');
 row('session-query', 'session-query-sqlite', { path: ':memory:', openAt: 'never' });
 row('storage'); row('storage-json', 'storage-json', { root: resolve(bootstrap.home, 'storages') });

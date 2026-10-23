@@ -80,12 +80,16 @@ object KernelRuntime {
     private suspend fun action(block: suspend () -> Unit) { try { block();state.update { it.copy(error="") } } catch (_: Exception) { state.update { it.copy(error="内核请求失败；请检查模型配置与会话状态") } } }
     @Synchronized private fun receive(frame: JSONObject) {
         when(frame.optString("type")) {
-            "snapshot" -> { events.clear(); frame.getJSONArray("records").let { records -> for(i in 0 until records.length()) { val e=records.getJSONObject(i).getJSONObject("event"); events[e.getInt("seq")]=e } }; render() }
+            "snapshot" -> {
+                events.clear(); frame.getJSONArray("records").let { records -> for(i in 0 until records.length()) { val e=records.getJSONObject(i).getJSONObject("event"); events[e.getInt("seq")]=e } }
+                val turns=events.values.filter { it.optString("type")=="turn/start" || it.optString("type")=="turn/end" }
+                state.update { it.copy(completedTurns=turns.count { e -> e.optString("type")=="turn/end" },running=turns.lastOrNull()?.optString("type")=="turn/start") };render()
+            }
             "event" -> {
-                val event=frame.getJSONObject("event"); events[event.getInt("seq")]=event
+                val event=frame.getJSONObject("event"); val isNew=events.put(event.getInt("seq"),event)==null
                 if(event.optString("type")=="assistant/message") live=null
                 if(event.optString("type")=="turn/start") state.update { it.copy(running=true) }
-                if(event.optString("type")=="turn/end") state.update { it.copy(running=false,completedTurns=it.completedTurns+1, error=if(event.getJSONObject("data").optJSONObject("reason")?.optString("kind")=="error") "模型请求失败；检查协议、模型与凭据" else it.error) }
+                if(event.optString("type")=="turn/end") state.update { it.copy(running=false,completedTurns=it.completedTurns+if(isNew) 1 else 0, error=if(event.getJSONObject("data").optJSONObject("reason")?.optString("kind")=="error") "模型请求失败；检查协议、模型与凭据" else it.error) }
                 render()
             }
             "assistant-stream" -> {
@@ -106,12 +110,12 @@ object KernelRuntime {
     private fun render() {
         val items=mutableListOf<ChatItem>()
         events.values.forEach { event ->
-            val data=event.getJSONObject("data"); val id=event.getInt("seq").toString()
+            val data=event.optJSONObject("data") ?: return@forEach; val id=event.getInt("seq").toString()
             when(event.getString("type")) {
                 "user/message" -> if(data.optJSONObject("source")?.optString("kind")=="user") items += ChatItem(id,"user",text=content(data.optJSONArray("content"),"text"))
                 "assistant/message" -> data.getJSONObject("message").let { m -> items += ChatItem(id,"assistant",text=content(m.optJSONArray("content"),"text"),thinking=content(m.optJSONArray("content"),"reasoning")) }
                 "tool/call" -> items += ChatItem(data.getString("callId"),"tool",tool=data.getString("name"),arguments=data.getString("arguments"))
-                "tool/result" -> { val m=data.getJSONObject("message");val i=items.indexOfLast { it.id==m.optString("callId") }; if(i>=0) items[i]=items[i].copy(result=content(m.optJSONArray("content"),"text")) }
+                "tool/result" -> { val m=data.getJSONObject("message");val i=items.indexOfLast { it.id==m.optString("toolCallId") }; if(i>=0) items[i]=items[i].copy(result=content(m.optJSONArray("content"),"text")) }
             }
         }
         live?.let { items+=it }

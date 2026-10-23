@@ -37,4 +37,6 @@ Compose 读取 ViewModel 暴露的 StateFlow；HTML 不加载进运行时。替�
 
 `android-policy` 的工具白名单与目录约束是 M0 部署决定，新增工具必须有明确的审批及路径/网络策略。`KernelService` 是非导出前台服务，Activity 销毁不停止它。Kernel 崩溃后界面显示状态与最多 50 行分类日志；不承诺自动恢复未结算的模型请求。
 
-编译 `cd node-host && npm run build`，验证 `npm test`，再重打 rootfs 和 APK。不要修改 node_modules 或 dsh 源码来让插件兼容。
+编译 `cd node-host && npm run build`，验证 `npm test`。已准备过两种 ABI 的运行环境时，运行 `python rootfs/prepare.py --refresh-host` 更新归档内的自研 host/plugins；依赖或系统层变更仍需完整运行 prepare。归档指纹改变后，启动器会替换运行环境，workspace 和会话目录独立保留。不要修改 node_modules 或 dsh 源码来让插件兼容。
+
+Linux guest 的 `rootfs/android-compat.c` 只解决 Android seccomp 与 musl 旧式文件调用的兼容，随 rootfs 编译并通过 guest 的 LD_PRELOAD 加载，不链接到 Android 主程序。更换 KernelLauncher 时可以按所选运行环境替换该平台适配。会话的磁盘检查点由原版 `dsh-session-checkpoint-policy` 执行，不在 Kotlin 中另造日志。

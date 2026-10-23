@@ -32,6 +32,7 @@ dependencies {
 }
 val verifyKernelAssets by tasks.registering {
     doLast {
+        check(file("src/main/assets/kernel/manifest.json").isFile) { "Missing runtime manifest: run python rootfs/prepare.py" }
         for (abi in listOf("arm64-v8a", "x86_64")) {
             check(file("src/main/assets/kernel/$abi.tgz").isFile) { "Run python rootfs/prepare.py first: missing $abi rootfs" }
             check(file("src/main/jniLibs/$abi/libproot.so").isFile) { "Missing standalone proot for $abi" }

@@ -65,8 +65,10 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   assert.ok(mock.requests.some(r=>r.path==='/v1/messages'));assert.ok(mock.requests.some(r=>r.path==='/v1/chat/completions'));
   assert.ok(approvals.some(a=>a.kind==='network'));assert.ok(approvals.some(a=>a.tool==='write'));
   assert.ok(!logs.includes(canary));assert.ok(!logs.includes(info.token));
-  async function scan(dir){for(const e of await readdir(dir,{withFileTypes:true})){const p=join(dir,e.name);if(e.isDirectory())await scan(p);else assert.ok(!(await readFile(p)).includes(Buffer.from(canary)),p);}}
+  let durableLog='';
+  async function scan(dir){for(const e of await readdir(dir,{withFileTypes:true})){const p=join(dir,e.name);if(e.isDirectory())await scan(p);else {const bytes=await readFile(p);assert.ok(!bytes.includes(Buffer.from(canary)),p);if(e.name.endsWith('.jsonl'))durableLog+=bytes.toString('utf8');}}}
   await scan(root);
+  assert.ok(durableLog.includes('user/message') && durableLog.includes('tool/result'),'Original JSONL checkpoints must contain actual conversation and tool events');
   console.log(`dsh turns=${turns}, device callbacks=${deviceCalls}, authenticated original Session/Mux protocol verified`);
 });
 

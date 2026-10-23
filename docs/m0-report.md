@@ -1,6 +1,6 @@
 # M0 可行性验证报告
 
-状态：执行中，Android 验收尚未完成。桌面原版 dsh 集成测试已通过；APK 内独立 proot 和原版 dsh（含两个模型 route）已在 AOSP x86_64 模拟器启动，原生 UI 已连接。首条消息的会话跟随仍在排障，不能宣称全部验收通过。
+状态：执行中，Android 完整验收尚未完成。桌面原版 dsh 集成测试及真实 JSONL 检查点已通过；APK 内原版 dsh 已启动、原生 UI 已连接。应用进程内文件与网络探针已证明 guest 兼容库解决 rename 的 ENOSYS；完整对话和后台测试正在执行，尚不宣称全部通过。
 
 ## 上游与锁定版本
 
@@ -29,6 +29,7 @@
 | WS 流 | `/api/remote.mux`；`{type:'open',streamId,endpoint,payload:{args:{request}}}`，`item` 帧 | `packages/api/gateway/src/stream-protocol.ts`, `index.ts` |
 | 模型适配 | `ctx.llm.registerAdapter`；复用 `@deepseek-ai/dsh-llm-pi-ai` | `packages/llm/llm-pi-ai/src/index.ts`, `config.ts`, `adapter.ts`, `provider.ts` |
 | 工具 | `ctx.tools.register(defineTool(...))`；写文件使用原版 `write` | `packages/core/tools/src/schema.ts`, `packages/fs/tool-fs/src/write.ts` |
+| 持久化检查点 | 原版 `dsh-session-checkpoint-policy`，模型/工具副作用之前调用 `ctx.sessions.flush` | `packages/session/session-checkpoint-policy/src/index.ts` |
 | 原理 | loop 与事件、会话日志、模型/工具 seam | `docs/architecture.md` |
 
 Anthropic 使用 pi-ai 的 `anthropic-messages` 原生适配及 Anthropic SDK，支持 thinking、SSE、tool_use / tool_result；OpenAI 兼容使用 `openai-completions`，支持 SSE 和 tool_calls。不是将 Claude 转成 OpenAI 协议。自定义 baseURL 由用户填写。
@@ -80,7 +81,7 @@ Android 仪器测试 `M0AcceptanceTest` 已编写，包含 8 项标准、实际�
 - SDK 37 的包名实际为 `platforms;android-37.0`，最初用旧名称 `android-37` 查询才显示不存在；已改为 compile 37.0 / target 37，AGP 9.1.1、Gradle 9.4.1、Kotlin 2.2.20，本地编译通过。
 - AAPT 会解开后缀 `.gz` 的资产并去掉后缀：最初 APK 只含 `assets/kernel/x86_64.tar`，导致 `open(...tar.gz)` 抛 FileNotFoundException。改为 `.tgz` 并设置 noCompress，保留 gzip 供启动器读取；模拟器已实际解包成功。
 - 本机多个构建守护进程、Docker 与模拟器并行曾导致内存不足。限制构建 workers 为 2、Kotlin heap 为 768 MiB，关闭本任务启动的空闲守护进程和 Docker；未改用户的全局构建配置。
-- Android 应用内探针发现：musl 的 write/fsync 正常，rename 返回 ENOSYS；run-as 不受同一 zygote seccomp 策略约束，不能替代原生验收。这会影响原版 dsh 的 storage-json 原子保存。正在验证独立 MIT guest 兼容库，将 legacy 文件操作映射到相应 *at 调用，保留原子性与错误处理。参见 [AOSP bionic syscall 清单](https://github.com/aosp-mirror/platform_bionic/blob/main/libc/SYSCALLS.TXT) 和 [seccomp 构建输入](https://android.googlesource.com/platform/bionic/+/main/libc/Android.bp)。
+- Android 应用内探针发现：musl 的 write/fsync 正常，rename 返回 ENOSYS；run-as 不受同一 zygote seccomp 策略约束，不能替代原生验收。这影响原版 dsh 的 storage-json 原子保存。独立 MIT guest 兼容库将 legacy 文件操作映射到相应 *at 调用，保留原子性与错误处理；应用内探针已通过（4.073 秒），完整验收仍需继续。参见 [Android 16 bionic syscall 清单](https://github.com/aosp-mirror/platform_bionic/blob/android-16.0.0_r1/libc/SYSCALLS.TXT) 和 [seccomp 构建输入](https://android.googlesource.com/platform/bionic/+/main/libc/Android.bp)。
 
 ## 对 M1 的建议
 

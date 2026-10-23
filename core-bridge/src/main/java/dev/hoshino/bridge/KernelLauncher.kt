@@ -19,8 +19,9 @@ class ProotKernelLauncher : KernelLauncher {
     override suspend fun launch(context: Context, bootstrap: JSONObject, onExit: (Int) -> Unit, onDiagnostic: (String) -> Unit): Process = withContext(Dispatchers.IO) {
         val abi = android.os.Build.SUPPORTED_ABIS.first { it == "arm64-v8a" || it == "x86_64" }
         val root = File(context.filesDir, "alpine-$abi")
-        val marker = File(root, ".hoshino-m0-v1")
-        if (!marker.exists()) {
+        val fingerprint = context.assets.open("kernel/manifest.json").bufferedReader().use { JSONObject(it.readText()).getString(abi) }
+        val marker = File(root, ".hoshino-runtime")
+        if (!marker.isFile || marker.readText() != fingerprint) {
             onDiagnostic("host: extracting rootfs")
             val staging = File(context.filesDir, "alpine-$abi.installing")
             fun removeIncomplete(directory: File) {
@@ -51,7 +52,7 @@ class ProotKernelLauncher : KernelLauncher {
                     links.forEach { (dest, target) -> dest.parentFile?.mkdirs(); android.system.Os.symlink(target, dest.path) }
                 }
             }
-            File(staging, marker.name).writeText("0.2.1-rc.2")
+            File(staging, marker.name).writeText(fingerprint)
             removeIncomplete(root)
             java.nio.file.Files.move(staging.toPath(), root.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
             onDiagnostic("host: rootfs extracted")
@@ -87,7 +88,8 @@ class ProotKernelLauncher : KernelLauncher {
 }
 
 fun classifyDiagnostic(line: String): String {
-    Regex("^([a-z][a-z0-9-]{0,63}) \\(").find(line)?.groupValues?.get(1)?.let { id ->
+    val knownPlugins = setOf("workspace", "session-controller", "android-api", "android-policy", "android-credentials", "android-device-info", "sessions", "session-checkpoint-policy", "storage-domain", "storage-json", "webserver", "connection", "typert-gateway", "agent-loop", "llm")
+    Regex("^([a-z][a-z0-9-]{0,63}) \\(").find(line)?.groupValues?.get(1)?.takeIf { it in knownPlugins }?.let { id ->
         val code = Regex("Android callback failed \\(([0-9]{3})\\)").find(line)?.groupValues?.get(1)
         return "dsh plugin $id: " + if(code != null) "callback HTTP $code" else "activation failed"
     }
