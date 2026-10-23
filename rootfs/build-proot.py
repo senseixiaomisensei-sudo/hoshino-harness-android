@@ -35,7 +35,7 @@ def build(abi, diagnostics=False):
         'sys.exit(subprocess.call([compiler]+args))\n')
     compiler.chmod(0o755)
     env=os.environ.copy();env.update(CC=str(compiler),GIT='true',STRIP=str(toolchain/'llvm-strip'),
-        CPPFLAGS=f'-I{include} -DARG_MAX=131072 -DVERSION=\\"{lock["revision"]}\\"',
+        CPPFLAGS=f'-I{include} -include string.h -DARG_MAX=131072 -DVERSION=\\"{lock["revision"]}\\"',
         CFLAGS='-g -O2 -fno-omit-frame-pointer',LDFLAGS=f'-L{lib} -ldl',
         PROOT_UNBUNDLE_LOADER='/unused',PROOT_WITH_LIBANDROID_SHMEM='true')
     if diagnostics:
