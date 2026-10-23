@@ -1,0 +1,36 @@
+{
+  "arm64-v8a": {
+    "libandroid-shmem": {
+      "Version": "0.7",
+      "Filename": "pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb",
+      "SHA256": "0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6"
+    },
+    "libtalloc": {
+      "Version": "2.5.0",
+      "Filename": "pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb",
+      "SHA256": "556591f43bb773ad8777e1a29522640866a55f95dab71914418b94a8c58ad5a7"
+    },
+    "proot": {
+      "Version": "5.1.107.99",
+      "Filename": "pool/main/p/proot/proot_5.1.107.99_aarch64.deb",
+      "SHA256": "0c31d50e9c0fc201347ef541b482c1cae055944dfcac5f881a0d2932a32bb90d"
+    }
+  },
+  "x86_64": {
+    "libandroid-shmem": {
+      "Version": "0.7",
+      "Filename": "pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_x86_64.deb",
+      "SHA256": "ffa9e4c87467b158b148d0ff92dda796aa038276c2075af3269cdcdb06f25797"
+    },
+    "libtalloc": {
+      "Version": "2.5.0",
+      "Filename": "pool/main/libt/libtalloc/libtalloc_2.5.0_x86_64.deb",
+      "SHA256": "b8c6d95f20075dc1f9ec6573575b2444e8d526e48e0d8d6d5cf4e071e6e06530"
+    },
+    "proot": {
+      "Version": "5.1.107.99",
+      "Filename": "pool/main/p/proot/proot_5.1.107.99_x86_64.deb",
+      "SHA256": "24c8b400b7b5ece5643c17d82f0106f23d8ac1860464e5bfb0cd5a5d734cd2b6"
+    }
+  }
+}

@@ -1,0 +1,78 @@
+name: M0 Android acceptance
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  m0:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
+      - uses: android-actions/setup-android@v3
+      - uses: docker/setup-qemu-action@v3
+      - name: Install and test original dsh
+        working-directory: node-host
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm test
+      - name: Optional real model tests (skip when secrets absent)
+        working-directory: node-host
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+        run: node --test test/real-provider.test.mjs
+      - name: Prepare embedded runtimes for both ABIs
+        run: python3 rootfs/prepare.py
+      - name: Build APK and unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug test --console=plain
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android instrumentation (all eight standards)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 4096 -partition-size 2047
+          script: |
+            node tools/mock-llm/server.mjs > /tmp/mock.log 2>&1 &
+            adb reverse tcp:8099 tcp:8099
+            ./gradlew connectedDebugAndroidTest --console=plain
+            adb shell cat /sdcard/Android/data/dev.hoshino.app/files/m0-metrics.json > docs/m0-metrics.json
+            adb shell dumpsys meminfo dev.hoshino.app > docs/m0-memory.txt
+      - name: Upload APK and verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hoshino-m0
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/reports/androidTests
+            app/build/outputs/androidTest-results
+            core-bridge/build/reports/tests
+            docs/m0-metrics.json
+            docs/m0-memory.txt
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: m0
+    runs-on: ubuntu-24.04
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: hoshino-m0, path: artifact }
+      - env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        run: gh release create "${GITHUB_REF_NAME}" artifact/app/build/outputs/apk/debug/*.apk --generate-notes

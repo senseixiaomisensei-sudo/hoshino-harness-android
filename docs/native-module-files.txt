@@ -1,0 +1,14 @@
+node-host/node_modules\@img\sharp-win32-x64\lib\sharp-win32-x64-0.35.5.node
+node-host/node_modules\sherpa-onnx-win-x64\sherpa-onnx.node
+node-host/node_modules\sharp\src\binding.gyp
+node-host/node_modules\node-pty\prebuilds\win32-x64\conpty_console_list.node
+node-host/node_modules\node-pty\prebuilds\win32-x64\conpty.node
+node-host/node_modules\node-pty\prebuilds\win32-arm64\conpty_console_list.node
+node-host/node_modules\node-pty\prebuilds\win32-arm64\conpty.node
+node-host/node_modules\node-pty\prebuilds\linux-x64\pty.node
+node-host/node_modules\node-pty\prebuilds\linux-arm64\pty.node
+node-host/node_modules\node-pty\prebuilds\darwin-x64\pty.node
+node-host/node_modules\node-pty\prebuilds\darwin-arm64\pty.node
+node-host/node_modules\node-pty\binding.gyp
+node-host/node_modules\node-addon-require-builtin-win32-x64-msvc\prebuilt\win32-x64-msvc-napi-v9.node
+node-host/node_modules\@koromix\koffi-win32-x64\win32_x64\koffi.node

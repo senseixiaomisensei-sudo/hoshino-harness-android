@@ -1,0 +1,60 @@
+import { boot, loadLayeredEnv } from '@deepseek-ai/dsh-app-boot';
+import { DSH_LAUNCH_ENVIRONMENT_KEY } from '@deepseek-ai/dsh-launch-environment';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createInterface } from 'node:readline';
+import { AndroidBridge, type Bootstrap } from './platform.js';
+// Bootstrap travels over a private stdin pipe, never argv, environment, or a file.
+const lines = createInterface({ input: process.stdin });
+const line = await new Promise<string>((accept, reject) => {
+  lines.once('line', accept); lines.once('close', () => reject(new Error('Missing bootstrap')));
+});
+lines.close();
+const bootstrap = JSON.parse(line) as Bootstrap;
+if (!Number.isInteger(bootstrap.callbackPort) || bootstrap.callbackPort < 1 || !bootstrap.callbackToken) throw new Error('Invalid bootstrap');
+const bridge = new AndroidBridge(bootstrap);
+await mkdir(bootstrap.workspace, { recursive: true });
+await mkdir(bootstrap.home, { recursive: true });
+process.chdir(bootstrap.workspace);
+process.env.DSH_HOME = bootstrap.home;
+process.env.DSH_TELEMETRY_DISABLED = '1';
+const plugins = resolve(dirname(fileURLToPath(import.meta.url)), '../../plugins');
+type Row = { id: string; name: string; config?: object; inject?: string[] };
+const rows: Row[] = [];
+const row = (id: string, pkg = id, config?: object, inject?: string[]) => rows.push({ id, name: `@deepseek-ai/dsh-${pkg}`, ...(config && {config}), ...(inject && {inject}) });
+row('timer', '../cordis-plugin-timer'); rows[0]!.name = '@deepseek-ai/cordis-plugin-timer';
+for (const id of ['llm', 'session', 'session-projection', 'agent', 'tools', 'working-directory', 'commands', 'llm-retry', 'jobs-local']) row(id);
+row('agent-default-model', 'agent-default-model', { provider: 'unconfigured', model: 'unconfigured' });
+row('session-title', 'session-title', { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
+row('agent-loop', 'agent-loop', { agents: [] });
+row('system-prompt', 'system-prompt', { personaPrefix: 'You are Hoshino, an Android assistant. Use get_device_info when asked about this device. Use write for file creation.', includeRuntimeContext: false });
+row('filesystem', 'fs-local', { cwd: bootstrap.workspace });
+row('sandbox', 'sandbox-local');
+row('sandbox-policy', 'sandbox-policy', { mode: 'danger-full-access', workspaceRoot: bootstrap.workspace });
+row('tool-fs', 'tool-fs', { read: true, write: true, edit: false, readImage: false });
+row('sessions', 'session-persistence-jsonl', { root: resolve(bootstrap.home, 'sessions'), compression: 'none' });
+row('attachment-local');
+row('session-query', 'session-query-sqlite', { path: ':memory:', openAt: 'never' });
+row('storage'); row('storage-json', 'storage-json', { root: resolve(bootstrap.home, 'storages') });
+row('storage-domain', 'storage-domain', { backend: 'json' }); row('workspace');
+row('typert', 'typert-registry'); row('remote-access', 'api-remote-access');
+row('webserver', 'host-webserver', { host: '127.0.0.1', port: 0 });
+row('connection', 'client-connection', {}, ['webServer']);
+row('typert-gateway', 'api-gateway');
+row('file-upload', 'client-file-upload');
+row('session-controller', 'api-session-controller', { nativeOpen: false });
+for (const id of ['android-credentials', 'android-policy', 'android-device-info', 'android-api']) rows.push({ id, name: resolve(plugins, id, 'index.js') });
+const configPath = resolve(bootstrap.home, 'mobile.cordis.yml');
+await writeFile(configPath, JSON.stringify(rows));
+const ctx = await boot('hoshino', configPath, [], (ctx) => {
+  ctx.provide('androidBridge', bridge);
+  ctx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, loadLayeredEnv('hoshino'));
+}, new URL('../../../package.json', import.meta.url).href);
+for (const key of ['agents', 'sessionController', 'connection', 'webServer', 'mobileApi']) {
+  if (!ctx.get(key)) throw new Error(`Kernel required service did not start: ${key}`);
+}
+await bridge.call('ready', ctx.get('mobileApi'));
+const shutdown = async () => { await ctx.fiber.dispose(); process.exit(0); };
+process.once('SIGTERM', () => void shutdown());
+process.once('SIGINT', () => void shutdown());

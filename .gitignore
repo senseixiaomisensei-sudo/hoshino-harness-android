@@ -1,0 +1,15 @@
+.research/
+.gradle/
+**/build/
+**/node_modules/
+local.properties
+.env*
+*.keystore
+*.jks
+node-host/.runtime/
+node-host/dist/
+rootfs/staging/
+app/src/main/assets/kernel/
+app/src/main/jniLibs/
+app/src/main/assets/licenses/
+!app/src/main/jniLibs/.gitkeep

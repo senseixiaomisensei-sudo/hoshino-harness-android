@@ -1,0 +1,6 @@
+**
+!node-host
+!node-host/package.json
+!node-host/package-lock.json
+!node-host/dist
+!node-host/dist/**
