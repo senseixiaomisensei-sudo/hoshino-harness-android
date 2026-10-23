@@ -32,7 +32,7 @@ def build(abi, diagnostics=False):
     compiler.write_text('#!/usr/bin/env python3\nimport subprocess,sys\nargs=sys.argv[1:]\n'+
         f'compiler={str(toolchain/(family+"-linux-android29-clang"))!r}\n'+
         f'if "-m32" in args: args.remove("-m32");compiler={str(toolchain/("armv7a-linux-androideabi29-clang" if family=="aarch64" else "i686-linux-android29-clang"))!r}\n'+
-        'if any(a.endswith(".c") for a in args): args=["-include","string.h"]+args\n'+
+        'if any(a.endswith("ashmem_memfd.c") for a in args): args=["-include","string.h"]+args\n'+
         'sys.exit(subprocess.call([compiler]+args))\n')
     compiler.chmod(0o755)
     env=os.environ.copy();env.update(CC=str(compiler),GIT='true',STRIP=str(toolchain/'llvm-strip'),
