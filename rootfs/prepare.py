@@ -71,7 +71,7 @@ def rootfs(abi):
     tag = 'hoshino-m0-'+platform
     subprocess.run(['docker','build','--platform','linux/'+platform,'--build-arg','NODE_ARCH='+node_arch,'-f','rootfs/Dockerfile','-t',tag,'.'],cwd=ROOT,check=True)
     cid = subprocess.check_output(['docker','create','--platform','linux/'+platform,tag]).decode().strip()
-    target = ROOT/'app/src/main/assets/kernel'/f'{abi}.tar.gz';target.parent.mkdir(parents=True,exist_ok=True)
+    target = ROOT/'app/src/main/assets/kernel'/f'{abi}.tgz';target.parent.mkdir(parents=True,exist_ok=True)
     exported = CACHE/f'{abi}-export.tar'
     try:
         subprocess.run(['docker','export','-o',str(exported),cid],check=True)

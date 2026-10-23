@@ -23,7 +23,7 @@ class ProotKernelLauncher : KernelLauncher {
         if (!marker.exists()) {
             onDiagnostic("host: extracting rootfs")
             root.mkdirs()
-            context.assets.open("kernel/$abi.tar.gz").use { input ->
+            context.assets.open("kernel/$abi.tgz").use { input ->
                 TarArchiveInputStream(GzipCompressorInputStream(input)).use { tar ->
                     val links = mutableListOf<Pair<File, String>>()
                     while (true) {

@@ -9,7 +9,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
-    androidResources { noCompress += "gz" }
+    androidResources { noCompress += "tgz" }
     packaging { jniLibs { useLegacyPackaging = true }; resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
@@ -33,7 +33,7 @@ dependencies {
 val verifyKernelAssets by tasks.registering {
     doLast {
         for (abi in listOf("arm64-v8a", "x86_64")) {
-            check(file("src/main/assets/kernel/$abi.tar.gz").isFile) { "Run python rootfs/prepare.py first: missing $abi rootfs" }
+            check(file("src/main/assets/kernel/$abi.tgz").isFile) { "Run python rootfs/prepare.py first: missing $abi rootfs" }
             check(file("src/main/jniLibs/$abi/libproot.so").isFile) { "Missing standalone proot for $abi" }
         }
     }
