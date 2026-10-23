@@ -5,7 +5,7 @@
 
 ## 构建
 
-需要 JDK 17、Android SDK `platforms;android-37.0`、Node 24、Python 3、Docker（跨架构需 QEMU）、curl。
+需要 JDK 17、Android SDK `platforms;android-37.0`、Android NDK `27.3.13750724`、Node 24、Python 3、Docker（跨架构需 QEMU）、curl、make。proot 的可复现交叉编译在 Linux 上执行，Windows 可使用 CI 生成的运行资产再本地构建 APK。
 
 ```sh
 cd node-host
@@ -17,7 +17,7 @@ python3 rootfs/prepare.py
 ./gradlew assembleDebug test
 ```
 
-`prepare.py` 校验已锁定的 Termux deb SHA256，构建 arm64-v8a / x86_64 Alpine，生成 APK 资产及独立 native executables。**不要只编译 UI 空壳就视为可运行 APK。** 若下载端移除了锁定包，构建应失败，不能自动取未锁定替代版本。`--lock` 仅用于有意更新并审查 `termux-lock.json`。
+`prepare.py` 校验已锁定的 Termux 依赖与 proot 源码 SHA256，从固定提交编译独立 proot，构建 arm64-v8a / x86_64 Alpine，生成 APK 资产及独立 native executables。**不要只编译 UI 空壳就视为可运行 APK。** 若下载端移除了锁定包，构建应失败，不能自动取未锁定替代版本。`--lock` 仅用于有意更新并审查 `termux-lock.json`。
 
 Windows 中文目录运行 Gradle 测试时须使用 ASCII 路径别名，例如空闲盘符 `subst H: E:\手机端Agent` 后从 `H:\` 执行 `gradlew.bat`。这不复制或移动源码。
 

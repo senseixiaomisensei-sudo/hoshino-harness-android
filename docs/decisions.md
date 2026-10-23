@@ -25,3 +25,6 @@
 19. **运行环境按归档指纹更新**：打包时生成每个 ABI 的 SHA256 manifest；启动器比较私有安装标记，变更时原子替换运行环境，保留 workspace 与 dsh-home。避免 APK 更新后仍运行旧插件。
 20. **加载原版持久化检查点策略**：从 `dsh-session-checkpoint-policy` 源码确认 loop 本身不在每个边界刷新日志。加载该原版 Cordis 插件，在模型和工具副作用之前落盘；集成测试必须在真实 JSONL 中看到用户消息和工具结果。
 21. **分离缓存依赖与自研代码**：CI 缓存锁定版本的运行时，缓存命中时只替换归档里的编译后 host/plugins 并刷新指纹；不缓存过期自研代码，不因 Kotlin/UI 或插件迭代重复在 QEMU 内安装整棵 npm 树。
+22. **从固定上游源码编译独立 proot**：Termux 5.1.107.99 预编译包在真正的 Android 应用域里创建模拟硬链接成功、删除时 tracer SIGSEGV；移除 link2symlink 则原版 dsh JSONL 的原子发布返回 EACCES，移除 fake-root 也未解决。固定 Termux/proot 提交 `ee6543334a67261d19e7023ae5eb30af5a7ad4f3` 与归档 SHA256，使用 NDK 27.3.13750724 为两个 ABI 编译。最小应用域测试已通过；不将 run-as 的成功当作应用成功。仅对缺失 string.h 的 ashmem 编译单元补充头文件声明，不修改 dsh、Node 或持久化语义。未将差异归因到未经证实的某个上游提交。
+23. **工具卡片使用事件序号作稳定键**：模型的 tool call ID 可以在后续轮次重复。Compose 项目键取 dsh 的 session event seq，工具结果仍按原版 toolCallId 与最近工具调用配对，避免重复键崩溃；不改模型返回数据。
+24. **先停止测试内核再清理 fixture**：桌面集成测试的 SIGTERM 会触发原版服务清理与落盘。等待子进程 exit 后才删除临时目录，避免 CI 中 ENOTEMPTY 的清理竞态，不忽略测试失败。

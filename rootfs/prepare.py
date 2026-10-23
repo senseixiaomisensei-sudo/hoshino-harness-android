@@ -2,7 +2,7 @@
 Run --lock once to pin the signed-repository package file hashes; subsequent runs verify them.
 No runtime downloads, npm execution, or package installation happens on the phone.
 """
-import argparse, gzip, hashlib, io, json, pathlib, subprocess, tarfile
+import argparse, gzip, hashlib, io, json, pathlib, subprocess, sys, tarfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / '.research' / 'runtime'
@@ -99,15 +99,16 @@ def refresh_host(abi):
     temporary.replace(target)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--lock',action='store_true');parser.add_argument('--abi',choices=ABIS,action='append');parser.add_argument('--proot-only',action='store_true');parser.add_argument('--refresh-host',action='store_true');args=parser.parse_args()
-    if args.refresh_host and (args.lock or args.proot_only): parser.error('--refresh-host cannot update proot locks')
+    parser=argparse.ArgumentParser();parser.add_argument('--lock',action='store_true');parser.add_argument('--abi',choices=ABIS,action='append');parser.add_argument('--proot-only',action='store_true');parser.add_argument('--rootfs-only',action='store_true');parser.add_argument('--refresh-host',action='store_true');args=parser.parse_args()
+    if args.refresh_host and (args.lock or args.proot_only or args.rootfs_only): parser.error('--refresh-host cannot update runtime dependencies')
+    if args.rootfs_only and (args.lock or args.proot_only): parser.error('--rootfs-only cannot update proot')
     CACHE.mkdir(parents=True,exist_ok=True)
     lock_file=ROOT/'rootfs/termux-lock.json';locks=json.loads(lock_file.read_text()) if lock_file.exists() else {}
     for abi in args.abi or ABIS:
         if args.refresh_host: refresh_host(abi)
         else:
-            termux(abi,locks,args.lock)
-            if args.lock: lock_file.write_text(json.dumps(locks,indent=2)+'\n')
+            if args.lock: termux(abi,locks,True)
+            if not args.rootfs_only: subprocess.run([sys.executable,str(ROOT/'rootfs/build-proot.py'),'--abi',abi],check=True)
             if not args.proot_only: rootfs(abi)
     if not args.proot_only:
         assets=ROOT/'app/src/main/assets/kernel'

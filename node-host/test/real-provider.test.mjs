@@ -34,7 +34,7 @@ for (const [id, type, key, base, configuredModel] of [
   });callback.listen(0,'127.0.0.1');await once(callback,'listening');
   const child=spawn(process.execPath,['dist/node-host/src/main.js'],{stdio:['pipe','ignore','ignore']});
   child.stdin.end(JSON.stringify({callbackPort:callback.address().port,callbackToken:'real-test-callback',workspace,home:join(root,'home')})+'\n');
-  t.after(async()=>{child.kill();callback.closeAllConnections();callback.close();await rm(root,{recursive:true,force:true});});
+  t.after(async()=>{if(child.exitCode===null && child.signalCode===null){const stopped=once(child,'exit');child.kill();await stopped;}callback.closeAllConnections();await new Promise(r=>callback.close(r));await rm(root,{recursive:true,force:true});});
   const info=await Promise.race([readyPromise,once(child,'exit').then(()=>{throw new Error('Real test kernel failed to boot');})]);
   const host=`http://127.0.0.1:${info.port}`;const exchange=await fetch(`${host}/mobile/connect?token=${info.token}`,{redirect:'manual'});const cookie=exchange.headers.get('set-cookie').split(';')[0];
   const rpc=async(method,request)=>{const r=await fetch(`${host}/api/${method}`,{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:crypto.randomUUID(),method,payload:{args:{request}}})});const value=(await r.json()).result;assert.ok(value.ok,'Real provider RPC failed');return value.value;};

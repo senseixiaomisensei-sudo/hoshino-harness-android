@@ -26,12 +26,21 @@ class ProotKernelLauncher : KernelLauncher {
             val staging = File(context.filesDir, "alpine-$abi.installing")
             fun removeIncomplete(directory: File) {
                 require(directory.parentFile!!.canonicalFile == context.filesDir.canonicalFile)
-                if (java.nio.file.Files.exists(directory.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                    java.nio.file.Files.walk(directory.toPath()).use { paths ->
-                        paths.sorted(Comparator.reverseOrder()).forEach { java.nio.file.Files.delete(it) }
+                fun remove(entry: File) {
+                    val mode=try { android.system.Os.lstat(entry.path).st_mode }
+                    catch (failure: android.system.ErrnoException) { if(failure.errno==android.system.OsConstants.ENOENT) return else throw failure }
+                    if(android.system.OsConstants.S_ISDIR(mode)) {
+                        // proot creates mode-000 placeholders for its virtual /dev, /proc and /sys binds.
+                        android.system.Os.chmod(entry.path, (mode and 511) or 0x1c0)
+                        val children=entry.listFiles() ?: error("Cannot enumerate incomplete runtime")
+                        children.forEach { remove(it) }
                     }
+                    check(entry.delete()) { "Cannot remove incomplete runtime" }
                 }
+                remove(directory)
             }
+            val stagedMarker=File(staging, marker.name)
+            if(!stagedMarker.isFile || stagedMarker.readText()!=fingerprint) {
             removeIncomplete(staging)
             staging.mkdirs()
             context.assets.open("kernel/$abi.tgz").use { input ->
@@ -53,6 +62,7 @@ class ProotKernelLauncher : KernelLauncher {
                 }
             }
             File(staging, marker.name).writeText(fingerprint)
+            }
             removeIncomplete(root)
             java.nio.file.Files.move(staging.toPath(), root.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
             onDiagnostic("host: rootfs extracted")
@@ -64,7 +74,7 @@ class ProotKernelLauncher : KernelLauncher {
         val network = context.getSystemService(android.net.ConnectivityManager::class.java)
         val dns = network.getLinkProperties(network.activeNetwork)?.dnsServers.orEmpty()
         val resolv = File(context.filesDir, "resolv.conf").apply { writeText(dns.joinToString("\n") { "nameserver ${it.hostAddress}" } + "\n") }
-        val args = listOf("$lib/libproot.so", "--link2symlink", "-0", "-r", root.path,
+        val args = listOf("$lib/libproot.so", "--link2symlink", "-r", root.path,
             "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "${workspace.path}:/workspace", "-b", "${home.path}:/home/hoshino",
             "-b", "${resolv.path}:/etc/resolv.conf",
             "-w", "/workspace", "/usr/bin/env", "HOME=/home/hoshino", "PATH=/usr/bin:/bin", "DSH_TELEMETRY_DISABLED=1",

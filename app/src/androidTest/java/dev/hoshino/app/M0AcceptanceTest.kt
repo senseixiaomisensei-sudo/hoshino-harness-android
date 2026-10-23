@@ -39,16 +39,19 @@ class M0AcceptanceTest {
                 }
                 val current=KernelRuntime.state.value
                 assertTrue("Turn did not complete: ${current.status}; ${current.error}; roles=${current.messages.map { it.role }}; diagnostics=${current.diagnostics.joinToString()}",current.completedTurns>before)
-                assertEquals("",KernelRuntime.state.value.error)
+                assertEquals(current.diagnostics.joinToString(),"",current.error)
             }
             for(provider in listOf("claude","compatible")) {
                 if(provider!="claude") {
                     ui.onNodeWithTag("model-picker").performClick();ui.onNodeWithText("$provider / mock-model").performClick()
                     ui.waitUntil(10000) { KernelRuntime.state.value.provider==provider }
                 }
+                val textBefore=KernelRuntime.textDeltas;val thinkingBefore=KernelRuntime.reasoningDeltas
                 prompt("你好")
-                assertTrue(KernelRuntime.state.value.messages.any { it.role=="assistant" && it.text.contains("你好") })
-                assertTrue(KernelRuntime.state.value.messages.any { it.thinking.isNotEmpty() })
+                val answer=KernelRuntime.state.value.messages.last { it.role=="assistant" }
+                assertTrue(answer.text.contains("你好"));assertTrue(answer.thinking.isNotEmpty())
+                assertTrue("$provider must stream text deltas",KernelRuntime.textDeltas>textBefore)
+                assertTrue("$provider must stream thinking deltas",KernelRuntime.reasoningDeltas>thinkingBefore)
                 ui.onAllNodesWithTag("thinking").onLast().performClick()
                 ui.onAllNodesWithTag("thinking-content").onLast().assertExists()
                 prompt("读取设备 device 信息")

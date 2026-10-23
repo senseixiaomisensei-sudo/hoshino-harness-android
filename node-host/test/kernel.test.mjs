@@ -32,7 +32,7 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   const child=spawn(process.execPath,['dist/node-host/src/main.js'],{cwd:resolve('.'),stdio:['pipe','pipe','pipe']});
   child.stdout.on('data',b=>logs+=b); child.stderr.on('data',b=>logs+=b);
   child.stdin.end(JSON.stringify({callbackPort,callbackToken:'test-callback-secret',workspace,home:join(root,'home')})+'\n');
-  t.after(async()=>{child.kill(); mock.server.closeAllConnections();callback.closeAllConnections();await Promise.all([new Promise(r=>mock.server.close(r)),new Promise(r=>callback.close(r))]);await rm(root,{recursive:true,force:true});});
+  t.after(async()=>{if(child.exitCode===null && child.signalCode===null){const stopped=once(child,'exit');child.kill();await stopped;} mock.server.closeAllConnections();callback.closeAllConnections();await Promise.all([new Promise(r=>mock.server.close(r)),new Promise(r=>callback.close(r))]);await rm(root,{recursive:true,force:true});});
   const info=await Promise.race([kernelReady, once(child,'exit').then(([code])=>{throw new Error(`Kernel exit ${code}: ${logs}`);}),new Promise((_,reject)=>setTimeout(()=>reject(new Error(`Kernel readiness timeout: ${logs}`)),60000).unref())]);
   const base=`http://127.0.0.1:${info.port}`;
   assert.equal((await fetch(`${base}/api/session/list`,{method:'POST'})).status,401);

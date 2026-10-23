@@ -9,7 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
-data class ChatItem(val id: String, val role: String, val text: String = "", val thinking: String = "", val tool: String = "", val arguments: String = "", val result: String = "")
+data class ChatItem(val id: String, val role: String, val text: String = "", val thinking: String = "", val tool: String = "", val arguments: String = "", val result: String = "", val toolCallId: String = "")
 data class UiState(val status: String = "启动中", val diagnostics: List<String> = emptyList(), val messages: List<ChatItem> = emptyList(), val providers: List<Provider> = emptyList(), val provider: String = "", val model: String = "", val running: Boolean = false, val completedTurns: Int = 0, val error: String = "")
 data class Approval(val description: String, val decision: CompletableDeferred<Boolean> = CompletableDeferred())
 
@@ -28,6 +28,8 @@ object KernelRuntime {
     private var live: ChatItem? = null
     var startedAt = 0L; private set
     var connectedAt = 0L; private set
+    var textDeltas = 0; private set
+    var reasoningDeltas = 0; private set
     val sessionId: String get() = session
 
     fun start(context: Context) {
@@ -89,7 +91,13 @@ object KernelRuntime {
                 val event=frame.getJSONObject("event"); val isNew=events.put(event.getInt("seq"),event)==null
                 if(event.optString("type")=="assistant/message") live=null
                 if(event.optString("type")=="turn/start") state.update { it.copy(running=true) }
-                if(event.optString("type")=="turn/end") state.update { it.copy(running=false,completedTurns=it.completedTurns+if(isNew) 1 else 0, error=if(event.getJSONObject("data").optJSONObject("reason")?.optString("kind")=="error") "模型请求失败；检查协议、模型与凭据" else it.error) }
+                if(event.optString("type")=="turn/end") {
+                    val reason=event.getJSONObject("data").optJSONObject("reason")
+                    val failed=reason?.optString("kind")=="error"
+                    val codes=if(failed) Regex("\\b(ENOSYS|EACCES|EPERM|ENOENT|EEXIST|ENOSPC|EINVAL|ENOTSUP|ECONNREFUSED|ECONNRESET|ETIMEDOUT)\\b").findAll(reason.toString()).map { it.value }.distinct().joinToString() else ""
+                    val operations=if(failed) Regex("\\b(open|mkdir|realpath|readlink|stat|lstat|link|unlink|rename|chmod|flock|scandir|copyfile)\\b").findAll(reason.toString()).map { it.value }.distinct().joinToString() else ""
+                    state.update { it.copy(running=false,completedTurns=it.completedTurns+if(isNew) 1 else 0, error=if(failed) "模型请求失败；检查协议、模型与凭据" else it.error, diagnostics=if(failed) (it.diagnostics+"dsh: turn failure (${codes.ifEmpty { "unspecified" }}; $operations)").takeLast(50) else it.diagnostics) }
+                }
                 render()
             }
             "assistant-stream" -> {
@@ -98,7 +106,7 @@ object KernelRuntime {
                     "start" -> live=ChatItem("live","assistant")
                     "chunk" -> {
                         val chunk=stream.getJSONObject("chunk"); val current=live ?: ChatItem("live","assistant")
-                        live=when(chunk.optString("type")) { "text-delta" -> current.copy(text=current.text+chunk.optString("text")); "reasoning-delta" -> current.copy(thinking=current.thinking+chunk.optString("text")); else -> current }
+                        live=when(chunk.optString("type")) { "text-delta" -> { textDeltas++;current.copy(text=current.text+chunk.optString("text")) }; "reasoning-delta" -> { reasoningDeltas++;current.copy(thinking=current.thinking+chunk.optString("text")) }; else -> current }
                     }
                     "end" -> live=null
                 }
@@ -114,8 +122,8 @@ object KernelRuntime {
             when(event.getString("type")) {
                 "user/message" -> if(data.optJSONObject("source")?.optString("kind")=="user") items += ChatItem(id,"user",text=content(data.optJSONArray("content"),"text"))
                 "assistant/message" -> data.getJSONObject("message").let { m -> items += ChatItem(id,"assistant",text=content(m.optJSONArray("content"),"text"),thinking=content(m.optJSONArray("content"),"reasoning")) }
-                "tool/call" -> items += ChatItem(data.getString("callId"),"tool",tool=data.getString("name"),arguments=data.getString("arguments"))
-                "tool/result" -> { val m=data.getJSONObject("message");val i=items.indexOfLast { it.id==m.optString("toolCallId") }; if(i>=0) items[i]=items[i].copy(result=content(m.optJSONArray("content"),"text")) }
+                "tool/call" -> items += ChatItem(id,"tool",tool=data.getString("name"),arguments=data.getString("arguments"),toolCallId=data.getString("callId"))
+                "tool/result" -> { val m=data.getJSONObject("message");val i=items.indexOfLast { it.role=="tool" && it.toolCallId==m.optString("toolCallId") }; if(i>=0) items[i]=items[i].copy(result=content(m.optJSONArray("content"),"text")) }
             }
         }
         live?.let { items+=it }

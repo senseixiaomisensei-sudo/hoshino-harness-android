@@ -8,7 +8,7 @@
 - 对应源码标签 `dsh-v0.2.1-rc.2`，提交 `687f282e8625c6b8d11ff58211a90524be2e4317`。
 - CLI 发布包没有声明 engines；对应源码仓库根 `package.json` 明确要求 `^22.19.0 || >=24.0.0`，不能把“没有 engines”当作 Node 18 可用。
 - nodejs-mobile 最新发布版 v18.20.4，Node 18.20.4，Android ABI：armeabi-v7a、arm64-v8a、x86_64。不满足上游 Node 要求，方案 A 判定不符合。
-- 选择 B：Alpine 3.23（多架构镜像 digest 已写 Dockerfile）、官方 apk 的 nodejs 24.18.1-r0；独立 Termux proot 5.1.107.99。rootfs 与插件随 APK 交付，在手机上不安装包、不请求安装服务。
+- 选择 B：Alpine 3.23（多架构镜像 digest 已写 Dockerfile）、官方 apk 的 nodejs 24.18.1-r0；独立 proot 从固定 Termux/proot 提交 `ee6543334a67261d19e7023ae5eb30af5a7ad4f3` 编译。rootfs 与插件随 APK 交付，在手机上不安装包、不请求安装服务。
 
 来源：[npm 元数据](https://registry.npmjs.org/@deepseek-ai/dsh/0.2.1-rc.2)、[锁定源码](https://github.com/deepseek-ai/deepseek-harness/tree/687f282e8625c6b8d11ff58211a90524be2e4317)、[nodejs-mobile 发布](https://github.com/nodejs-mobile/nodejs-mobile/releases/tag/v18.20.4)。
 

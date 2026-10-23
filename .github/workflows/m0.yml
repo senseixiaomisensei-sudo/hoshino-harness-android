@@ -8,10 +8,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compile upstream proot in the actual Android ABI
-        run: python3 rootfs/build-proot.py --abi x86_64 --diagnostics
+        run: python3 rootfs/build-proot.py
       - uses: actions/upload-artifact@v4
         with:
-          name: proot-source-x86_64
+          name: android-proot
           path: |
             app/src/main/jniLibs
             app/src/main/assets/licenses
@@ -29,6 +29,7 @@ jobs:
           name: guest-compat-x86_64
           path: libandroid-compat.so
   m0:
+    needs: proot-source
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -64,10 +65,12 @@ jobs:
             app/src/main/assets/kernel
             app/src/main/assets/licenses
             app/src/main/jniLibs
-          key: kernel-v3-${{ runner.os }}-${{ hashFiles('rootfs/**', 'node-host/package-lock.json') }}
+          key: kernel-v4-${{ runner.os }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
       - name: Prepare embedded runtimes for both ABIs
         if: steps.kernel-cache.outputs.cache-hit != 'true'
-        run: python3 rootfs/prepare.py
+        run: python3 rootfs/prepare.py --rootfs-only
+      - uses: actions/download-artifact@v4
+        with: { name: android-proot, path: 'app/src/main' }
       - uses: actions/cache/save@v4
         if: steps.kernel-cache.outputs.cache-hit != 'true'
         with:
