@@ -32,8 +32,25 @@ jobs:
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
         run: node --test test/real-provider.test.mjs
+      - uses: actions/cache/restore@v4
+        id: kernel-cache
+        with:
+          path: |
+            app/src/main/assets/kernel
+            app/src/main/assets/licenses
+            app/src/main/jniLibs
+          key: kernel-${{ runner.os }}-${{ hashFiles('rootfs/**', 'node-host/package-lock.json', 'node-host/src/**', 'plugins/**') }}
       - name: Prepare embedded runtimes for both ABIs
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: python3 rootfs/prepare.py
+      - uses: actions/cache/save@v4
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            app/src/main/assets/kernel
+            app/src/main/assets/licenses
+            app/src/main/jniLibs
+          key: ${{ steps.kernel-cache.outputs.cache-primary-key }}
       - name: Build APK and unit tests
         run: |
           chmod +x gradlew
