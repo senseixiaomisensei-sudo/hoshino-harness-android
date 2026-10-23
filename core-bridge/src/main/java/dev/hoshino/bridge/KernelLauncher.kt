@@ -22,14 +22,24 @@ class ProotKernelLauncher : KernelLauncher {
         val marker = File(root, ".hoshino-m0-v1")
         if (!marker.exists()) {
             onDiagnostic("host: extracting rootfs")
-            root.mkdirs()
+            val staging = File(context.filesDir, "alpine-$abi.installing")
+            fun removeIncomplete(directory: File) {
+                require(directory.parentFile!!.canonicalFile == context.filesDir.canonicalFile)
+                if (java.nio.file.Files.exists(directory.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    java.nio.file.Files.walk(directory.toPath()).use { paths ->
+                        paths.sorted(Comparator.reverseOrder()).forEach { java.nio.file.Files.delete(it) }
+                    }
+                }
+            }
+            removeIncomplete(staging)
+            staging.mkdirs()
             context.assets.open("kernel/$abi.tgz").use { input ->
                 TarArchiveInputStream(GzipCompressorInputStream(input)).use { tar ->
                     val links = mutableListOf<Pair<File, String>>()
                     while (true) {
                         val entry = tar.nextEntry ?: break
-                        val dest = File(root, entry.name).canonicalFile
-                        require(dest.toPath().startsWith(root.canonicalFile.toPath())) { "Unsafe rootfs path" }
+                        val dest = File(staging, entry.name).canonicalFile
+                        require(dest.toPath().startsWith(staging.canonicalFile.toPath())) { "Unsafe rootfs path" }
                         when {
                             entry.isDirectory -> dest.mkdirs()
                             entry.isSymbolicLink -> links += dest to entry.linkName
@@ -41,7 +51,9 @@ class ProotKernelLauncher : KernelLauncher {
                     links.forEach { (dest, target) -> dest.parentFile?.mkdirs(); android.system.Os.symlink(target, dest.path) }
                 }
             }
-            marker.writeText("0.2.1-rc.2")
+            File(staging, marker.name).writeText("0.2.1-rc.2")
+            removeIncomplete(root)
+            java.nio.file.Files.move(staging.toPath(), root.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
             onDiagnostic("host: rootfs extracted")
         }
         val lib = context.applicationInfo.nativeLibraryDir
@@ -55,6 +67,7 @@ class ProotKernelLauncher : KernelLauncher {
             "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "${workspace.path}:/workspace", "-b", "${home.path}:/home/hoshino",
             "-b", "${resolv.path}:/etc/resolv.conf",
             "-w", "/workspace", "/usr/bin/env", "HOME=/home/hoshino", "PATH=/usr/bin:/bin", "DSH_TELEMETRY_DISABLED=1",
+            "LD_PRELOAD=/opt/hoshino/libandroid-compat.so",
             "/usr/bin/node", "/opt/hoshino/node-host/dist/node-host/src/main.js")
         val builder = ProcessBuilder(args).directory(context.filesDir).redirectErrorStream(true)
         builder.environment().apply {
@@ -79,6 +92,8 @@ fun classifyDiagnostic(line: String): String {
         return "dsh plugin $id: " + if(code != null) "callback HTTP $code" else "activation failed"
     }
     return when {
+    line.contains("proot warning: signal 11 received") -> "proot: tracer SIGSEGV"
+    line.contains("proot warning: signal 31 received") -> "proot: tracer SIGSYS"
     line.contains("did not activate") -> "dsh: plugin activation failed"
     line.contains("Kernel required service") -> "dsh: required service unavailable"
     line.contains("proot error:") -> "proot: runtime error"

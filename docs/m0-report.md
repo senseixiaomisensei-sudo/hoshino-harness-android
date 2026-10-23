@@ -80,6 +80,7 @@ Android 仪器测试 `M0AcceptanceTest` 已编写，包含 8 项标准、实际�
 - SDK 37 的包名实际为 `platforms;android-37.0`，最初用旧名称 `android-37` 查询才显示不存在；已改为 compile 37.0 / target 37，AGP 9.1.1、Gradle 9.4.1、Kotlin 2.2.20，本地编译通过。
 - AAPT 会解开后缀 `.gz` 的资产并去掉后缀：最初 APK 只含 `assets/kernel/x86_64.tar`，导致 `open(...tar.gz)` 抛 FileNotFoundException。改为 `.tgz` 并设置 noCompress，保留 gzip 供启动器读取；模拟器已实际解包成功。
 - 本机多个构建守护进程、Docker 与模拟器并行曾导致内存不足。限制构建 workers 为 2、Kotlin heap 为 768 MiB，关闭本任务启动的空闲守护进程和 Docker；未改用户的全局构建配置。
+- Android 应用内探针发现：musl 的 write/fsync 正常，rename 返回 ENOSYS；run-as 不受同一 zygote seccomp 策略约束，不能替代原生验收。这会影响原版 dsh 的 storage-json 原子保存。正在验证独立 MIT guest 兼容库，将 legacy 文件操作映射到相应 *at 调用，保留原子性与错误处理。参见 [AOSP bionic syscall 清单](https://github.com/aosp-mirror/platform_bionic/blob/main/libc/SYSCALLS.TXT) 和 [seccomp 构建输入](https://android.googlesource.com/platform/bionic/+/main/libc/Android.bp)。
 
 ## 对 M1 的建议
 
