@@ -3,6 +3,18 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
+  proot-source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile upstream proot in the actual Android ABI
+        run: python3 rootfs/build-proot.py --abi x86_64 --diagnostics
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proot-source-x86_64
+          path: |
+            app/src/main/jniLibs
+            app/src/main/assets/licenses
   guest-compat:
     runs-on: ubuntu-24.04
     steps:
