@@ -62,6 +62,7 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   assert.equal(deviceCalls,2, JSON.stringify({requests:mock.requests, frames, approvals, logs}).slice(-16000));
   assert.equal(await readFile(join(workspace,'hello.txt'),'utf8'),'Hello from dsh\n');
   const wire=JSON.stringify(frames);assert.ok(wire.includes('assistant-stream'));assert.ok(wire.includes('thinking'));assert.ok(wire.includes('get_device_info'));
+  assert.ok(frames.some(f=>f.value?.event?.type==='assistant/message' && JSON.stringify(f.value.event.data.message).includes('M0 virtual Android')),'Model reply must use actual device tool result');
   assert.ok(mock.requests.some(r=>r.path==='/v1/messages'));assert.ok(mock.requests.some(r=>r.path==='/v1/chat/completions'));
   assert.ok(approvals.some(a=>a.kind==='network'));assert.ok(approvals.some(a=>a.tool==='write'));
   assert.ok(!logs.includes(canary));assert.ok(!logs.includes(info.token));

@@ -16,7 +16,8 @@ export function createMockLlm() {
     const hasResult = last?.role === 'tool' || last?.content?.some?.(c => c.type === 'tool_result');
     const tool = !hasResult && /设备|device/.test(prompt) ? 'get_device_info' : !hasResult && /hello\.txt/.test(prompt) ? 'write' : undefined;
     const args = tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'} : {};
-    const answer = hasResult ? '工具已完成。' : '你好，我是 Hoshino。';
+    const resultText = hasResult ? (typeof last.content === 'string' ? last.content : last.content.filter(c=>c.type==='tool_result').map(c=>typeof c.content==='string'?c.content:JSON.stringify(c.content)).join(' ')) : '';
+    const answer = hasResult ? `工具已完成，返回结果：${resultText}` : '你好，我是 Hoshino。';
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     const event = async (data, name) => { res.write(`${name ? `event: ${name}\n` : ''}data: ${JSON.stringify(data)}\n\n`); await pause(15); };
     if (anthropic) {

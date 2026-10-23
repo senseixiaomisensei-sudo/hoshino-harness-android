@@ -40,3 +40,5 @@ Compose 读取 ViewModel 暴露的 StateFlow；HTML 不加载进运行时。替�
 编译 `cd node-host && npm run build`，验证 `npm test`。已准备过两种 ABI 的运行环境时，运行 `python rootfs/prepare.py --refresh-host` 更新归档内的自研 host/plugins；依赖或系统层变更仍需完整运行 prepare。归档指纹改变后，启动器会替换运行环境，workspace 和会话目录独立保留。不要修改 node_modules 或 dsh 源码来让插件兼容。
 
 Linux guest 的 `rootfs/android-compat.c` 只解决 Android seccomp 与 musl 旧式文件调用的兼容，随 rootfs 编译并通过 guest 的 LD_PRELOAD 加载，不链接到 Android 主程序。更换 KernelLauncher 时可以按所选运行环境替换该平台适配。会话的磁盘检查点由原版 `dsh-session-checkpoint-policy` 执行，不在 Kotlin 中另造日志。
+
+独立 proot 由 `python3 rootfs/build-proot.py` 使用固定 NDK 与固定上游归档编译；需要 Linux 工具链。`prepare.py` 默认会调用它。CI 分步构建 proot 和 Linux rootfs，再在 APK 打包前合并；`--rootfs-only` 仅供这种已有 proot 产物的流程使用。不能退回已知会在应用域删除模拟硬链接时崩溃的旧预编译包。

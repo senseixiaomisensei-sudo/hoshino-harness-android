@@ -103,9 +103,9 @@ jobs:
           script: |
             node tools/mock-llm/server.mjs > /tmp/mock.log 2>&1 &
             adb reverse tcp:8099 tcp:8099
-            ./gradlew connectedDebugAndroidTest --console=plain
+            ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --console=plain
             adb shell cat /sdcard/Android/data/dev.hoshino.app/files/m0-metrics.json > docs/m0-metrics.json
-            adb shell dumpsys meminfo dev.hoshino.app > docs/m0-memory.txt
+            adb shell cat /sdcard/Android/data/dev.hoshino.app/files/m0-memory.txt > docs/m0-memory.txt
       - name: Upload APK and verification reports
         if: always()
         uses: actions/upload-artifact@v4

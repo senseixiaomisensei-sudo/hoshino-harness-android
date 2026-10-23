@@ -57,6 +57,7 @@ class M0AcceptanceTest {
                 prompt("读取设备 device 信息")
                 val card=KernelRuntime.state.value.messages.last { it.tool=="get_device_info" }
                 assertTrue(card.result.contains(android.os.Build.MODEL))
+                assertTrue(KernelRuntime.state.value.messages.last { it.role=="assistant" }.text.contains(android.os.Build.MODEL))
                 ui.onAllNodesWithTag("tool-get_device_info").onLast().assertExists()
                 prompt("写入 hello.txt")
                 assertEquals("Hello from dsh\n",File(context.filesDir,"workspace/hello.txt").readText())
@@ -72,7 +73,8 @@ class M0AcceptanceTest {
             fun contains(file: File): Boolean {
                 file.inputStream().buffered().use { input ->
                     val buffer=ByteArray(65536);var tail=byteArrayOf()
-                    while(true) { val n=input.read(buffer);if(n<0)return false;val chunk=tail+buffer.copyOf(n);if(chunk.indices.any { i -> i+secret.size<=chunk.size && secret.indices.all { chunk[i+it]==secret[it] } })return true;tail=chunk.takeLast(secret.size).toByteArray() }
+                    // Latin-1 maps each byte one-to-one; String.indexOf avoids a Kotlin iterator per byte.
+                    while(true) { val n=input.read(buffer);if(n<0)return false;val chunk=tail+buffer.copyOf(n);if(String(chunk,Charsets.ISO_8859_1).contains(canary))return true;tail=chunk.takeLast(secret.size).toByteArray() }
                 }
             }
             File(context.applicationInfo.dataDir).walkTopDown().filter { it.isFile }.forEach { assertFalse("Plaintext credential in app storage: ${it.name}",contains(it)) }
@@ -80,6 +82,16 @@ class M0AcceptanceTest {
             android.os.ParcelFileDescriptor.AutoCloseInputStream(logcat).use { assertFalse(it.readBytes().toString(Charsets.UTF_8).contains(canary)) }
             val memory=Debug.MemoryInfo();Debug.getMemoryInfo(memory)
             val metrics=JSONObject().put("coldStartMs",KernelRuntime.connectedAt-KernelRuntime.startedAt).put("appPssKb",memory.totalPss).put("sessionPreserved",true).put("backgroundSeconds",300).put("standardsPassed",8)
+            fun shell(command: String): String = android.os.ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes().toString(Charsets.UTF_8) }
+            // Capture before instrumentation exits; its app and guest processes can then be stopped by Android.
+            val processRows=shell("ps -A -o PID,PPID,NAME").lineSequence().drop(1).map { it.trim().split(Regex("\\s+")) }.filter { it.size>=3 && it[0].toIntOrNull()!=null && it[1].toIntOrNull()!=null }.toList()
+            val owned=mutableSetOf(android.os.Process.myPid())
+            do { val count=owned.size;processRows.filter { it[1].toInt() in owned }.forEach { owned+=it[0].toInt() } } while(owned.size>count)
+            val processMemory=owned.sorted().map { pid -> pid to shell("dumpsys meminfo $pid") }
+            val processPss=JSONObject()
+            processMemory.forEach { (pid, report) -> Regex("TOTAL PSS:\\s*(\\d+)").find(report)?.groupValues?.get(1)?.toLongOrNull()?.let { processPss.put(pid.toString(),it) } }
+            metrics.put("processPssKb",processPss)
+            File(context.getExternalFilesDir(null),"m0-memory.txt").writeText(processMemory.joinToString("\n") { (pid, report) -> "PID $pid\n$report" })
             File(context.getExternalFilesDir(null),"m0-metrics.json").writeText(metrics.toString(2))
         }
     }
