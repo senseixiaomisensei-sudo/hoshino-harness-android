@@ -58,9 +58,13 @@ def termux(abi, locks, update):
     for path, data in files.items():
         if path.endswith('/copyright'):
             (notices/(path.split('/')[-2]+'.txt')).write_bytes(data)
-    # APK native libraries must end in .so. Adjust only the standalone proot's dynamic-library name.
-    subprocess.run(['docker','run','--rm','-v',str(dest)+':/out','alpine:3.23','sh','-c',
-        'apk add --no-cache patchelf binutils >/dev/null && patchelf --replace-needed libtalloc.so.2 libtalloc.so /out/libproot.so && readelf -d /out/libproot.so | grep NEEDED'],check=True)
+    # Both SONAMEs fit the existing ELF string-table slot; preserve every offset.
+    # The locked package has exactly one matching DT_NEEDED string. Fail on drift.
+    executable = dest/'libproot.so'
+    payload = executable.read_bytes()
+    old = b'libtalloc.so.2\0'; new = b'libtalloc.so\0\0\0'
+    assert payload.count(old) == 1 and len(old) == len(new), 'Unexpected proot ELF string table'
+    executable.write_bytes(payload.replace(old,new))
 
 def rootfs(abi):
     _, platform, node_arch = ABIS[abi]

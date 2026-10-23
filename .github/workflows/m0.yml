@@ -14,7 +14,7 @@ jobs:
         with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
           log-accepted-android-sdk-licenses: false
       - uses: docker/setup-qemu-action@v3
       - name: Install and test original dsh
@@ -26,6 +26,7 @@ jobs:
       - name: Optional real model tests (skip when secrets absent)
         working-directory: node-host
         env:
+          M0_REAL_TESTS: '1'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}

@@ -1,8 +1,9 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 android {
-    namespace = "dev.hoshino.app"; compileSdk = 36
+    namespace = "dev.hoshino.app"
+    compileSdk { version = release(37) { minorApiLevel = 0 } }
     defaultConfig {
-        applicationId = "dev.hoshino.app"; minSdk = 29; targetSdk = 36
+        applicationId = "dev.hoshino.app"; minSdk = 29; targetSdk = 37
         versionCode = 1; versionName = "0.0.1-m0"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

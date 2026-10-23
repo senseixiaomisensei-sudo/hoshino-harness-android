@@ -5,7 +5,7 @@
 
 ## 构建
 
-需要 JDK 17、Android SDK 36、Node 24、Python 3、Docker（跨架构需 QEMU）、curl。
+需要 JDK 17、Android SDK `platforms;android-37.0`、Node 24、Python 3、Docker（跨架构需 QEMU）、curl。
 
 ```sh
 cd node-host

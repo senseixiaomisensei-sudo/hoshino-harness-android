@@ -11,7 +11,7 @@ import WebSocket from 'ws';
 for (const [id, type, key, base, configuredModel] of [
   ['anthropic','anthropic',process.env.ANTHROPIC_API_KEY,process.env.ANTHROPIC_BASE_URL??'https://api.anthropic.com',process.env.ANTHROPIC_MODEL],
   ['openai','openai-compatible',process.env.OPENAI_API_KEY,process.env.OPENAI_BASE_URL??'https://api.openai.com/v1',process.env.OPENAI_MODEL],
-]) test(`optional real provider: ${id}`,{skip:!key,timeout:180000},async t=>{
+]) test(`optional real provider: ${id}`,{skip:!key || process.env.M0_REAL_TESTS!=='1',timeout:180000},async t=>{
   // A secret enables the test. Model discovery avoids inventing a current model id.
   let model=configuredModel;
   if(!model) {

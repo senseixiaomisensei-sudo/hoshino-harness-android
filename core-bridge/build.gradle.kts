@@ -1,6 +1,7 @@
 plugins { id("com.android.library"); id("org.jetbrains.kotlin.android") }
 android {
-    namespace = "dev.hoshino.bridge"; compileSdk = 36
+    namespace = "dev.hoshino.bridge"
+    compileSdk { version = release(37) { minorApiLevel = 0 } }
     defaultConfig { minSdk = 29 }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }

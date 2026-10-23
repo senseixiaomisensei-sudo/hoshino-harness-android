@@ -21,6 +21,7 @@ class ProotKernelLauncher : KernelLauncher {
         val root = File(context.filesDir, "alpine-$abi")
         val marker = File(root, ".hoshino-m0-v1")
         if (!marker.exists()) {
+            onDiagnostic("host: extracting rootfs")
             root.mkdirs()
             context.assets.open("kernel/$abi.tar.gz").use { input ->
                 TarArchiveInputStream(GzipCompressorInputStream(input)).use { tar ->
@@ -41,6 +42,7 @@ class ProotKernelLauncher : KernelLauncher {
                 }
             }
             marker.writeText("0.2.1-rc.2")
+            onDiagnostic("host: rootfs extracted")
         }
         val lib = context.applicationInfo.nativeLibraryDir
         val workspace = File(context.filesDir, "workspace").apply { mkdirs() }

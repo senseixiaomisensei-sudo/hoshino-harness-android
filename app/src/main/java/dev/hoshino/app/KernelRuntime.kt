@@ -65,7 +65,10 @@ object KernelRuntime {
                 launcher.launch(context,JSONObject().put("callbackPort",callback!!.port).put("callbackToken",callback!!.token),
                     { code -> state.update { it.copy(status="崩溃",error="内核退出 ($code)") } },
                     { diagnostic -> state.update { it.copy(diagnostics=(it.diagnostics+diagnostic).takeLast(50)) } })
-            } catch (_: Exception) { state.update { it.copy(status="崩溃",error="内核启动失败；检查内置 rootfs 和独立 proot 二进制",diagnostics=(it.diagnostics+"host: launch failed").takeLast(50)) } }
+            } catch (failure: Exception) {
+                val safeTrace = listOf("host: ${failure.javaClass.simpleName}") + failure.stackTrace.take(5).map { "${it.className}.${it.methodName}:${it.lineNumber}" }
+                state.update { it.copy(status="崩溃",error="内核启动失败；检查内置 rootfs 和独立 proot 二进制",diagnostics=(it.diagnostics+safeTrace).takeLast(50)) }
+            }
         }
     }
     fun send(text: String) { scope.launch { action { client!!.prompt(session,text) } } }
