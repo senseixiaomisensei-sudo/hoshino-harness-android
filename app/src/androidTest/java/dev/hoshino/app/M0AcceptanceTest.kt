@@ -34,9 +34,11 @@ class M0AcceptanceTest {
                 val deadline=System.currentTimeMillis()+60000
                 while(System.currentTimeMillis()<deadline && KernelRuntime.state.value.completedTurns==before) {
                     if(KernelRuntime.approval.value!=null) ui.onNodeWithTag("approve").performClick()
+                    if(KernelRuntime.state.value.status=="崩溃") break
                     Thread.sleep(100)
                 }
-                assertTrue("Turn did not complete",KernelRuntime.state.value.completedTurns>before)
+                val current=KernelRuntime.state.value
+                assertTrue("Turn did not complete: ${current.status}; ${current.error}; roles=${current.messages.map { it.role }}; diagnostics=${current.diagnostics.joinToString()}",current.completedTurns>before)
                 assertEquals("",KernelRuntime.state.value.error)
             }
             for(provider in listOf("claude","compatible")) {

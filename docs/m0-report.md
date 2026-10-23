@@ -1,6 +1,6 @@
 # M0 可行性验证报告
 
-状态：执行中，Android 验收尚未完成。桌面原版 dsh 集成测试已通过；不能据此宣称 APK 已可行。
+状态：执行中，Android 验收尚未完成。桌面原版 dsh 集成测试已通过；APK 内独立 proot 和原版 dsh（含两个模型 route）已在 AOSP x86_64 模拟器启动，原生 UI 已连接。首条消息的会话跟随仍在排障，不能宣称全部验收通过。
 
 ## 上游与锁定版本
 
@@ -77,7 +77,9 @@ Android 仪器测试 `M0AcceptanceTest` 已编写，包含 8 项标准、实际�
 - 无头运行无需浏览器 UI 包；禁用安装脚本避免不用的 PTY 等编译，同时显式补入必要的 musl 预编译包。
 - Anthropic SDK beta 接口包含查询参数；mock 按 URL pathname 匹配，不能用严格字符串匹配整个 URL。
 - 自定义模型的 thinking 必须通过 dsh 的 `reasoningEfforts` 声明，不能编造 `reasoning: true` 配置。
-- API 37 的官方页面和 stable SDK 包发布元数据不一致，本地 stable sdkmanager 找不到该平台；暂用可安装的稳定 API 36，并记录此项验收偏差。
+- SDK 37 的包名实际为 `platforms;android-37.0`，最初用旧名称 `android-37` 查询才显示不存在；已改为 compile 37.0 / target 37，AGP 9.1.1、Gradle 9.4.1、Kotlin 2.2.20，本地编译通过。
+- AAPT 会解开后缀 `.gz` 的资产并去掉后缀：最初 APK 只含 `assets/kernel/x86_64.tar`，导致 `open(...tar.gz)` 抛 FileNotFoundException。改为 `.tgz` 并设置 noCompress，保留 gzip 供启动器读取；模拟器已实际解包成功。
+- 本机多个构建守护进程、Docker 与模拟器并行曾导致内存不足。限制构建 workers 为 2、Kotlin heap 为 768 MiB，关闭本任务启动的空闲守护进程和 Docker；未改用户的全局构建配置。
 
 ## 对 M1 的建议
 

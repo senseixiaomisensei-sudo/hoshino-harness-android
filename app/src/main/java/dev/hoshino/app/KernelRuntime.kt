@@ -36,7 +36,7 @@ object KernelRuntime {
         scope.launch {
             try {
                 val store=ProviderStore(context); state.update { it.copy(providers=store.list()) }
-                callback=AndroidCallbackServer(scope) { method, body ->
+                callback=AndroidCallbackServer(scope, { message -> state.update { it.copy(diagnostics=(it.diagnostics+message).takeLast(50)) } }) { method, body ->
                     when(method) {
                         "providers" -> JSONArray(store.list().map { it.json() })
                         "credential" -> JSONObject().put("value", store.resolve(body.getString("ref")) ?: "").put("source","android-keystore")
@@ -51,7 +51,7 @@ object KernelRuntime {
                             } finally { approval.value=null;approvalMutex.unlock() }
                         }
                         "ready" -> {
-                            val api=SessionClient(::receive) { state.update { it.copy(status="崩溃",error="内核连接中断") } }; client=api
+                            val api=SessionClient(::receive) { reason -> state.update { it.copy(status="崩溃",error="内核连接中断",diagnostics=(it.diagnostics+"connection: $reason").takeLast(50)) } }; client=api
                             api.connect(body.getInt("port"),body.getString("token"))
                             session=api.rpc("session/create",JSONObject().put("cwd","/workspace")).getString("sessionId")
                             api.follow(session)

@@ -73,10 +73,16 @@ class ProotKernelLauncher : KernelLauncher {
     override fun stop() { process?.destroy(); process = null }
 }
 
-fun classifyDiagnostic(line: String): String = when {
+fun classifyDiagnostic(line: String): String {
+    Regex("^([a-z][a-z0-9-]{0,63}) \\(").find(line)?.groupValues?.get(1)?.let { id ->
+        val code = Regex("Android callback failed \\(([0-9]{3})\\)").find(line)?.groupValues?.get(1)
+        return "dsh plugin $id: " + if(code != null) "callback HTTP $code" else "activation failed"
+    }
+    return when {
     line.contains("did not activate") -> "dsh: plugin activation failed"
     line.contains("Kernel required service") -> "dsh: required service unavailable"
     line.contains("proot error:") -> "proot: runtime error"
     line.contains("Error") || line.contains("error") -> "kernel: error (payload suppressed)"
     else -> "kernel: diagnostic (payload suppressed)"
+    }
 }

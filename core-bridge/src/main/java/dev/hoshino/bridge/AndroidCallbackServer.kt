@@ -10,7 +10,7 @@ import java.net.ServerSocket
 import java.security.MessageDigest
 import java.security.SecureRandom
 
-class AndroidCallbackServer(scope: CoroutineScope, private val handler: suspend (String, JSONObject) -> Any) : Closeable {
+class AndroidCallbackServer(scope: CoroutineScope, private val onDiagnostic: (String) -> Unit = {}, private val handler: suspend (String, JSONObject) -> Any) : Closeable {
     private val server = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
     val port: Int get() = server.localPort
     val token: String = ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
@@ -30,6 +30,7 @@ class AndroidCallbackServer(scope: CoroutineScope, private val handler: suspend 
                             val expected = "Bearer $token".toByteArray()
                             val authenticated = MessageDigest.isEqual(expected, (headers["authorization"] ?: "").toByteArray())
                             if (!authenticated || start.first() != "POST") {
+                                onDiagnostic("callback: authentication rejected")
                                 socket.getOutputStream().write("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()); return@use
                             }
                             val length = headers["content-length"]?.toInt() ?: 0
@@ -39,7 +40,8 @@ class AndroidCallbackServer(scope: CoroutineScope, private val handler: suspend 
                             val result = handler(start[1].removePrefix("/"), JSONObject(String(bytes)))
                             val body = result.toString().toByteArray()
                             socket.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray() + body)
-                        } catch (_: Exception) {
+                        } catch (failure: Exception) {
+                            onDiagnostic("callback: ${failure.javaClass.simpleName}")
                             runCatching { socket.getOutputStream().write("HTTP/1.1 500 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()) }
                         }
                     }

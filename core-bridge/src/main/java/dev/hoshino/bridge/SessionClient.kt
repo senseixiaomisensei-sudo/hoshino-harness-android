@@ -12,7 +12,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /** dsh 0.2.1-rc.2 Connection RPC envelopes and API Gateway Mux; no local agent loop. */
-class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFailure: () -> Unit) : Closeable {
+class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFailure: (String) -> Unit) : Closeable {
     private val http = OkHttpClient.Builder().followRedirects(false).readTimeout(0, TimeUnit.SECONDS).build()
     private var base = ""
     private var cookie = ""
@@ -25,8 +25,24 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
         val ready = kotlinx.coroutines.CompletableDeferred<Unit>()
         socket = http.newWebSocket(Request.Builder().url(base.replace("http:","ws:") + "/api/remote.mux").header("Cookie",cookie).build(), object: WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) { ready.complete(Unit) }
-            override fun onMessage(webSocket: WebSocket, text: String) { runCatching { val message=JSONObject(text); if(message.optString("type")=="item") onFrame(message.getJSONObject("value")) else if(message.optString("type")=="error") onFailure() }.onFailure { onFailure() } }
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { ready.completeExceptionally(IllegalStateException("内核连接中断")); onFailure() }
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                try {
+                    val message=JSONObject(text)
+                    if(message.optString("type")=="item") onFrame(message.getJSONObject("value"))
+                    else if(message.optString("type")=="error") {
+                        val code=message.optJSONObject("error")?.optString("code")?.takeIf { it.matches(Regex("[a-zA-Z0-9/_-]{1,80}")) } ?: "unknown"
+                        onFailure("mux:$code")
+                    }
+                } catch(failure: Exception) {
+                    val site=failure.stackTrace.firstOrNull { it.className.startsWith("dev.hoshino.") }
+                    onFailure("frame:${failure.javaClass.simpleName}:${site?.methodName}:${site?.lineNumber}")
+                }
+            }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { ready.completeExceptionally(IllegalStateException("内核连接中断")); onFailure("transport:${t.javaClass.simpleName}") }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(code, null)
+                onFailure("closing:$code")
+            }
         })
         kotlinx.coroutines.withTimeout(15000) { ready.await() }
     }
