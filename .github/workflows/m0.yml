@@ -3,6 +3,19 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
+  guest-compat:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Linux guest compatibility library
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y musl-tools
+          musl-gcc -shared -fPIC -O2 -Wall -Wextra -Werror -o libandroid-compat.so rootfs/android-compat.c
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guest-compat-x86_64
+          path: libandroid-compat.so
   m0:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
