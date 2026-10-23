@@ -46,8 +46,12 @@ class ProotKernelLauncher : KernelLauncher {
         val workspace = File(context.filesDir, "workspace").apply { mkdirs() }
         val home = File(context.filesDir, "dsh-home").apply { mkdirs() }
         val tmp = File(context.cacheDir, "proot").apply { mkdirs() }
+        val network = context.getSystemService(android.net.ConnectivityManager::class.java)
+        val dns = network.getLinkProperties(network.activeNetwork)?.dnsServers.orEmpty()
+        val resolv = File(context.filesDir, "resolv.conf").apply { writeText(dns.joinToString("\n") { "nameserver ${it.hostAddress}" } + "\n") }
         val args = listOf("$lib/libproot.so", "--link2symlink", "-0", "-r", root.path,
             "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "${workspace.path}:/workspace", "-b", "${home.path}:/home/hoshino",
+            "-b", "${resolv.path}:/etc/resolv.conf",
             "-w", "/workspace", "/usr/bin/env", "HOME=/home/hoshino", "PATH=/usr/bin:/bin", "DSH_TELEMETRY_DISABLED=1",
             "/usr/bin/node", "/opt/hoshino/node-host/dist/node-host/src/main.js")
         val builder = ProcessBuilder(args).directory(context.filesDir).redirectErrorStream(true)

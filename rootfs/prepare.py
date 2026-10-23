@@ -54,6 +54,7 @@ def termux(abi, locks, update):
         (dest/name).write_bytes(hits[0])
     notices = ROOT/'app/src/main/assets/licenses'/abi
     notices.mkdir(parents=True,exist_ok=True)
+    (notices/'proot-COPYING').write_bytes((ROOT/'rootfs/proot-COPYING').read_bytes())
     for path, data in files.items():
         if path.endswith('/copyright'):
             (notices/(path.split('/')[-2]+'.txt')).write_bytes(data)
