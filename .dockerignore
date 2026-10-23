@@ -4,3 +4,5 @@
 !node-host/package-lock.json
 !node-host/dist
 !node-host/dist/**
+!rootfs
+!rootfs/android-compat.c
