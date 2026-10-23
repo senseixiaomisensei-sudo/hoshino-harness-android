@@ -32,10 +32,11 @@ def build(abi, diagnostics=False):
     compiler.write_text('#!/usr/bin/env python3\nimport subprocess,sys\nargs=sys.argv[1:]\n'+
         f'compiler={str(toolchain/(family+"-linux-android29-clang"))!r}\n'+
         f'if "-m32" in args: args.remove("-m32");compiler={str(toolchain/("armv7a-linux-androideabi29-clang" if family=="aarch64" else "i686-linux-android29-clang"))!r}\n'+
+        'if any(a.endswith(".c") for a in args): args=["-include","string.h"]+args\n'+
         'sys.exit(subprocess.call([compiler]+args))\n')
     compiler.chmod(0o755)
     env=os.environ.copy();env.update(CC=str(compiler),GIT='true',STRIP=str(toolchain/'llvm-strip'),
-        CPPFLAGS=f'-I{include} -include string.h -DARG_MAX=131072 -DVERSION=\\"{lock["revision"]}\\"',
+        CPPFLAGS=f'-I{include} -DARG_MAX=131072 -DVERSION=\\"{lock["revision"]}\\"',
         CFLAGS='-g -O2 -fno-omit-frame-pointer',LDFLAGS=f'-L{lib} -ldl',
         PROOT_UNBUNDLE_LOADER='/unused',PROOT_WITH_LIBANDROID_SHMEM='true')
     if diagnostics:
