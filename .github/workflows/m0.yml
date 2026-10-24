@@ -113,7 +113,9 @@ jobs:
             adb shell cat /sdcard/Android/data/dev.hoshino.app/files/m0-memory.txt > docs/m0-memory.txt
             ./gradlew :benchmark-driver:connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --console=plain
             adb shell cat /sdcard/Android/data/dev.hoshino.benchmark/files/m0-metrics.json > docs/m0-metrics.json
-            adb pull /sdcard/Android/data/dev.hoshino.benchmark/files/m0-memory docs/m0-memory
+            mkdir -p docs/m0-memory
+            adb pull /sdcard/Android/data/dev.hoshino.benchmark/files/m0-memory/. docs/m0-memory
+            python3 tools/verify-metrics.py
       - name: Upload APK and verification reports
         if: always()
         uses: actions/upload-artifact@v4

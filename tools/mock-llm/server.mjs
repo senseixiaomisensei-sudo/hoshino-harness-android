@@ -19,7 +19,7 @@ export function createMockLlm() {
     const resultText = hasResult ? (typeof last.content === 'string' ? last.content : last.content.filter(c=>c.type==='tool_result').map(c=>typeof c.content==='string'?c.content:JSON.stringify(c.content)).join(' ')) : '';
     const answer = hasResult ? `工具已完成，返回结果：${resultText}` : '你好，我是 Hoshino。';
     const benchmark=/benchmark/.test(prompt);
-    const textChunks=benchmark?['你好，',...Array(32).fill('基准测试输出。')]:['你好，',answer];
+    const textChunks=benchmark?['你好，',...Array(48).fill('基准测试输出。')]:['你好，',answer];
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     const event = async (data, name) => { res.write(`${name ? `event: ${name}\n` : ''}data: ${JSON.stringify(data)}\n\n`); await pause(15); };
     if (anthropic) {

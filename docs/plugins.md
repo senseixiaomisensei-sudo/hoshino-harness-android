@@ -35,6 +35,10 @@ Compose 读取 ViewModel 暴露的 StateFlow；HTML 不加载进运行时。替�
 
 ## 权限与生命周期
 
+部署包还需在 `rootfs/runtime-seeds.json` 中列出新 npm 插件入口，打包器会带入其真实 dependencies/peer 闭包。`rootfs/pack.py` 只筛选部署文件，不编辑上游实现。当前 M0 只开放文本与工具，`attachment-local` 的 Sharp 是 `createLazyRequire` 延迟图像路径，故 Sharp/native vips 未部署；启用图像能力时需取消该项排除并重新安装锁文件中对应 CPU 的 musl 图像包，再完成图像验收。不要仅刷新 dist 后声称新依赖已部署。
+
+`RuntimeArchive` 是启动器与 gzip/xz 对比测试共用的解包器。每个 ABI flavor 只包含自己的一份 xz，gzip 基线仅放在仪器 APK 中。更换压缩格式时应同步打包、指纹、启动器及解包测量，保持 `KernelLauncher` 接口与原版 dsh/Cordis 不变。
+
 `android-policy` 的工具白名单与目录约束是 M0 部署决定，新增工具必须有明确的审批及路径/网络策略。`KernelService` 是非导出前台服务，Activity 销毁不停止它。Kernel 崩溃后界面显示状态与最多 50 行分类日志；不承诺自动恢复未结算的模型请求。
 
 编译 `cd node-host && npm run build`，验证 `npm test`。已准备过两种 ABI 的运行环境时，运行 `python rootfs/prepare.py --refresh-host` 更新归档内的自研 host/plugins；依赖或系统层变更仍需完整运行 prepare。归档指纹改变后，启动器会替换运行环境，workspace 和会话目录独立保留。不要修改 node_modules 或 dsh 源码来让插件兼容。

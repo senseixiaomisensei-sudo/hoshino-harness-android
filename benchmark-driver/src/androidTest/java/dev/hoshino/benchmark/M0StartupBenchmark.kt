@@ -41,7 +41,7 @@ class M0StartupBenchmark {
                 val name=row[2];val kind=if(pid==app) "java-app" else if(name.contains("proot")) "proot" else if(name=="node") "node-native" else "native-child"
                 val file="m0-memory/$iteration-$phase-$kind-$pid.txt"
                 File(output,file).apply {parentFile!!.mkdirs();writeText(raw)}
-                result.put(JSONObject().put("pid",pid).put("kind",kind).put("pssKb",pss).put("javaHeapPssKb",number("^\\s*Java Heap:\\s*(\\d+)")).put("nativeHeapPssKb",number("^\\s*Native Heap:\\s*(\\d+)")).put("dump",file))
+                result.put(JSONObject().put("pid",pid).put("kind",kind).put("pssKb",pss).put("javaHeapPssKb",number("^\\s*Java Heap:\\s*(\\d+)")).put("nativeHeapPssKb",number("^\\s*Native Heap:\\s*(\\d+)")).put("dump",file).put("capturedAtElapsedMs",SystemClock.elapsedRealtime()))
             }
             val kinds=(0 until result.length()).map {result.getJSONObject(it).getString("kind")}
             assertTrue("proot and Node must be observed",kinds.contains("proot") && kinds.contains("node-native"))
@@ -50,6 +50,7 @@ class M0StartupBenchmark {
         val samples=JSONArray();val readyTimes=mutableListOf<Long>();val tokenTimes=mutableListOf<Long>()
         for(iteration in 1..5) {
             shell("am force-stop dev.hoshino.app")
+            device.wakeUp();shell("wm dismiss-keyguard")
             device.pressHome();Thread.sleep(350)
             device.swipe(device.displayWidth/2,device.displayHeight-100,device.displayWidth/2,device.displayHeight/3,20)
             var icon=device.wait(Until.findObject(By.text("Hoshino Harness")),5000)
@@ -59,22 +60,30 @@ class M0StartupBenchmark {
             icon!!.click()
             waitFor("Kernel readiness timed out",300000) {device.findObject(By.res("kernel-status"))?.text?.contains("已连接")==true}
             val readyAt=SystemClock.elapsedRealtime()
+            if(!device.hasObject(By.textContains("claude / mock-model"))) {
+                requireNotNull(device.findObject(By.res("model-picker"))).click()
+                requireNotNull(device.wait(Until.findObject(By.text("claude / mock-model")),5000)).click()
+                waitFor("Fixture provider selection failed") {device.hasObject(By.textContains("claude / mock-model"))}
+            }
             requireNotNull(device.findObject(By.res("message-input"))).text="你好 benchmark"
+            waitFor("Send button did not enable") {device.findObject(By.res("send"))?.isEnabled==true}
             requireNotNull(device.findObject(By.res("send"))).click()
             waitFor("First streamed token timed out") {
-                device.findObject(By.res("approve"))?.click()
+                // AlertDialog has a separate accessibility root from the Scaffold's test-tag setting.
+                device.findObject(By.text("允许本次"))?.click()
                 device.findObject(By.res("assistant-text"))?.text?.isNotEmpty()==true
             }
             val firstTokenAt=SystemClock.elapsedRealtime()
             assertTrue("Memory must be sampled during output",device.hasObject(By.text("✦ 思考中")))
             val streaming=memory(iteration,"streaming")
+            assertTrue("All streaming memory dumps must precede stream completion",device.hasObject(By.text("✦ 思考中")))
             waitFor("Streaming did not finish") {!device.hasObject(By.text("✦ 思考中"))}
             val idle=memory(iteration,"idle")
             readyTimes+=readyAt-clickedAt;tokenTimes+=firstTokenAt-clickedAt
             samples.put(JSONObject().put("iteration",iteration).put("iconToReadyMs",readyAt-clickedAt).put("iconToFirstTokenMs",firstTokenAt-clickedAt).put("streaming",streaming).put("idle",idle))
         }
         acceptance.put("startup",JSONObject().put("mode","process-cold, runtime already installed").put("samples",samples).put("iterations",5).put("iconToReadyMedianMs",readyTimes.sorted()[2]).put("iconToFirstTokenMedianMs",tokenTimes.sorted()[2]).put("includesApprovalAndInput",true))
-        acceptance.put("measurementAbi",android.os.Build.SUPPORTED_ABIS[0]).put("measurementApi",android.os.Build.VERSION.SDK_INT)
+        acceptance.put("measurementAbi",android.os.Build.SUPPORTED_ABIS[0]).put("measurementApi",android.os.Build.VERSION.SDK_INT).put("measurementIsEmulator",shell("getprop ro.kernel.qemu").trim()=="1").put("modelFixture","claude / mock-model; loopback mock")
         File(output,"m0-metrics.json").writeText(acceptance.toString(2))
     }
 }

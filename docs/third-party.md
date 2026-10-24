@@ -9,5 +9,6 @@
 - proot：GPL-2.0，独立外部程序；源码固定为 [termux/proot ee654333](https://github.com/termux/proot/tree/ee6543334a67261d19e7023ae5eb30af5a7ad4f3)，完整归档 URL 和 SHA256 在 `rootfs/proot-source-lock.json`。`rootfs/build-proot.py` 公开 NDK 版本、完整编译参数、ashmem 单元的缺失头文件兼容与动态依赖名 `libtalloc.so.2` → `libtalloc.so` 调整。正式构建不启用可选的栈偏移诊断。Termux 5.1.107.99 预编译包仅作为已验证失败的对照，最终 APK 使用源码构建结果。
 - talloc 2.5.0：LGPL-3.0-or-later，独立 proot 的动态依赖；源码 [talloc](https://www.samba.org/ftp/talloc/talloc-2.5.0.tar.gz)。未链接入主项目。
 - libandroid-shmem 0.7：BSD-2-Clause；源码 [termux/libandroid-shmem](https://github.com/termux/libandroid-shmem/tree/v0.7)。
+- XZ for Java 1.10：0BSD，纯 Java 解压；版本及许可可见 [Maven Central POM](https://repo.maven.apache.org/maven2/org/tukaani/xz/1.10/xz-1.10.pom)。
 
 Termux 原始包 URL、版本及 SHA256 见 `rootfs/termux-lock.json`；包中 copyright 文件在准备资产时随 APK 保存。发布前应同时提供与所分发二进制对应的完整源码归档、构建 recipe 和许可证，不能仅以主项目 MIT 文件替代各自义务。M0 未打正式发布 tag。
