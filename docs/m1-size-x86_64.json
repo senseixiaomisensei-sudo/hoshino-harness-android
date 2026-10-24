@@ -1,9 +1,9 @@
 {
   "abi": "x86_64",
-  "unpackedBytes": 242034918,
-  "xzBytes": 40569856,
-  "gzipBytes": 68110863,
-  "selectedPackages": 268,
+  "unpackedBytes": 242129018,
+  "xzBytes": 40586588,
+  "gzipBytes": 68132811,
+  "selectedPackages": 269,
   "largestFiles": [
     {
       "path": "usr/bin/node",
@@ -46,6 +46,6 @@
       "bytes": 1746944
     }
   ],
-  "packSeconds": 150.625,
-  "sha256": "b45c1a78798ea3e828b18ee69c0203bfc14c4d07a3bcef6add16e11f8b2fcf36"
+  "packSeconds": 80.531,
+  "sha256": "5e825f559b09277378c6e4c0a56104340b00072bdccf49920bc570da95f9d507"
 }

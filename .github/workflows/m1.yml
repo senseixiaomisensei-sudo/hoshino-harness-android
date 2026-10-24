@@ -147,9 +147,9 @@ jobs:
             adb install --no-streaming -r artifacts/app/build/outputs/apk/androidTest/x86/debug/app-x86-debug-androidTest.apk
             adb shell pm grant dev.hoshino.app android.permission.POST_NOTIFICATIONS
             python3 tools/start-shizuku-fixture.py --serial emulator-5554
-            adb shell am instrument -w -r -e class app.hoshino.harness.M1UiSmokeTest,app.hoshino.harness.M1ConversationSmokeTest,app.hoshino.harness.ShizukuDetectionTest,app.hoshino.harness.PermissionCapabilityTest,app.hoshino.harness.ShizukuExecutionTest,app.hoshino.harness.HistorySearchTest,app.hoshino.harness.UiCustomizationTest dev.hoshino.app.test/androidx.test.runner.AndroidJUnitRunner | tee reports/m1-ui-smoke.txt
+            adb shell am instrument -w -r -e class app.hoshino.harness.M1UiSmokeTest,app.hoshino.harness.M1ConversationSmokeTest,app.hoshino.harness.ShizukuDetectionTest,app.hoshino.harness.PermissionCapabilityTest,app.hoshino.harness.ShizukuExecutionTest,app.hoshino.harness.HistorySearchTest,app.hoshino.harness.UiCustomizationTest,app.hoshino.harness.ChatExperienceTest dev.hoshino.app.test/androidx.test.runner.AndroidJUnitRunner | tee reports/m1-ui-smoke.txt
             adb logcat -b crash -d -v brief | sed -E 's/sk-[A-Za-z0-9_-]+/[redacted]/g;s/Bearer [A-Za-z0-9._=-]+/Bearer [redacted]/g' > reports/m1-crash.txt
-            grep -q 'OK (7 tests)' reports/m1-ui-smoke.txt
+            grep -q 'OK (8 tests)' reports/m1-ui-smoke.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:

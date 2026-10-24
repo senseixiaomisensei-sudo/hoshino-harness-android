@@ -28,6 +28,7 @@ const rows: Row[] = [];
 const row = (id: string, pkg = id, config?: object, inject?: string[]) => rows.push({ id, name: `@deepseek-ai/dsh-${pkg}`, ...(config && {config}), ...(inject && {inject}) });
 row('timer', '../cordis-plugin-timer'); rows[0]!.name = '@deepseek-ai/cordis-plugin-timer';
 for (const id of ['llm', 'session', 'session-projection', 'agent', 'tools', 'working-directory', 'commands', 'llm-retry', 'jobs-local']) row(id);
+row('token-meter');
 row('agent-default-model', 'agent-default-model', { provider: 'unconfigured', model: 'unconfigured' });
 row('session-title', 'session-title', { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 });
 row('agent-loop', 'agent-loop', { agents: [] });

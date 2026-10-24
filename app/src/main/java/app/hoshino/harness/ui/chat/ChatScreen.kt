@@ -128,7 +128,7 @@ fun ChatScreen(
     val tier = (current?.tier ?: composer.tier).takeIf { it in vm.supportedPermissionTiers } ?: PermissionTier.WorkspaceWrite
     val presetName = presets.firstOrNull { it.id == composer.presetId }?.name ?: "Standard"
     val modelInfo = vm.modelInfo(composer.model)
-    val modelLabel = if (modelInfo == null) "选择模型" else if (modelInfo.reasoning) "${modelInfo.displayName} · ${composer.effort.label}" else modelInfo.displayName
+    val modelLabel = if (modelInfo == null) "选择模型" else if (modelInfo.reasoning || composer.effort!=app.hoshino.harness.core.ReasoningEffort.Off) "${modelInfo.displayName} · ${composer.effort.label}" else modelInfo.displayName
 
     fun navigate(route: String) {
         scope.launch { drawer.close() }

@@ -36,8 +36,16 @@ class ShizukuExecutionTest {
             if(client.shizuku.value!=ShizukuStatus.Ready) {
                 runBlocking{client.requestShizukuPermission()}
                 val device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-                val allow=device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)^(allow( all the time| only this time)?|always allow|始终允许|允许)$"))),10000)
-                assertNotNull("Official Shizuku permission dialog was not shown",allow);allow.click()
+                val deadline=System.currentTimeMillis()+15000
+                while(client.shizuku.value!=ShizukuStatus.Ready && System.currentTimeMillis()<deadline) {
+                    val allow=device.findObject(By.text(java.util.regex.Pattern.compile("(?is)^(allow(?:\\s+.*)?|always allow|始终允许|允许|仅此一次|仅本次允许)$")).clickable(true))
+                    if(allow!=null)allow.click()
+                    runBlocking{client.refreshShizuku()};Thread.sleep(100)
+                }
+                if(client.shizuku.value!=ShizukuStatus.Ready) {
+                    val directory=java.io.File(context.filesDir,"verification").apply{mkdirs()}
+                    device.dumpWindowHierarchy(java.io.File(directory,"shizuku-permission-ui.xml"))
+                }
             }
             ui.waitUntil(10000){client.shizuku.value==ShizukuStatus.Ready}
             runBlocking {client.upsertProvider(Provider("system-fixture","System fixture","custom",ProviderProtocol.OpenAICompatible,"http://127.0.0.1:8099/v1","sk-system-fixture-"+UUID.randomUUID(),emptyList(),true,listOf(ModelInfo("mock-model","System fixture",128000,4096,false,false,ReasoningEffort.Off))))}

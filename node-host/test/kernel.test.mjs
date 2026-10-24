@@ -20,7 +20,9 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
     if (req.headers.authorization !== 'Bearer test-callback-secret') { res.writeHead(401).end(); return; }
     let raw=''; for await(const b of req) raw+=b; const body=JSON.parse(raw);
     let result = {};
-    if (req.url === '/providers') result=['claude','compatible'].map((id,i)=>({id,type:i?'openai-compatible':'anthropic',baseURL:`http://127.0.0.1:${mockPort}${i?'/v1/chat/completions':'/v1/messages'}`,apiKey:`KEY_${id.toUpperCase()}`,models:['mock-model'],metadata:{models:[{id:'mock-model',reasoning:false}]}}));
+    if (req.url === '/providers') result=[...['claude','compatible'].map((id,i)=>({id,type:i?'openai-compatible':'anthropic',baseURL:`http://127.0.0.1:${mockPort}${i?'/v1/chat/completions':'/v1/messages'}`,apiKey:`KEY_${id.toUpperCase()}`,models:['mock-model'],metadata:{models:[{id:'mock-model',reasoning:false}]}})),...[
+      ['deepseek-max','openai-compatible','deepseek-v4.1-flash-1017'],['claude-max','anthropic','claude-sonnet-4-6'],['compatible-max','openai-compatible','compatible-reasoner']
+    ].map(([id,type,model])=>({id,type,baseURL:`http://127.0.0.1:${mockPort}${type==='anthropic'?'/v1/messages':'/v1/chat/completions'}`,apiKey:'KEY_MAX',models:[model],metadata:{models:[{id:model,reasoning:true,defaultEffort:'Max',maxOutput:32768}]}}))];
     if (req.url === '/credential') result={value:canary,source:'test-memory'};
     if (req.url === '/device-info') { deviceCalls++; result={model:'M0 virtual Android',androidVersion:'16',battery:72}; }
     if (req.url === '/approve') { approvals.push(body); result={approved:!(denySystem && body.tool==='system_shell')}; }
@@ -88,6 +90,18 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
     turns++;
   }
   assert.ok(approvals.some(a=>a.kind==='network'));assert.ok(approvals.some(a=>a.tool==='write'));
+  for(const [provider,model] of [['deepseek-max','deepseek-v4.1-flash-1017'],['claude-max','claude-sonnet-4-6'],['compatible-max','compatible-reasoner']]) {
+    await rpc('session/selectModel',{sessionId,provider,model,reasoningEffort:'max'});
+    const before=frames.length;
+    await rpc('session/prompt',{sessionId,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text:'你好'}]});
+    await wait(()=>frames.slice(before).some(f=>f.value?.event?.type==='turn/end'));turns++;
+    const request=mock.requests.at(-1).body;
+    if(provider==='claude-max') {assert.equal(request.output_config.effort,'max');assert.equal(request.thinking.type,'adaptive');}
+    else {assert.equal(request.reasoning_effort,'max');if(provider==='deepseek-max'){assert.equal(request.thinking.type,'enabled');assert.ok(request.max_tokens>=32768);}}
+    assert.ok(request.max_tokens>=32768 || request.max_completion_tokens>=32768,'Max must retain a meaningful total thinking/answer budget');
+  }
+  const withUsage=(await rpc('session/list',{})).items.find(row=>row.sessionId===sessionId).projections.values;
+  assert.ok(withUsage.contextPressure.pressureTokens>0);assert.ok(withUsage.contextBreakdown.toolsTokens>0);
   assert.ok(!logs.includes(canary));assert.ok(!logs.includes(info.token));
   let durableLog='';
   async function scan(dir){for(const e of await readdir(dir,{withFileTypes:true})){const p=join(dir,e.name);if(e.isDirectory())await scan(p);else {const bytes=await readFile(p);assert.ok(!bytes.includes(Buffer.from(canary)),p);if(e.name.endsWith('.jsonl'))durableLog+=bytes.toString('utf8');}}}

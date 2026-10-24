@@ -23,6 +23,8 @@ export async function apply(ctx: Context): Promise<void> {
           const reasoning=model?.reasoning ?? p.type==='anthropic';
           return { id, input: model?.vision ? ['text','image'] : ['text'],
             ...(reasoning ? { reasoningEfforts: { off: null, low: 'low', medium: 'medium', high: 'high', max: 'max' } } : {}),
+            ...(p.type==='anthropic' && (model?.defaultEffort?.toLowerCase()==='max' || /^deepseek(?:[-_.]|$)/i.test(id)) ? {compat:{forceAdaptiveThinking:true}} :
+              p.type!=='anthropic' && /^deepseek(?:[-_.]|$)/i.test(id) ? {compat:{thinkingFormat:'deepseek',supportsReasoningEffort:true,maxTokensField:'max_tokens'}} : {}),
             contextWindow: model?.contextLength ?? 128000, maxTokens: model?.maxOutput ?? 4096 };
         }),
         // Only session/selectModel's explicit effort may enable thinking.

@@ -92,15 +92,13 @@ private fun ModelPickerBody(
             Spacer(Modifier.height(6.dp))
             Segmented(
                 options = ReasoningEffort.entries,
-                selected = if (info?.reasoning == false) ReasoningEffort.Off else effort,
+                selected = effort,
                 label = { it.label },
                 onSelect = onEffort,
-                enabled = info?.reasoning != false,
+                enabled = selected != null,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             )
-            if (info?.reasoning == false) {
-                Text("当前模型不支持推理", style = t.caption, color = c.text3, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
-            }
+            Text("所选档位会随本轮请求发送；max 为最高推理档位",style=t.caption,color=c.text3,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))
             Spacer(Modifier.height(12.dp))
         }
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
@@ -150,7 +148,7 @@ fun ContextUsageSheet(usage: ContextUsage, onCompact: () -> Unit, onDismiss: () 
             UsageRing(usage.fraction, size = 56.dp, stroke = 5.dp)
             Spacer(Modifier.width(16.dp))
             Column {
-                Text("${(usage.fraction * 100).toInt()}%", style = t.headline, color = c.text)
+                Text(if(usage.usedTokens>0 && usage.fraction<0.0001f)"<0.01%" else "%.2f%%".format(usage.fraction*100), style = t.headline, color = c.text)
                 Text("${formatTokens(usage.usedTokens)} / ${formatTokens(usage.limitTokens)} tokens", style = t.caption, color = c.text3)
             }
         }
@@ -169,7 +167,7 @@ fun ContextUsageSheet(usage: ContextUsage, onCompact: () -> Unit, onDismiss: () 
             Text("开始对话后显示明细", style = t.caption, color = c.text3, modifier = Modifier.padding(horizontal = 20.dp))
         }
         Spacer(Modifier.height(16.dp))
-        HButton("立即压缩 /compact", { onCompact(); onDismiss() }, Modifier.fillMaxWidth().padding(horizontal = 20.dp), style = BtnStyle.Primary)
+        Text("用量由模型及 dsh 回报；系统、工具和消息明细为上下文估算。",style=t.caption,color=c.text3,modifier=Modifier.padding(horizontal=20.dp))
         Spacer(Modifier.height(8.dp))
     }
 }

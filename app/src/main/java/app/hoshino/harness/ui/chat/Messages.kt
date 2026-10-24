@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -55,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import app.hoshino.harness.core.ApprovalDecision
 import app.hoshino.harness.core.AttachmentKind
 import app.hoshino.harness.core.ChatItem
+import app.hoshino.harness.ui.components.IconBtn
 import app.hoshino.harness.core.DiffLineType
 import app.hoshino.harness.core.DiffState
 import app.hoshino.harness.core.GoalStatus
@@ -227,9 +229,9 @@ private fun ThinkingBlock(item: ChatItem.Thinking) {
             Spacer(Modifier.width(6.dp))
             if (item.running) {
                 val secs = ((now - item.startedAt) / 1000).coerceAtLeast(0)
-                ShimmerText("思考中 · ${secs}s", t.caption)
+                ShimmerText("思考过程 · ${secs}s", t.caption)
             } else {
-                Text("已思考 ${(item.durationMs / 1000).coerceAtLeast(1)}s", style = t.caption, color = c.text3)
+                Text("思考过程 · ${(item.durationMs / 1000).coerceAtLeast(1)}s", style = t.caption, color = c.text3)
             }
             Spacer(Modifier.width(2.dp))
             HIcon(if (expanded) HIcons.ChevronUp else HIcons.ChevronDown, size = 14.dp, tint = c.text3)
@@ -238,7 +240,7 @@ private fun ThinkingBlock(item: ChatItem.Thinking) {
             Row(Modifier.padding(start = 8.dp, top = 2.dp, bottom = 4.dp).height(IntrinsicSize.Min)) {
                 VHairline()
                 Spacer(Modifier.width(12.dp))
-                Text(item.text, style = t.caption, color = c.text2)
+                SelectionContainer {Text(item.text, style = t.caption, color = c.text2)}
             }
         }
     }
@@ -339,14 +341,14 @@ private fun TerminalCard(item: ChatItem.Terminal) {
     val t = HoshinoTheme.type
     val ctx = LocalContext.current
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
-    val lines = item.output.trimEnd().lines()
-    val shown = if (expanded || lines.size <= 8) lines else lines.takeLast(8)
+    val shown = item.output
     Column(Modifier.fillMaxWidth().hairlineCard(c.surface, c.line).animateContentSize()) {
-        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().clickable{expanded=!expanded}.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             HIcon(HIcons.Terminal, size = 16.dp, tint = c.text2)
             Spacer(Modifier.width(8.dp))
             Text("$ ${item.command}", style = t.code, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             StatusChip(item.status)
+            IconBtn(if(expanded)HIcons.ChevronUp else HIcons.ChevronDown,if(expanded)"收起终端输出" else "展开终端输出",{expanded=!expanded},iconSize=16.dp)
             Box(Modifier.size(40.dp).clip(CircleShape).clickable { copyToClipboard(ctx, "$ ${item.command}\n${item.output}") }, contentAlignment = Alignment.Center) {
                 HIcon(HIcons.Copy, size = 16.dp, tint = c.text3)
             }
@@ -357,18 +359,19 @@ private fun TerminalCard(item: ChatItem.Terminal) {
                 if (item.exitCode != null) Tag("exit ${item.exitCode}", color = if (item.exitCode == 0) c.success else c.danger)
             }
         }
-        if (item.output.isNotEmpty() || item.status == ToolStatus.Denied) {
+        AnimatedVisibility(expanded && (item.output.isNotEmpty() || item.status == ToolStatus.Denied)) {
+          Column {
             Hairline()
             Column(
-                Modifier.fillMaxWidth().background(c.surface2).clickable(enabled = lines.size > 8) { expanded = !expanded }
+                Modifier.fillMaxWidth().heightIn(max=280.dp).background(c.surface2).verticalScroll(rememberScrollState())
                     .horizontalScroll(rememberScrollState()).padding(12.dp),
             ) {
                 if (item.status == ToolStatus.Denied) {
                     Text("命令已被拒绝，未执行。", style = t.codeSmall, color = c.warning)
                 }
-                if (!expanded && lines.size > 8) Text("… 已折叠 ${lines.size - 8} 行，点按展开", style = t.codeSmall, color = c.text3)
-                shown.forEach { Text(it, style = t.codeSmall, color = c.text2, softWrap = false) }
+                SelectionContainer{Text(shown,style=t.codeSmall,color=c.text2,softWrap=false)}
             }
+          }
         }
     }
 }

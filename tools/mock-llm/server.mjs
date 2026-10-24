@@ -4,7 +4,7 @@ export function createMockLlm() {
   const requests = [];
   const server = createServer(async (req, res) => {
     const path = new URL(req.url, 'http://127.0.0.1').pathname;
-    if (req.method === 'GET' && path === '/health') { res.writeHead(200, {'Content-Type':'application/json'}).end(JSON.stringify({requests:requests.length,paths:requests.map(r=>r.path),benchmarkRequests:requests.filter(r=>r.benchmark).length,promptClasses:requests.map(r=>r.promptClass)})); return; }
+    if (req.method === 'GET' && path === '/health') { res.writeHead(200, {'Content-Type':'application/json'}).end(JSON.stringify({requests:requests.length,paths:requests.map(r=>r.path),requestOptions:requests.map(r=>({model:r.body.model,effort:r.body.reasoning_effort??r.body.output_config?.effort,maxTokens:r.body.max_tokens??r.body.max_completion_tokens,maxTokensField:r.body.max_tokens!==undefined?'max_tokens':'max_completion_tokens',thinkingType:r.body.thinking?.type})),benchmarkRequests:requests.filter(r=>r.benchmark).length,promptClasses:requests.map(r=>r.promptClass)})); return; }
     if (req.method !== 'POST' || !['/v1/messages', '/v1/chat/completions'].includes(path)) { res.writeHead(404).end(); return; }
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); requests.push({ path, body });
@@ -20,7 +20,8 @@ export function createMockLlm() {
     const last = messages.at(-1);
     const hasResult = last?.role === 'tool' || last?.content?.some?.(c => c.type === 'tool_result');
     const tool = !hasResult && /system command|系统命令|shizuku.*id/i.test(prompt) ? 'system_shell' : !hasResult && /设备|device/.test(prompt) ? 'get_device_info' : !hasResult && /hello\.txt/.test(prompt) ? 'write' : undefined;
-    const args = tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'} : tool==='system_shell' ? {command:'id -u; getprop ro.build.version.release',timeout_ms:5000} : {};
+    const writeMarker=prompt.match(/m1-write-fixture-[a-z]+/)?.[0];
+    const args = tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'+(writeMarker?writeMarker+'\n':'')} : tool==='system_shell' ? {command:'id -u; getprop ro.build.version.release',timeout_ms:5000} : {};
     const resultText = hasResult ? (typeof last.content === 'string' ? last.content : last.content.filter(c=>c.type==='tool_result').map(c=>typeof c.content==='string'?c.content:JSON.stringify(c.content)).join(' ')) : '';
     const answer = hasResult ? `工具已完成，返回结果：${resultText}` : '你好，我是 Hoshino。';
     // dsh may append another user-role context message; identify the fixture in the full request.
@@ -49,7 +50,7 @@ export function createMockLlm() {
       await send('message_delta', {delta:{stop_reason:tool ? 'tool_use':'end_turn', stop_sequence:null},usage:{output_tokens:20}});
       await send('message_stop');
     } else {
-      const chunk = (delta, finish_reason = null) => event({id:'chat_mock', object:'chat.completion.chunk', created:1, model:body.model, choices:[{index:0, delta, finish_reason}]});
+      const chunk = (delta, finish_reason = null) => event({id:'chat_mock', object:'chat.completion.chunk', created:1, model:body.model, choices:[{index:0, delta, finish_reason}],...(finish_reason ? {usage:{prompt_tokens:10,completion_tokens:20,total_tokens:30,prompt_tokens_details:{cached_tokens:2},completion_tokens_details:{reasoning_tokens:5}}} : {})});
       await chunk({role:'assistant', content:''});
       await chunk({reasoning_content:'我先检查请求。'});
       if (tool) {

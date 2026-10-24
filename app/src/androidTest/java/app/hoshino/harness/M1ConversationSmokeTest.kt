@@ -72,7 +72,8 @@ class M1ConversationSmokeTest {
             for(provider in listOf("claude","compatible")) {
                 if(provider=="compatible") {
                     ui.onNodeWithText("M1 Claude",substring=true).performScrollTo().performClick()
-                    ui.waitUntil(10000){ui.onAllNodesWithText("M1 Compatible").fetchSemanticsNodes().isNotEmpty()}
+                    ui.waitUntil(10000){ui.onAllNodesWithText("推理等级").fetchSemanticsNodes().isNotEmpty()}
+                    ui.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasAnyDescendant(hasText("推理等级")))).performScrollToNode(hasText("M1 Compatible"))
                     ui.onNodeWithText("M1 Compatible").performClick()
                     ui.waitUntil(10000){vm.composer.value.model?.providerId=="compatible"}
                     androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
@@ -82,10 +83,10 @@ class M1ConversationSmokeTest {
                 assertTrue(device.filterIsInstance<HarnessEvent.ToolCallStarted>().any{it.name=="get_device_info"})
                 assertTrue(device.filterIsInstance<HarnessEvent.ToolCallOutput>().any{it.delta.contains(Build.MODEL)})
                 assertTrue(device.filterIsInstance<HarnessEvent.AssistantDelta>().joinToString(""){it.delta}.contains(Build.MODEL))
-                val write=turn("写入 hello.txt")
+                val write=turn("写入 hello.txt m1-write-fixture-$provider")
                 assertTrue(write.filterIsInstance<HarnessEvent.ToolCallStarted>().any{it.name=="write"})
                 assertTrue(write.any{it is HarnessEvent.FileDiff})
-                assertEquals("Hello from dsh\n",client.files.resolve("hello.txt").readText())
+                assertEquals("Hello from dsh\nm1-write-fixture-$provider\n",client.files.resolve("hello.txt").readText())
             }
             turn("m1-error-fixture",true)
             fun hasCanary(file:File):Boolean {

@@ -40,6 +40,9 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private data class Live(val id: String,val started: Long=android.os.SystemClock.elapsedRealtime(),var text: String="",var thinking: String="")
     private val live=mutableMapOf<String,Live>()
     private val calls=mutableMapOf<String,String>()
+    private val capacities=java.util.concurrent.ConcurrentHashMap<String,Int>()
+    private data class TurnTokens(val start:Long,var input:Int=0,var output:Int=0,var cache:Int=0,var reasoning:Int=0,var reported:Boolean=false)
+    private val tokenTurns=mutableMapOf<String,TurnTokens>()
     private var activeSession=""
     private val terminalRows=MutableStateFlow<List<TerminalSession>>(emptyList())
     override val terminals=terminalRows.asStateFlow()
@@ -137,6 +140,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         when(frame.optString("type")) {
             "snapshot" -> {
                 frame.getJSONArray("records").rows().forEach { record -> durable(sid,record.getJSONObject("event")) }
+                frame.optJSONObject("projections")?.optJSONObject("values")?.let{publishContext(sid,it)}
             }
             "event" -> durable(sid,frame.getJSONObject("event"))
             "assistant-stream" -> {
@@ -159,12 +163,14 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val seq=event.getInt("seq");if(!seen.getOrPut(sid) { mutableSetOf() }.add(seq))return
         val id="e:$seq";val data=event.optJSONObject("data") ?: return
         when(event.getString("type")) {
-            "turn/start" -> { publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
+            "turn/start" -> {tokenTurns[sid]=TurnTokens(event.optLong("time",System.currentTimeMillis()));publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
             "turn/end" -> {
+                tokenTurns.remove(sid)?.takeIf{it.reported}?.let{u->publish(HarnessEvent.UsageReported(sid,id,Usage(u.input,u.output,u.cache,u.reasoning,(event.optLong("time",System.currentTimeMillis())-u.start).coerceAtLeast(0))))}
                 live.remove(sid)?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) }
                 val reason=data.optJSONObject("reason")
                 publish(HarnessEvent.TurnFinished(sid,id,reason?.optString("kind")=="aborted"))
                 sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=false,updatedAt=System.currentTimeMillis()) else it } }
+                scope.launch{runCatching{api().rpc("session/list",JSONObject()).getJSONArray("items").rows().firstOrNull{it.optString("sessionId")==sid}?.optJSONObject("projections")?.optJSONObject("values")?.let{publishContext(sid,it)}}}
                 if(reason?.optString("kind")=="error") {
                     // dsh TurnEndReasonMap.error contains `error: LlmFailure`.
                     val failure=reason.optJSONObject("error")
@@ -179,6 +185,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             }
             "session/title" -> sessionRows.update { list -> list.map { if(it.id==sid)it.copy(title=data.optString("title",it.title)) else it } }
             "assistant/message" -> {
+                data.optJSONObject("usage")?.let{usage->val u=tokenTurns.getOrPut(sid){TurnTokens(event.optLong("time",System.currentTimeMillis()))};u.reported=true;u.input+=usage.optInt("inputTokens");u.output+=usage.optInt("outputTokens");u.cache+=usage.optInt("cacheReadTokens");u.reasoning+=usage.optInt("reasoningTokens")}
                 val message=data.getJSONObject("message");val text=content(message.optJSONArray("content"),"text");val reasoning=content(message.optJSONArray("content"),"reasoning")
                 val l=live.remove(sid)
                 if(l==null) {
@@ -190,6 +197,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                     if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started))
                 }
             }
+            "request/context" -> {data.optInt("contextWindow").takeIf{it>0}?.let{capacities[sid]=it;publish(HarnessEvent.ContextUsageChanged(sid,ContextUsage(0,it,emptyList())))}}
             "tool/call" -> { val call=data.getString("callId");calls["$sid:$call"]=id;val name=data.getString("name");publish(HarnessEvent.ToolCallStarted(sid,id,name,name,data.getString("arguments"),when(name){"bash","terminal" -> ToolKind.Bash;"write","edit" -> ToolKind.Edit;else -> ToolKind.Generic}));if(name=="bash")appendAgentTerminal(sid,"$ "+JSONObject(data.getString("arguments")).optString("command"),TerminalStream.Input) }
             "tool/result" -> {
                 val result=data.getJSONObject("message");val callId=calls["$sid:${result.getString("toolCallId")}"] ?: return
@@ -200,10 +208,23 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         }
         if(event.getString("type")=="turn/end" && restartAfter.remove(sid))scope.launch {delay(500);restartKernel()}
     }
+    private suspend fun publishContext(sid:String,values:JSONObject) {
+        val pressure=values.optJSONObject("contextPressure")
+        val parts=values.optJSONObject("contextBreakdown")
+        if(pressure==null && parts==null)return
+        val breakdown=mutableListOf<Pair<String,Int>>()
+        parts?.let{breakdown+=listOf("系统提示（估算）" to it.optInt("systemTokens"),"工具定义（估算）" to it.optInt("toolsTokens"),"会话消息（估算）" to it.optInt("messageTokens"))}
+        if(pressure?.has("pressureTokens")==true)breakdown+="最近实际输入" to pressure.optInt("pressureTokens")
+        if(pressure?.has("projectedTokens")==true)breakdown+="下次请求（估算）" to pressure.optInt("projectedTokens")
+        val used=when{pressure?.has("projectedTokens")==true->pressure.optInt("projectedTokens");pressure?.has("pressureTokens")==true->pressure.optInt("pressureTokens");else->parts?.let{it.optInt("systemTokens")+it.optInt("toolsTokens")+it.optInt("messageTokens")} ?: 0}
+        val limit=pressure?.optInt("contextWindow")?.takeIf{it>0} ?: capacities[sid] ?: 128000
+        publish(HarnessEvent.ContextUsageChanged(sid,ContextUsage(used.coerceAtLeast(0),limit,breakdown)))
+    }
     suspend fun refreshSessions() {
         val client=api();val items=client.rpc("session/list",JSONObject()).getJSONArray("items").rows()
         val recovered=workspaceRows.value.toMutableList()
         val rows=items.map { row ->
+            row.optJSONObject("projections")?.optJSONObject("values")?.let{publishContext(row.getString("sessionId"),it)}
             val id=row.getString("sessionId");val old=sessionRows.value.firstOrNull { it.id==id }
             val cwd=row.optString("cwd").replace(Regex("^/workspace(?=/|$)"),"/root/workspace")
             val saved=old?.workspaceId ?: metadata.getString("workspace:$id","ws-default")!!
@@ -239,7 +260,12 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun send(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) {
         val client=api();activeSession=sessionId
         val model=options.model ?: error("请先配置模型供应商")
-        val modelInfo=providers.value.first{it.id==model.providerId}.models.first{it.id==model.modelId}
+        val provider=providers.value.first{it.id==model.providerId}
+        val modelInfo=provider.models.first{it.id==model.modelId}
+        val maxBudget=if(options.effort==ReasoningEffort.Max)maxOf(modelInfo.maxOutput,minOf(32768,(modelInfo.contextLength-1024).coerceAtLeast(modelInfo.maxOutput))) else modelInfo.maxOutput
+        // /models often omits capabilities. An explicit user effort is authoritative.
+        if(options.effort!=ReasoningEffort.Off && (!modelInfo.reasoning || maxBudget!=modelInfo.maxOutput || provider.protocol==ProviderProtocol.Anthropic && options.effort==ReasoningEffort.Max && modelInfo.defaultEffort!=ReasoningEffort.Max))
+            upsertProvider(provider.copy(models=provider.models.map{if(it.id==model.modelId)it.copy(reasoning=true,defaultEffort=options.effort,maxOutput=maxBudget) else it}))
         require(attachments.none{it.kind==AttachmentKind.Image || it.kind==AttachmentKind.Camera} || modelInfo.vision){"当前模型未开启视觉，请在模型设置开启或切换模型"}
         control("session-options",JSONObject().put("sessionId",sessionId).put("tier",options.tier.key).put("planMode",options.planMode))
         val selection=JSONObject().put("sessionId",sessionId).put("provider",model.providerId).put("model",model.modelId)
