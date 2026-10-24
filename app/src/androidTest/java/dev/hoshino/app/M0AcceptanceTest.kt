@@ -1,6 +1,7 @@
 package dev.hoshino.app
 
 import android.content.Intent
+import app.hoshino.harness.MainActivity
 import android.os.Debug
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule

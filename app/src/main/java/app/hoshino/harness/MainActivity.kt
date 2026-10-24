@@ -10,6 +10,8 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import app.hoshino.harness.ui.HoshinoApp
 
 class MainActivity : ComponentActivity() {
+    override fun onResume(){super.onResume();app.hoshino.harness.core.AppSurface.resume(this)}
+    override fun onPause(){app.hoshino.harness.core.AppSurface.pause(this);super.onPause()}
     override fun onCreate(savedInstanceState: Bundle?) {
         // Android 12+ 系统 SplashScreen（低版本由 core-splashscreen 兼容），主题见 Theme.Hoshino.Starting
         installSplashScreen()

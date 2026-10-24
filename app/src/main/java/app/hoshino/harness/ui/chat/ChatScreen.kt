@@ -72,6 +72,7 @@ import app.hoshino.harness.ui.components.IconBtn
 import app.hoshino.harness.ui.components.Pill
 import app.hoshino.harness.ui.components.TextInputDialog
 import app.hoshino.harness.ui.components.toast
+import app.hoshino.harness.ui.components.markdownText
 import app.hoshino.harness.ui.drawer.SessionAction
 import app.hoshino.harness.ui.drawer.Sidebar
 import app.hoshino.harness.ui.nav.Routes
@@ -94,6 +95,7 @@ fun ChatScreen(
     val c = HoshinoTheme.colors
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val pickAttachment=attachmentPicker(vm)
     val drawer = rememberDrawerState(DrawerValue.Closed)
 
     val sessions by vm.sessions.collectAsStateWithLifecycle()
@@ -229,6 +231,9 @@ fun ChatScreen(
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         val s = current
                         val entries = listOf(
+                            MenuEntry("复制整个会话为 Markdown",HIcons.Copy) {app.hoshino.harness.ui.components.copyToClipboard(ctx,state.items.joinToString("\n\n"){it.markdownText()})},
+                            MenuEntry("截当前屏幕",HIcons.Image) {scope.launch {runCatching{app.hoshino.harness.core.AppSurface.capture()}.onSuccess{app.hoshino.harness.ui.tools.CaptureRequests.selection.value=app.hoshino.harness.ui.tools.CaptureSelection(screen=it);navigate(Routes.SCREENSHOT)}.onFailure{vm.toast(it.message ?: "截图失败")}}},
+                            MenuEntry("会话长图",HIcons.Image) {app.hoshino.harness.ui.tools.CaptureRequests.selection.value=app.hoshino.harness.ui.tools.CaptureSelection(items=state.items.toList());navigate(Routes.SCREENSHOT)},
                             MenuEntry(stringResource(R.string.menu_rename), HIcons.Edit) { s?.let { renameTarget = it } },
                             MenuEntry(stringResource(R.string.menu_fork), HIcons.Fork) { s?.let { vm.fork(it.id) } },
                             MenuEntry(stringResource(R.string.menu_export), HIcons.Download) { s?.let { vm.export(it.id) } },
@@ -271,7 +276,7 @@ fun ChatScreen(
                     onStop = { vm.stop() },
                     onSteer = { vm.steer(it) },
                     onRemoveQueued = { vm.removeQueued(it) },
-                    onAddAttachment = { vm.addAttachment(it) },
+                    onAddAttachment = pickAttachment,
                     onRemoveAttachment = { vm.removeAttachment(it) },
                     onPickPreset = { vm.setPreset(it) },
                     onTogglePlan = { vm.setPlanMode(it) },
@@ -313,6 +318,7 @@ fun ChatScreen(
                                 onOpenSubTask = { openTask = it },
                                 onOpenGoals = { navigate(Routes.GOALS) },
                                 onOpenSchedules = { navigate(Routes.SCHEDULES) },
+                                onScreenshot = {app.hoshino.harness.ui.tools.CaptureRequests.selection.value=app.hoshino.harness.ui.tools.CaptureSelection(items=listOf(it));navigate(Routes.SCREENSHOT)},
                             ),
                             modifier = Modifier.fillMaxWidth().weight(1f),
                         )

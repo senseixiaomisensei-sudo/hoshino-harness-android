@@ -11,3 +11,6 @@
 9. **复用原版 shell 与 PTY 分工**：Agent 的 bash 使用原版 tool-bash + bash-local，以保留超时、取消和溢出文件；交互终端复用原版 api-terminal-controller / subprocess-local 的 PTY。android-subprocess 仅继承原版 provider，将 spillDir 配置到私有 workspace/.hoshino-output，不改上游执行代码。
 10. **锁定完整 Node 编译依赖**：开发运行 40056749850 中 arm64 的 PTY/Sharp 容器自检成功，x86_64 因 nodejs-dev 24.18.1 要求同版本 nodejs-libs，而仓库索引默认选择 24.22.1 失败。补齐官方同版本 libs APK 的 URL、SHA256 与长度，不升级 Node 或跳过签名。删除编译依赖后再测 PTY/Sharp；npm 用 apk del 正常卸载，避免后续按需安装看到损坏的包数据库。
 11. **原生运行时按 ABI 独立缓存与上传**：两种架构分开构建，单个 ABI 失败不会丢失另一架构的构建产物。最终打包必须下载两份、刷新本项目 host/plugins 并重算校验；缓存不作为 Android 验收通过的证据。
+12. **12 点前先交付公开测试 APK，之后继续施工**：按用户最新时间要求，先发布带 0.1.0-m1 版本名的可安装测试包及下载直链；未完成完整 M1AcceptanceTest 前明确标为预发布，不写 M1 验收通过。用户明确要求交付后不停工，继续完成剩余功能和测试。
+13. **自述手册取自真实组合**：build 脚本在无凭据的本地 dsh 实例里读取实际 boot rows 和 ctx.tools.schemas()，结合 ZIP 路由、主题字段、事件源码生成手册。self 写操作和用户插件通过独立 Cordis 插件实施，不修改内核源码或 JSONL 持久化。
+14. **附件复用原生 dsh 入站接口**：图片使用 session/prompt 的原生 image 内容块；普通文件走 /api/session/uploadFileBinary 和 file receipt。Android 保留原图，发送图长边不超过 1568。截图使用 PixelCopy，密钥页和后台调用拒绝；不申请录屏或全盘存储权限。

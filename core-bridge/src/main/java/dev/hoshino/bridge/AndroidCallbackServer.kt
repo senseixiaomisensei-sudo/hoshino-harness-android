@@ -34,7 +34,7 @@ class AndroidCallbackServer(scope: CoroutineScope, private val onDiagnostic: (St
                                 socket.getOutputStream().write("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()); return@use
                             }
                             val length = headers["content-length"]?.toInt() ?: 0
-                            require(length in 0..65536)
+                            require(length in 0..8388608)
                             val bytes = ByteArray(length); var offset = 0
                             while (offset < length) { val n = input.read(bytes, offset, length-offset); check(n > 0); offset += n }
                             val result = handler(start[1].removePrefix("/"), JSONObject(String(bytes)))

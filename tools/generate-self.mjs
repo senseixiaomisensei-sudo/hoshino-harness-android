@@ -1,0 +1,26 @@
+import {readFile,writeFile,mkdir,mkdtemp,rm} from 'node:fs/promises';
+import {createServer} from 'node:http';
+import {spawn,execFileSync} from 'node:child_process';
+import {once} from 'node:events';
+import {tmpdir} from 'node:os';
+import {resolve,join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const kotlin=join(root,'app/src/main/java/app/hoshino/harness');
+const read=path=>readFile(path,'utf8');
+const routes=[...(await read(join(kotlin,'ui/nav/Routes.kt'))).matchAll(/const val (\w+) = "([^"]+)"/g)].map(m=>({id:m[1],route:m[2]}));
+const events=[...(await read(join(kotlin,'core/HarnessClient.kt'))).matchAll(/data class (\w+)\(/g)].map(m=>m[1]);
+const tokens=[...(await read(join(kotlin,'ui/theme/Theme.kt'))).split('val LightHoshinoColors')[0].matchAll(/val (\w+): Color/g)].map(m=>m[1]);
+const gradle=await read(join(root,'app/build.gradle.kts'));const pkg=JSON.parse(await read(join(root,'node-host/package.json')));
+const input={appVersion:gradle.match(/versionName = "([^"]+)"/)[1],dshVersion:pkg.dependencies['@deepseek-ai/dsh'],dshCommit:'687f282e8625c6b8d11ff58211a90524be2e4317',commit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),repository:'https://github.com/senseixiaomisensei-sudo/hoshino-harness-android',routes,tokens,events};
+const dist=join(root,'node-host/dist');await mkdir(dist,{recursive:true});await writeFile(join(dist,'self-input.json'),JSON.stringify(input,null,2)+'\n');
+const temp=await mkdtemp(join(tmpdir(),'hoshino-self-'));
+const server=createServer(async(req,res)=>{for await(const chunk of req){};res.writeHead(200,{'Content-Type':'application/json'}).end(req.url==='/providers'?'[]':'{}');});
+server.listen(0,'127.0.0.1');await once(server,'listening');
+const child=spawn(process.execPath,[join(dist,'node-host/src/main.js'),'--self-document-only'],{cwd:join(root,'node-host'),stdio:['pipe','ignore','pipe']});let log='';child.stderr.on('data',b=>log+=b);
+const timeout=setTimeout(()=>child.kill(),90000).unref();
+child.stdin.end(JSON.stringify({callbackPort:server.address().port,callbackToken:'build-only-no-credentials',workspace:join(temp,'workspace'),home:join(temp,'home'),selfHome:join(dist,'generated-self-root'),safeMode:true})+'\n');
+try {const [code]=await once(child,'exit');if(code!==0)throw new Error('Self manual generation failed: '+log.slice(-4000));
+  const manifest=JSON.parse(await read(join(dist,'generated-self-root/self/manifest.json')));if(!manifest.tools.length || !manifest.plugins.length)throw new Error('Empty manual registry');
+  console.log(`Generated manuals: ${manifest.plugins.length} actual boot plugins, ${manifest.tools.length} tools, ${routes.length} routes.`);
+} finally {clearTimeout(timeout);server.closeAllConnections();await new Promise(r=>server.close(r));await rm(temp,{recursive:true,force:true});}

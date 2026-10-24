@@ -2,8 +2,10 @@ import type { Context } from '@deepseek-ai/cordis';
 export interface Provider {
   id: string; type: 'anthropic' | 'openai-compatible'; baseURL: string;
   apiKey: string; models: string[];
+  headers?: Record<string,string>;
+  metadata?: { name?: string; models?: Array<{ id: string; contextLength?: number; maxOutput?: number; vision?: boolean; reasoning?: boolean; defaultEffort?: string }> };
 }
-export interface Bootstrap { callbackPort: number; callbackToken: string; workspace: string; home: string; selfHome?: string }
+export interface Bootstrap { callbackPort: number; callbackToken: string; workspace: string; home: string; selfHome?: string; safeMode?: boolean }
 export class AndroidBridge {
   constructor(readonly bootstrap: Bootstrap) {}
   async call<T>(method: string, body: unknown = {}, signal?: AbortSignal): Promise<T> {

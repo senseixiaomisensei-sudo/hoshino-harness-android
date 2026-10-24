@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import {writeSelfDocs} from './self-docs.js';
 import { AndroidBridge, type Bootstrap, type Context } from './platform.js';
 // Bootstrap travels over a private stdin pipe, never argv, environment, or a file.
 const lines = createInterface({ input: process.stdin });
@@ -48,7 +49,7 @@ row('tool-bash', 'tool-bash', { enableRunInBackground: false, promoteOnTimeout: 
 row('terminals', 'terminal');
 row('terminal-bash', 'terminal-bash', { shellPath: '/bin/bash', timeoutMs: 120000 });
 row('skills', 'skill');
-row('skill-filesystem', 'skill-filesystem', { includeDefaultRoots: false, customSkillDirs: [resolve(selfHome, 'skills')], watch: false });
+rows.push({ id:'skill-filesystem',name:resolve(plugins,'android-skills','index.js'),config:{includeDefaultRoots:false,customSkillDirs:[resolve(selfHome,'skills')],watch:false} });
 row('tool-skill');
 row('typert', 'typert-registry'); row('remote-access', 'api-remote-access');
 row('webserver', 'host-webserver', { host: '127.0.0.1', port: 0 });
@@ -58,7 +59,7 @@ row('file-upload', 'client-file-upload');
 row('session-controller', 'api-session-controller', { nativeOpen: false });
 row('workspace-controller', 'api-workspace-controller');
 row('terminal-controller', 'api-terminal-controller', { shell: { path: '/bin/bash', name: 'bash', args: ['--noprofile', '--norc', '-i'] }, unattendedTimeoutMs: 0 });
-for (const id of ['android-credentials', 'android-policy', 'android-device-info', 'android-api']) rows.push({ id, name: resolve(plugins, id, 'index.js') });
+for (const id of ['android-credentials', 'android-policy', 'android-device-info', 'android-ui', 'hoshino-self', 'android-api']) rows.push({ id, name: resolve(plugins, id, 'index.js') });
 const configPath = resolve(bootstrap.home, 'mobile.cordis.yml');
 await writeFile(configPath, JSON.stringify(rows));
 let bootContext: Context | undefined;
@@ -76,6 +77,9 @@ clearTimeout(startupWatch);
 for (const key of ['agents', 'sessionController', 'connection', 'webServer', 'mobileApi']) {
   if (!ctx.get(key)) throw new Error(`Kernel required service did not start: ${key}`);
 }
+const inputPath=resolve(dirname(fileURLToPath(import.meta.url)),'../../self-input.json');
+await writeSelfDocs(ctx,rows,resolve(selfHome,'self'),inputPath);
+if(process.argv.includes('--self-document-only')) {await ctx.fiber.dispose();process.exit(0);}
 await bridge.call('ready', ctx.get('mobileApi'));
 const shutdown = async () => { await ctx.fiber.dispose(); process.exit(0); };
 process.once('SIGTERM', () => void shutdown());

@@ -34,13 +34,33 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private val live=mutableMapOf<String,Live>()
     private val calls=mutableMapOf<String,String>()
     private var activeSession=""
+    private val terminalRows=MutableStateFlow<List<TerminalSession>>(emptyList())
+    override val terminals=terminalRows.asStateFlow()
+    private val terminalOwners=java.util.concurrent.ConcurrentHashMap<String,String>()
+    private val terminalSequences=java.util.concurrent.ConcurrentHashMap<String,Int>()
+    private val terminalWritable=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
+    private val pluginRows=MutableStateFlow<List<Plugin>>(emptyList())
+    override val plugins=pluginRows.asStateFlow()
+    private val skillRows=MutableStateFlow<List<Skill>>(emptyList())
+    override val skills=skillRows.asStateFlow()
+    private val inspectorRows=MutableStateFlow<List<InspectorNode>>(emptyList())
+    override val inspector=inspectorRows.asStateFlow()
+    val uiOverrides=MutableStateFlow(JSONObject())
+    val selfError=MutableStateFlow<String?>(null)
+    val files=dev.hoshino.bridge.WorkspaceFiles(java.io.File(context.filesDir,"workspace"),java.io.File(context.filesDir,"hoshino-trash"))
+    private val metadata=context.getSharedPreferences("m1-session-metadata",Context.MODE_PRIVATE)
+    private val restartAfter=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    override fun activateSession(sessionId:String) { activeSession=sessionId }
 
     init {
         scope.launch { runtime.frames.collect { (stream,frame) ->
-            try { if(stream.startsWith("session:"))accept(stream.removePrefix("session:"),frame) }
+            try {
+                if(stream.startsWith("session:"))accept(stream.removePrefix("session:"),frame)
+                else if(stream.startsWith("terminal:"))acceptTerminal(stream.removePrefix("terminal:"),frame)
+            }
             catch(failure: Exception) { runtime.diagnostic("mapping: ${failure.javaClass.simpleName}") }
         } }
-        scope.launch { runtime.state.map { it.phase }.distinctUntilChanged().collect { if(it=="已连接")runCatching { refreshSessions() }.onFailure { runtime.diagnostic("sessions: ${it.javaClass.simpleName}") } } }
+        scope.launch { runtime.state.map { it.phase }.distinctUntilChanged().collect { if(it=="已连接")runCatching { refreshSessions();refreshControl() }.onFailure { runtime.diagnostic("sessions: ${it.javaClass.simpleName}") } } }
     }
     fun startKernel()=runtime.start()
     fun stopKernel() { approvals.values.forEach { it.complete(ApprovalDecision.Deny) };runtime.stop() }
@@ -55,12 +75,38 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     suspend fun api()=runtime.client()
     private suspend fun publish(event: HarnessEvent)=eventBus.emit(event)
     private suspend fun callback(method: String,body: JSONObject): Any {
+        when(method) {
+            "terminal-output" -> {appendAgentTerminal(body.getString("sessionId"),body.getString("text"),if(body.optString("stream")=="stderr")TerminalStream.Error else TerminalStream.Output);return JSONObject()}
+            "ui-action" -> return withContext(Dispatchers.Main) {
+                AppSurface.activity()
+                when(body.getString("action")) {
+                    "app_screenshot" -> {
+                        val bitmap=AppSurface.capture();val dir=java.io.File(context.cacheDir,"share").apply{mkdirs()};val file=java.io.File(dir,"tool-screenshot.jpg")
+                        try{file.outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,it)};AppMedia(context).imageBlock(file,"Hoshino-app-screenshot.jpg")}finally{bitmap.recycle();file.delete()}
+                    }
+                    "clipboard_read" -> {val cm=context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager;JSONObject().put("text",vault.redact(cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()))}
+                    "clipboard_write" -> {app.hoshino.harness.ui.components.copyToClipboard(context,body.getString("text"));JSONObject().put("written",true)}
+                    "share_text" -> {app.hoshino.harness.ui.components.shareText(context,body.getString("text"));JSONObject().put("opened",true)}
+                    "share_file" -> {AppMedia(context).shareFile(files.resolve(body.getString("path")));JSONObject().put("opened",true)}
+                    else -> error("Unknown UI action")
+                }
+            }
+            "self-status" -> return JSONObject().put("currentModel",routing.value.main?.modelId ?: "").put("provider",routing.value.main?.providerId ?: "").put("logs",JSONArray(runtime.state.value.logs))
+            "self-changed" -> {scope.launch {runCatching {refreshControl()}};return JSONObject()}
+            "restart-after-turn" -> {restartAfter.add(body.getString("sessionId"));return JSONObject()}
+            "file-diff" -> {
+                val before=body.optString("before","");val after=body.getString("after")
+                val lines=before.lines().mapIndexed { i,line->DiffLine(DiffLineType.Remove,line,i+1,null) }+after.lines().mapIndexed{i,line->DiffLine(DiffLineType.Add,line,null,i+1)}
+                publish(HarnessEvent.FileDiff(body.getString("sessionId"),body.getString("id"),body.getString("path"),lines));return JSONObject()
+            }
+        }
         if(method!="approve")error("手机能力即将支持")
         val session=body.optString("sessionId").ifEmpty { activeSession }
         check(session.isNotEmpty())
         val id=UUID.randomUUID().toString();val decision=CompletableDeferred<ApprovalDecision>();approvals[id]=decision
         val network=body.optString("kind")=="network"
-        publish(HarnessEvent.ApprovalRequested(session,id,if(network) "模型网络请求" else "工具执行审批",if(network) "向所选模型接口发送本次上下文" else body.optString("path"),if(network) "发送到当前 provider" else body.optString("tool")))
+        val detail=if(network) "向所选模型接口发送本次上下文" else vault.redact(listOf(body.optString("path"),body.optString("before"),body.optString("after"),body.optJSONObject("arguments")?.toString(2).orEmpty()).filter {it.isNotBlank() && it!="null"}.joinToString("\n").take(12000))
+        publish(HarnessEvent.ApprovalRequested(session,id,if(network) "模型网络请求" else "工具执行审批",detail,if(network) "发送到当前 provider" else body.optString("command").ifEmpty{body.optString("tool")}))
         return try {
             val chosen=withTimeoutOrNull(290000) { decision.await() } ?: ApprovalDecision.Deny
             publish(HarnessEvent.ApprovalResolved(session,id,chosen))
@@ -98,7 +144,10 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         when(event.getString("type")) {
             "turn/start" -> { publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
             "turn/end" -> { live.remove(sid)?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) };publish(HarnessEvent.TurnFinished(sid,id,data.optJSONObject("reason")?.optString("kind")=="cancelled"));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=false,updatedAt=System.currentTimeMillis()) else it } };if(data.optJSONObject("reason")?.optString("kind")=="error")publish(HarnessEvent.Notice(sid,"error:$seq","模型请求失败，请检查协议、模型与凭据")) }
-            "user/message" -> if(data.optJSONObject("source")?.optString("kind")=="user")publish(HarnessEvent.UserMessage(sid,id,content(data.optJSONArray("content"),"text"),emptyList()))
+            "user/message" -> if(data.optJSONObject("source")?.optString("kind")=="user") {
+                val attachments=data.optJSONArray("content")?.rows().orEmpty().filter{it.optString("type") in setOf("image","file")}.map{block->val a=block.optJSONObject("attachment") ?: JSONObject();Attachment(a.optString("attachmentId"),a.optString("name","附件"),if(block.optString("type")=="image")AttachmentKind.Image else AttachmentKind.File,"${a.optLong("bytes")/1024} KB")}
+                publish(HarnessEvent.UserMessage(sid,id,content(data.optJSONArray("content"),"text"),attachments))
+            }
             "session/title" -> sessionRows.update { list -> list.map { if(it.id==sid)it.copy(title=data.optString("title",it.title)) else it } }
             "assistant/message" -> {
                 val message=data.getJSONObject("message");val text=content(message.optJSONArray("content"),"text");val reasoning=content(message.optJSONArray("content"),"reasoning")
@@ -112,17 +161,19 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                     if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started))
                 }
             }
-            "tool/call" -> { val call=data.getString("callId");calls["$sid:$call"]=id;val name=data.getString("name");publish(HarnessEvent.ToolCallStarted(sid,id,name,name,data.getString("arguments"),when(name){"bash","terminal" -> ToolKind.Bash;"write","edit" -> ToolKind.Edit;else -> ToolKind.Generic})) }
+            "tool/call" -> { val call=data.getString("callId");calls["$sid:$call"]=id;val name=data.getString("name");publish(HarnessEvent.ToolCallStarted(sid,id,name,name,data.getString("arguments"),when(name){"bash","terminal" -> ToolKind.Bash;"write","edit" -> ToolKind.Edit;else -> ToolKind.Generic}));if(name=="bash")appendAgentTerminal(sid,"$ "+JSONObject(data.getString("arguments")).optString("command"),TerminalStream.Input) }
             "tool/result" -> {
                 val result=data.getJSONObject("message");val callId=calls["$sid:${result.getString("toolCallId")}"] ?: return
                 publish(HarnessEvent.ToolCallOutput(sid,callId,content(result.optJSONArray("content"),"text")))
                 publish(HarnessEvent.ToolCallFinished(sid,callId,if(result.optBoolean("isError"))ToolStatus.Failed else ToolStatus.Success))
+                if(result.optString("toolName")=="bash" || terminalRows.value.any{it.id=="agent:$sid"})appendAgentTerminal(sid,content(result.optJSONArray("content"),"text"),if(result.optBoolean("isError"))TerminalStream.Error else TerminalStream.Output)
             }
         }
+        if(event.getString("type")=="turn/end" && restartAfter.remove(sid))scope.launch {delay(500);restartKernel()}
     }
     suspend fun refreshSessions() {
         val client=api();val items=client.rpc("session/list",JSONObject()).getJSONArray("items").rows()
-        sessionRows.value=items.map { row -> val old=sessionRows.value.firstOrNull { it.id==row.getString("sessionId") };SessionInfo(row.getString("sessionId"),old?.title ?: "会话 ${row.getString("sessionId").take(8)}",old?.workspaceId ?: "ws-default",old?.presetId ?: "standard",old?.tier ?: PermissionTier.WorkspaceWrite,old?.createdAt ?: row.getLong("updatedAt"),row.getLong("updatedAt"),row.getBoolean("running"),old?.archived ?: false,row.optString("parentSessionId").ifEmpty { null }) }
+        sessionRows.value=items.map { row -> val id=row.getString("sessionId");val old=sessionRows.value.firstOrNull { it.id==id };SessionInfo(id,old?.title ?: "会话 ${id.take(8)}",old?.workspaceId ?: metadata.getString("workspace:$id","ws-default")!!,old?.presetId ?: metadata.getString("preset:$id","standard")!!,old?.tier ?: PermissionTier.entries.firstOrNull{it.key==metadata.getString("tier:$id",null)} ?: PermissionTier.WorkspaceWrite,old?.createdAt ?: row.getLong("updatedAt"),row.getLong("updatedAt"),row.getBoolean("running"),old?.archived ?: metadata.getBoolean("archived:$id",false),row.optString("parentSessionId").ifEmpty { null }) }
         sessionRows.value.forEach { client.follow(it.id) }
     }
     override suspend fun createSession(workspaceId: String,presetId: String,tier: PermissionTier): SessionInfo {
@@ -131,17 +182,27 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val client=api();val id=client.rpc("session/create",JSONObject().put("cwd",path)).getString("sessionId")
         val now=System.currentTimeMillis();val result=SessionInfo(id,"新会话",workspaceId,presetId,tier,now,now)
         sessionRows.update { it.filterNot { row -> row.id==id }+result };activeSession=id;client.follow(id)
+        metadata.edit().putString("workspace:$id",workspaceId).putString("preset:$id",presetId).putString("tier:$id",tier.key).apply()
         return result
     }
     override suspend fun renameSession(sessionId: String,title: String) { val value=api().rpc("session/rename",JSONObject().put("sessionId",sessionId).put("title",title));sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(title=value.getString("title")) else it } } }
     override suspend fun forkSession(sessionId: String): SessionInfo { val id=api().rpc("session/fork",JSONObject().put("sessionId",sessionId)).getString("sessionId");refreshSessions();return sessionRows.value.first { it.id==id } }
-    override suspend fun setSessionTier(sessionId: String,tier: PermissionTier) { require(tier!=PermissionTier.FullAccess) { "系统完全访问即将支持" };sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(tier=tier) else it } } }
+    override suspend fun setSessionTier(sessionId: String,tier: PermissionTier) { require(tier!=PermissionTier.FullAccess) { "系统完全访问即将支持" };sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(tier=tier) else it } };metadata.edit().putString("tier:$sessionId",tier.key).apply();control("session-options",JSONObject().put("sessionId",sessionId).put("tier",tier.key)) }
     override suspend fun send(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) {
-        require(attachments.isEmpty()) { "附件接入中，请稍后使用" }
         val client=api();activeSession=sessionId
         val model=options.model ?: error("请先配置模型供应商")
-        client.select(sessionId,model.providerId,model.modelId)
-        client.prompt(sessionId,text)
+        val modelInfo=providers.value.first{it.id==model.providerId}.models.first{it.id==model.modelId}
+        require(attachments.none{it.kind==AttachmentKind.Image || it.kind==AttachmentKind.Camera} || modelInfo.vision){"当前模型未开启视觉，请在模型设置开启或切换模型"}
+        control("session-options",JSONObject().put("sessionId",sessionId).put("tier",options.tier.key).put("planMode",options.planMode))
+        client.rpc("session/selectModel",JSONObject().put("sessionId",sessionId).put("provider",model.providerId).put("model",model.modelId).put("reasoningEffort",options.effort.key))
+        val content=JSONArray().put(JSONObject().put("type","text").put("text",text))
+        val media=AppMedia(context)
+        for(attachment in attachments) {
+            val file=if(attachment.kind==AttachmentKind.WorkspaceFile)files.resolve(attachment.name) else media.keepOriginal(sessionId,attachment)
+            if(attachment.kind==AttachmentKind.Image || attachment.kind==AttachmentKind.Camera)content.put(media.imageBlock(file,attachment.name))
+            else content.put(JSONObject().put("type","file").put("receiptId",client.uploadFile(sessionId,file,attachment.name)))
+        }
+        client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",content))
     }
     override suspend fun steer(sessionId: String,text: String) { api().rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","steer").put("content",JSONArray().put(JSONObject().put("type","text").put("text",text)))) }
     override suspend fun stop(sessionId: String) { api().rpc("session/cancel",JSONObject().put("sessionId",sessionId)) }
@@ -162,6 +223,60 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun deleteProvider(providerId: String) { vault.delete(providerId);providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)api().reloadProviders() }
     override suspend fun setProviderEnabled(providerId: String,enabled: Boolean) { upsertProvider(providerRows.value.first { it.id==providerId }.copy(enabled=enabled)) }
     override suspend fun setRouting(routing: ModelRouting) { routingRow.value=routing }
+    suspend fun control(action:String,request:JSONObject=JSONObject()):JSONObject=api().mobile("control",JSONObject().put("action",action).put("request",request))
+    suspend fun refreshControl() {
+        val state=control("inspect");val manifest=state.optJSONObject("manifest")
+        val built=manifest?.optJSONArray("plugins")?.rows().orEmpty().map{row->Plugin(row.getString("id"),row.getString("id"),row.optString("name"),"0.2.1-rc.2",true,PluginSource.BuiltIn,PluginCategory.Tool,"Cordis · "+row.optString("source"))}
+        val user=state.getJSONArray("plugins").rows().map{row->Plugin(row.getString("id"),row.getString("id"),"用户 Cordis 插件","0.1.0",row.getBoolean("enabled"),PluginSource.Local,PluginCategory.Tool,if(row.optBoolean("invalid"))"加载失败，请回滚" else "可热加载的用户工具")}
+        pluginRows.value=built+user
+        skillRows.value=state.getJSONArray("skills").rows().map{row->Skill(row.getString("name"),row.getString("name"),row.optString("description"),true,row.optString("source"),"")}
+        inspectorRows.value=listOf(InspectorNode("dsh","Cordis","就绪",pluginRows.value.map{InspectorNode(it.id,it.pkg,if(it.enabled)"已挂载" else "已停用")}))
+        val overrides=control("ui-read");uiOverrides.value=overrides.getJSONObject("value");selfError.value=if(overrides.optBoolean("valid",true))null else overrides.optString("error")
+    }
+    override suspend fun setPluginEnabled(pluginId:String,enabled:Boolean) {require(plugins.value.none{it.id==pluginId && it.source==PluginSource.BuiltIn}){"内置依赖请通过源码组合替换"};control("enable-plugin",JSONObject().put("id",pluginId).put("enabled",enabled));refreshControl()}
+    override suspend fun removePlugin(pluginId:String) {require(plugins.value.none{it.id==pluginId && it.source==PluginSource.BuiltIn});control("remove-plugin",JSONObject().put("id",pluginId));refreshControl()}
+    override suspend fun readPluginConfig(pluginId:String)=control("config-read",JSONObject().put("path","plugins/$pluginId/config.json")).getString("content")
+    override suspend fun writePluginConfig(pluginId:String,content:String) {control("config-write",JSONObject().put("path","plugins/$pluginId/config.json").put("content",content));control("reload",JSONObject().put("plugin",pluginId));refreshControl()}
+    override suspend fun createSkill(name:String,description:String,content:String) {control("create-skill",JSONObject().put("name",name).put("description",description).put("content",content));refreshControl()}
+    override suspend fun resolveDiff(sessionId:String,diffId:String,accept:Boolean) {control("resolve-diff",JSONObject().put("sessionId",sessionId).put("id",diffId).put("accept",accept));publish(HarnessEvent.DiffResolved(sessionId,diffId,if(accept)DiffState.Accepted else DiffState.Reverted))}
+    override suspend fun addWorkspace(name:String,path:String):Workspace {
+        val file=files.resolve(path);if(!file.exists())files.createDirectory(path);check(file.isDirectory)
+        val public=files.publicPath(file);val result=api().rpc("workspace/create",JSONObject().put("path",public))
+        val id=result.optString("workspaceId",UUID.randomUUID().toString());val row=Workspace(id,name,public);workspaceRows.update{it+row};return row
+    }
+    override suspend fun searchWorkspaceFiles(workspaceId:String,query:String)=files.search(query)
+    override suspend fun setArchived(sessionId:String,archived:Boolean) {api().rpc(if(archived)"workspace/archiveSession" else "workspace/unarchiveSession",JSONObject().put("sessionId",sessionId));metadata.edit().putBoolean("archived:$sessionId",archived).apply();sessionRows.update{list->list.map{if(it.id==sessionId)it.copy(archived=archived) else it}}}
+    override suspend fun openTerminal():String {
+        val sid=activeSession.takeIf{sessionRows.value.any{row->row.id==it}} ?: createSession("ws-default","standard",PermissionTier.WorkspaceWrite).id
+        check(sessionRows.value.first{it.id==sid}.tier!=PermissionTier.ReadOnly){"只读会话不允许启动 shell"}
+        val id=UUID.randomUUID().toString();val client=api()
+        client.rpcArgs("terminal/create",JSONObject().put("agentId",sid).put("request",JSONObject().put("id",id).put("cols",80).put("rows",24)))
+        terminalOwners[id]=sid;terminalSequences[id]=0;terminalRows.update{it+TerminalSession(id,"bash",emptyList())}
+        client.openNamedStream("terminal:$id","terminal/attach",JSONObject().put("agentId",sid).put("id",id));return id
+    }
+    override suspend fun closeTerminal(terminalId:String) {
+        val sid=terminalOwners.remove(terminalId)
+        if(sid!=null){api().cancelStream("terminal:$terminalId");api().rpcArgs("terminal/close",JSONObject().put("agentId",sid).put("id",terminalId))}
+        terminalSequences.remove(terminalId);terminalWritable.remove(terminalId);terminalRows.update{it.filterNot{row->row.id==terminalId}}
+    }
+    override suspend fun terminalInput(terminalId:String,input:String) {
+        val sid=terminalOwners[terminalId] ?: error("Agent 日志只读")
+        check(sessionRows.value.firstOrNull{it.id==sid}?.tier!=PermissionTier.ReadOnly){"只读会话"}
+        withTimeout(15000){while(terminalWritable[terminalId]!=true)delay(20)}
+        val data=when(input){"^C"->"\u0003";"\t","\u001b","\u001b[A","\u001b[B"->input;else->input+"\r"}
+        require(data.toByteArray().size<=16000){"单次输入过长"}
+        val sequence=terminalSequences.compute(terminalId){_,old->(old ?: 0)+1}!!
+        api().streamInput("terminal:$terminalId",JSONObject().put("type","write").put("sequence",sequence).put("data",data))
+    }
+    private fun acceptTerminal(id:String,frame:JSONObject) {
+        when(frame.optString("type")) {
+            "snapshot"->{terminalWritable[id]=frame.optBoolean("writable");terminalRows.update{list->list.map{if(it.id==id)it.copy(lines=listOf(TerminalLine(frame.getString("screen"),TerminalStream.Output))) else it}}}
+            "output"->terminalRows.update{list->list.map{if(it.id==id)it.copy(lines=(it.lines+TerminalLine(frame.getString("data"),TerminalStream.Output)).takeLast(2000)) else it}}
+            "state"->{terminalWritable[id]=frame.optBoolean("writable");val info=frame.getJSONObject("info");if(info.optString("state")!="running")terminalRows.update{list->list.map{if(it.id==id)it.copy(title="bash · ${info.optString("state")}") else it}}}
+            "ack"->if(frame.has("refusal"))terminalWritable[id]=false
+        }
+    }
+    private fun appendAgentTerminal(sid:String,text:String,stream:TerminalStream) {val id="agent:$sid";terminalRows.update{list->val row=list.firstOrNull{it.id==id} ?: TerminalSession(id,"Agent · 只读",emptyList());list.filterNot{it.id==id}+row.copy(lines=(row.lines+TerminalLine(vault.redact(text),stream)).takeLast(2000))}}
     override suspend fun fetchModels(provider: Provider): List<ModelInfo> {
         require(provider.protocol!=ProviderProtocol.OpenAIResponses) { "OpenAI Responses 即将支持" }
         val stored=vault.list().firstOrNull { it.id==provider.id }

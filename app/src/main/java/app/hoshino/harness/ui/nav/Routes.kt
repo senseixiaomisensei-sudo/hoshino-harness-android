@@ -25,6 +25,8 @@ object Routes {
     const val SCHEDULES = "schedules"
     const val GOALS = "goals"
     const val TERMINAL = "terminal"
+    const val FILES = "files"
+    const val SCREENSHOT = "screenshot"
     const val TRAJECTORY = "trajectory"
     const val INSPECTOR = "inspector"
     const val WEB = "web"

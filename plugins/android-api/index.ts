@@ -4,8 +4,9 @@ import * as piAi from '@deepseek-ai/dsh-llm-pi-ai';
 import { HostConnectionService } from '@deepseek-ai/dsh-client-connection';
 import '@deepseek-ai/dsh-host-webserver';
 import '@deepseek-ai/dsh-api-session-controller';
+import type {} from '../hoshino-self/index.js';
 export const name = 'android-api';
-export const inject = ['llm', 'connection', 'webServer', 'sessionController', 'androidBridge'];
+export const inject = ['llm', 'connection', 'webServer', 'sessionController', 'androidBridge', 'hoshinoControl'];
 export async function apply(ctx: Context): Promise<void> {
   let providerFiber: ReturnType<Context['plugin']> | undefined;
   const reload = async () => {
@@ -15,8 +16,14 @@ export async function apply(ctx: Context): Promise<void> {
       if (!/^[a-z][a-z0-9-]*$/.test(p.id) || !p.models.length) throw new Error('Invalid provider configuration');
       map[p.id] = {
         api: p.type === 'anthropic' ? 'anthropic-messages' : 'openai-completions',
-        baseURL: p.baseURL, apiKeyEnv: p.apiKey,
-        models: p.models.map(id => ({ id, ...(p.type === 'anthropic' ? { reasoningEfforts: { medium: 'medium' } } : {}), contextWindow: 128000, maxTokens: 4096 })),
+        baseURL: p.baseURL, apiKeyEnv: p.apiKey, headers: p.headers ?? {}, displayName: p.metadata?.name ?? p.id,
+        models: p.models.map(id => {
+          const model=p.metadata?.models?.find(model=>model.id===id);
+          const reasoning=model?.reasoning ?? p.type==='anthropic';
+          return { id, input: model?.vision ? ['text','image'] : ['text'],
+            ...(reasoning ? { reasoningEfforts: { off: null, low: 'low', medium: 'medium', high: 'high', max: 'max' } } : {}),
+            contextWindow: model?.contextLength ?? 128000, maxTokens: model?.maxOutput ?? 4096 };
+        }),
         ...(p.type === 'anthropic' ? { reasoning: 'medium', thinkingBudgets: { medium: 1024 } } : {}),
         retryPolicy: { mode: 'normal', maxRetries: 0 },
       };
@@ -47,4 +54,14 @@ export async function apply(ctx: Context): Promise<void> {
     catch { res.writeHead(400).end(); }
   } }));
   ctx.provide('mobileApi', { port: ctx.webServer.port, token });
+  ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/mobile/control',handler:async(req,res)=> {
+    if(req.method!=='POST' || 'rejection' in ctx.connection.admit(req)){res.writeHead(403).end();return;}
+    try {
+      const chunks:Buffer[]=[];let size=0;
+      for await(const chunk of req){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>8388608)throw new Error('Request too large');chunks.push(bytes);}
+      const input=JSON.parse(Buffer.concat(chunks).toString('utf8')) as {action:string;request:Record<string,unknown>};
+      const value=await ctx.hoshinoControl.invoke(input.action,input.request ?? {});
+      res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(value));
+    } catch {res.writeHead(400,{'Content-Type':'application/json'}).end('{"error":"Control operation failed; check arguments or rollback"}');}
+  }}));
 }

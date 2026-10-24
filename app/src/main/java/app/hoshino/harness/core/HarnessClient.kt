@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.StateFlow
  * 当前 UI 由 [FakeHarnessClient] 驱动，零后端即可运行。
  */
 interface HarnessClient {
+    /** Select the UI's active session without starting an Agent turn. */
+    fun activateSession(sessionId: String) {}
 
     // ---------- 连接 & 会话 ----------
     val connection: StateFlow<ConnectionState>

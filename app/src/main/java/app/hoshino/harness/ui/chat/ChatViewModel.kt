@@ -126,6 +126,7 @@ class ChatViewModel : ViewModel() {
     }
 
     fun openSession(id: String) {
+        client.activateSession(id)
         _currentId.value = id
         val s = client.sessions.value.firstOrNull { it.id == id } ?: return
         _composer.update { it.copy(presetId = s.presetId, tier = s.tier, workspaceId = s.workspaceId, attachments = emptyList()) }
@@ -252,19 +253,10 @@ class ChatViewModel : ViewModel() {
     fun setEffort(e: ReasoningEffort) = _composer.update { it.copy(effort = e) }
 
     fun addAttachment(kind: AttachmentKind, name: String? = null) {
-        val n = name ?: when (kind) {
-            AttachmentKind.File -> "需求说明.pdf"
-            AttachmentKind.Image -> "截图_1023.png"
-            AttachmentKind.Camera -> "IMG_${System.currentTimeMillis() % 10000}.jpg"
-            AttachmentKind.WorkspaceFile -> "README.md"
-        }
-        val size = when (kind) {
-            AttachmentKind.File -> "248 KB"
-            AttachmentKind.Image, AttachmentKind.Camera -> "1.2 MB"
-            AttachmentKind.WorkspaceFile -> "工作区"
-        }
-        _composer.update { it.copy(attachments = it.attachments + Attachment("att${System.nanoTime()}", n, kind, size)) }
+        if(kind!=AttachmentKind.WorkspaceFile || name.isNullOrBlank()){toast("请通过附件菜单选择真实文件");return}
+        _composer.update {it.copy(attachments=it.attachments+Attachment("workspace:${System.nanoTime()}",name,kind,"工作区"))}
     }
+    fun attach(value:Attachment)=_composer.update{it.copy(attachments=it.attachments+value)}
 
     fun removeAttachment(id: String) = _composer.update { c -> c.copy(attachments = c.attachments.filterNot { it.id == id }) }
 

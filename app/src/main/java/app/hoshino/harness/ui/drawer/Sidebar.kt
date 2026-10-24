@@ -121,6 +121,8 @@ fun Sidebar(
                 NavEntry(HIcons.Terminal, stringResource(R.string.nav_tools), trailing = if (showTools) HIcons.ChevronUp else HIcons.ChevronDown) { showTools = !showTools }
                 if (showTools) {
                     NavEntry(null, stringResource(R.string.nav_terminal), indent = true) { onNavigate(Routes.TERMINAL) }
+                    NavEntry(null, "文件", indent = true) { onNavigate(Routes.FILES) }
+                    NavEntry(null, "截图预览", indent = true) { onNavigate(Routes.SCREENSHOT) }
                     NavEntry(null, stringResource(R.string.nav_hooks), indent = true) { onNavigate(Routes.HOOKS) }
                     NavEntry(null, stringResource(R.string.nav_inspector), indent = true) { onNavigate(Routes.INSPECTOR) }
                     NavEntry(null, stringResource(R.string.nav_web), indent = true) { onNavigate(Routes.WEB) }

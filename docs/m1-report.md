@@ -2,6 +2,17 @@
 
 尚未完成 M1 验收，不能将开发构建称为正式交付或全量通过。
 
+## 2026-10-24 午间测试包
+
+用户要求 12 点前先交付 APK，并在交付后继续开发。本次为预发布测试快照；完整 M1AcceptanceTest、arm64 真机、厂商后台、完整文件管理交互与全部 self 回滚验收仍未完成，不作为 M1 通过结论。
+
+- 开发运行时 CI 整体成功：[40058143620](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40058143620)，提交 `52f9a2ed992082ce365423e4c097b2c38dedb37b`。仅证明该提交的运行时构建、容器 PTY/Sharp 自检、APK 构建及单测；不替后续功能快照背书。
+- 后续原版 dsh 双协议集成本地成功：`.research/m1-delivery-node-test.log`（6 turns，2 次设备回调，真实厂商凭据未配置而跳过）。
+- 自述手册生成读取真实 50 个 boot rows、19 个工具、29 个路由：`.research/m1-delivery-node-build.log`。
+- 终端/文件/截图原生源码编译成功：`.research/m1-media-build.log`、`.research/m1-files-build.log`。实际 Android 冒烟及本次 APK 构建结果另行补证；编译不等同交互验收。
+
+测试快照包含真实 DshHarnessClient、原版 PTY 远程接口、私有文件后端与编辑页、图片/文件附件、截图预览、自研 android-ui、hoshino-self 与审批/Diff 通道。部分流程仍在联调。没有手机实测就不填真机耗时、内存或 OEM 兼容结论。自述手册里尚未接通的预设/回滚 UI、UI 覆盖应用和源代码打包需在后续完成，不能将工具后端存在写成完整体验通过。
+
 已核对 M0 四项软件门槛，依据见 `m1-decisions.md`。完整 ZIP 的源码、资源和品牌已合并；SessionStore 未修改，原始摘要见 `m1-ui-origin.json`。ZIP 未包含 design/SPEC.md，不能声称读过缺失文件。
 
 | 当前项目 | 状态 | 证据 |

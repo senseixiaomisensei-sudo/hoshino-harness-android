@@ -1,0 +1,51 @@
+{
+  "abi": "arm64-v8a",
+  "unpackedBytes": 241441246,
+  "xzBytes": 38110068,
+  "gzipBytes": 67647652,
+  "selectedPackages": 268,
+  "largestFiles": [
+    {
+      "path": "usr/bin/node",
+      "bytes": 51398016
+    },
+    {
+      "path": "opt/hoshino/node-host/node_modules/@img/sharp-libvips-linuxmusl-arm64/lib/libvips-cpp.so.8.18.7",
+      "bytes": 18712760
+    },
+    {
+      "path": "usr/lib/libcrypto.so.3",
+      "bytes": 4533144
+    },
+    {
+      "path": "usr/bin/rg",
+      "bytes": 3152312
+    },
+    {
+      "path": "usr/bin/git",
+      "bytes": 3149216
+    },
+    {
+      "path": "usr/lib/libicui18n.so.76.1",
+      "bytes": 3082536
+    },
+    {
+      "path": "usr/share/icu/76.1/icudt76l.dat",
+      "bytes": 3008672
+    },
+    {
+      "path": "usr/lib/libstdc++.so.6.0.34",
+      "bytes": 2820600
+    },
+    {
+      "path": "usr/lib/libunistring.so.5.2.1",
+      "bytes": 1967944
+    },
+    {
+      "path": "usr/lib/libicuuc.so.76.1",
+      "bytes": 1837096
+    }
+  ],
+  "packSeconds": 80.736,
+  "sha256": "9a91f8ed7f3267665054b6d70d1966b9d389867334451474bca6fccfa0ede40e"
+}

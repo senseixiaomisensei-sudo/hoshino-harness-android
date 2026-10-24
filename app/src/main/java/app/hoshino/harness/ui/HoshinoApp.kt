@@ -49,6 +49,8 @@ import app.hoshino.harness.ui.tools.LspScreen
 import app.hoshino.harness.ui.tools.TerminalScreen
 import app.hoshino.harness.ui.tools.TrajectoryScreen
 import app.hoshino.harness.ui.tools.WebPreviewScreen
+import app.hoshino.harness.ui.tools.ScreenshotScreen
+import app.hoshino.harness.ui.tools.FilesScreen
 
 /** 应用根：主题 + 导航。ChatViewModel / AppViewModel 为 Activity 级，跨页面共享。 */
 @Composable
@@ -120,6 +122,8 @@ fun HoshinoApp() {
 
             // ---------- 工具台
             composable(Routes.TERMINAL) { TerminalScreen(viewModel(), back) }
+            composable(Routes.SCREENSHOT) { ScreenshotScreen(back,{chat.attach(it)}) }
+            composable(Routes.FILES) { FilesScreen(back) }
             composable(Routes.INSPECTOR) { InspectorScreen(viewModel(), back) }
             composable(Routes.WEB) { WebPreviewScreen(back) }
             composable(Routes.LSP) { LspScreen(viewModel(), back) }
