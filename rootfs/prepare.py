@@ -25,7 +25,7 @@ def deb_payload(data):
         pos += size + size % 2
     raise ValueError('Missing deb payload')
 
-def termux(abi, locks, update):
+def termux(abi, locks, update, include_proot=True):
     arch = ABIS[abi][0]
     if update:
         target = CACHE / f'{arch}-Packages.gz'
@@ -42,6 +42,7 @@ def termux(abi, locks, update):
         (ROOT/'rootfs/termux-lock.json').write_text(json.dumps(locks,indent=2)+'\n')
     files = {}
     for name, p in locks[abi].items():
+        if name=='proot' and not include_proot: continue
         data = download(REPO+p['Filename'],CACHE/pathlib.Path(p['Filename']).name)
         assert hashlib.sha256(data).hexdigest() == p['SHA256'], 'Termux package checksum mismatch'
         with tarfile.open(fileobj=io.BytesIO(deb_payload(data))) as tar:
@@ -49,6 +50,7 @@ def termux(abi, locks, update):
                 if entry.isfile(): files[entry.name.removeprefix('./')] = tar.extractfile(entry).read()
     dest = ROOT/'app/src/main/jniLibs'/abi; dest.mkdir(parents=True,exist_ok=True)
     wanted = {'/bin/proot':'libproot.so','/libexec/proot/loader':'libproot-loader.so','/lib/libtalloc.so':'libtalloc.so','/lib/libandroid-shmem.so':'libandroid-shmem.so'}
+    if not include_proot: wanted={key:value for key,value in wanted.items() if value not in ['libproot.so','libproot-loader.so']}
     for suffix, name in wanted.items():
         hits = [v for k,v in files.items() if k.endswith(suffix) or (name == 'libtalloc.so' and '/lib/libtalloc.so.' in k)]
         if len(hits) != 1: raise ValueError(f'Missing {suffix}: {list(files)}')
@@ -61,11 +63,12 @@ def termux(abi, locks, update):
             (notices/(path.split('/')[-2]+'.txt')).write_bytes(data)
     # Both SONAMEs fit the existing ELF string-table slot; preserve every offset.
     # The locked package has exactly one matching DT_NEEDED string. Fail on drift.
-    executable = dest/'libproot.so'
-    payload = executable.read_bytes()
-    old = b'libtalloc.so.2\0'; new = b'libtalloc.so\0\0\0'
-    assert payload.count(old) == 1 and len(old) == len(new), 'Unexpected proot ELF string table'
-    executable.write_bytes(payload.replace(old,new))
+    if include_proot:
+        executable = dest/'libproot.so'
+        payload = executable.read_bytes()
+        old = b'libtalloc.so.2\0'; new = b'libtalloc.so\0\0\0'
+        assert payload.count(old) == 1 and len(old) == len(new), 'Unexpected proot ELF string table'
+        executable.write_bytes(payload.replace(old,new))
 
 def rootfs(abi):
     _, platform, node_arch = ABIS[abi]

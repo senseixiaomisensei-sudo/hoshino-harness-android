@@ -52,12 +52,14 @@ class M0StartupBenchmark {
         for(iteration in 1..5) {
             shell("am force-stop dev.hoshino.app")
             device.wakeUp();shell("wm dismiss-keyguard")
-            val launcher=requireNotNull(device.launcherPackageName) {"No default launcher installed"}
+            // Shell resolves HOME without the test APK's package-visibility filtering.
+            val home=shell("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME")
+            val launcher=home.lineSequence().map {it.trim()}.lastOrNull {it.matches(Regex("[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+"))}?.substringBefore('/') ?: error("No HOME component resolved")
             fun findIcon()=device.findObject(By.pkg(launcher).text("Hoshino Harness")) ?: device.findObject(By.pkg(launcher).descStartsWith("Hoshino Harness"))
             var icon: UiObject2?=null
             for(attempt in 1..4) {
                 device.pressHome()
-                waitFor("Launcher unavailable before iteration $iteration",10000) {device.currentPackageName==launcher}
+                waitFor("Launcher unavailable before iteration $iteration",10000) {device.hasObject(By.pkg(launcher))}
                 Thread.sleep(750)
                 icon=findIcon()
                 if(icon==null) {

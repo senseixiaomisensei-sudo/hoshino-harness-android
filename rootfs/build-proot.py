@@ -8,7 +8,7 @@ def build(abi, diagnostics=False):
     ndk=pathlib.Path(os.environ.get('ANDROID_HOME','/usr/local/lib/android/sdk'))/'ndk'/lock['ndk']
     toolchain=ndk/'toolchains/llvm/prebuilt/linux-x86_64/bin'
     if not toolchain.is_dir(): raise RuntimeError('Install the locked Android NDK before building independent proot')
-    termux(abi,packages,False)
+    termux(abi,packages,False,include_proot=False)
     source=CACHE/'proot-source.tar.gz';data=download(lock['url'],source)
     assert hashlib.sha256(data).hexdigest()==lock['sha256']
     work=CACHE/('proot-build-'+abi);work.mkdir(parents=True,exist_ok=True)
