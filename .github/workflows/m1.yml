@@ -79,6 +79,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
+      - uses: docker/setup-qemu-action@v3
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
@@ -91,10 +92,12 @@ jobs:
         with: { name: m1-android-proot, path: app/src/main }
       - name: Refresh our host and plugins for both ABIs
         run: python3 rootfs/prepare.py --refresh-host
+      - name: Import every plugin from the packaged runtimes
+        run: python3 rootfs/verify-packed.py
       - name: Build development APKs and unit tests
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug test -Pkotlin.compiler.execution.strategy=in-process --console=plain
+          ./gradlew assembleDebug test :app:assembleX86DebugAndroidTest -Pkotlin.compiler.execution.strategy=in-process --console=plain
           python3 tools/package-m1.py
       - uses: actions/upload-artifact@v4
         if: always()
@@ -105,3 +108,39 @@ jobs:
             docs/m1-apk-sizes.json
             docs/m1-size-*.json
             core-bridge/build/reports/tests
+            app/build/outputs/apk/androidTest/x86/debug/*.apk
+  native-smoke:
+    needs: development
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - uses: actions/download-artifact@v4
+        with: { name: hoshino-m1-development, path: artifacts }
+      - name: Start local mock model
+        run: node tools/mock-llm/server.mjs > mock.log 2>&1 &
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: default
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -memory 2048
+          script: |
+            mkdir -p reports
+            adb reverse tcp:8099 tcp:8099
+            adb install -r artifacts/build/deliverables/Hoshino-Harness-0.1.0-m1-x86_64-debug.apk
+            adb install -r artifacts/app/build/outputs/apk/androidTest/x86/debug/app-x86-debug-androidTest.apk
+            adb shell pm grant dev.hoshino.app android.permission.POST_NOTIFICATIONS
+            adb shell am instrument -w -r -e class app.hoshino.harness.M1UiSmokeTest,app.hoshino.harness.M1ConversationSmokeTest dev.hoshino.app.test/androidx.test.runner.AndroidJUnitRunner | tee reports/m1-ui-smoke.txt
+            grep -q 'OK (2 tests)' reports/m1-ui-smoke.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m1-native-smoke
+          path: |
+            reports
+            mock.log

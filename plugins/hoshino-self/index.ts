@@ -71,7 +71,13 @@ export async function apply(ctx: Context): Promise<void> {
         ctx.mobilePolicy.options.set(id,options);return {};
       }
       case 'resolve-diff': await ctx.mobilePolicy.resolveDiff(String(request.sessionId),String(request.id),request.accept===true);return {};
-      case 'config-read': return {content:JSON.stringify(await readJson(await configPath(request.path),{}),null,2)};
+      case 'config-read': {
+        const path=String(request.path ?? '');
+        if(/^self\/(SELF|PATHS|PLUGINS|TOOLS|UI|DIY)\.md$/.test(path) || path==='self/manifest.json') {
+          const content=await readFile(await workspacePath(root,path),'utf8');if(Buffer.byteLength(content)>512*1024)throw new Error('Read this manual in pages with the read tool');return {content};
+        }
+        return {content:JSON.stringify(await readJson(await configPath(request.path),{}),null,2)};
+      }
       case 'config-write': return serial(async()=> {
         const path=await configPath(request.path);const content=String(request.content ?? '');if(Buffer.byteLength(content)>2*1024*1024)throw new Error('Config too large');assertNoSecrets(content);
         const value=JSON.parse(content) as unknown;if(request.path==='ui/overrides.json')validateOverrides(value);

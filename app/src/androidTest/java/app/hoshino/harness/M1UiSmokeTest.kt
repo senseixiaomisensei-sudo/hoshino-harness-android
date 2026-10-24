@@ -41,6 +41,7 @@ class M1UiSmokeTest {
         val capture=runBlocking{AppSurface.capture()};assertTrue(capture.width>0 && capture.height>0);capture.recycle()
         ui.runOnUiThread{ui.activity.setContent{HoshinoTheme{ProviderEditScreen(ConfigViewModel(),"new:custom",{})}}}
         ui.waitForIdle();assertTrue(secure())
+        assertThrows(IllegalStateException::class.java){runBlocking{AppSurface.capture()}}
         ui.runOnUiThread{ui.activity.setContent{HoshinoTheme{Column{ChatItemView(ChatItem.Assistant("fixture","copy-fixture",false),MessageActions());CodeBlock("echo code-only","bash")}}}}
         ui.waitForIdle();assertFalse(secure())
         ui.onNodeWithText("copy-fixture").performTouchInput{longClick()}
@@ -54,6 +55,10 @@ class M1UiSmokeTest {
         val second=runBlocking{app.hoshino.harness.ui.tools.LongCapture.render(items.drop(1),false,watermark=false)}
         val long=runBlocking{app.hoshino.harness.ui.tools.LongCapture.render(items,false,watermark=false)}
         assertEquals(first.height+second.height,long.height)
+        val longPixels=IntArray(long.width*long.height);long.getPixels(longPixels,0,long.width,0,0,long.width,long.height)
+        assertTrue("Long capture has no rendered ink",longPixels.any{it!=longPixels[0]})
+        val evidence=java.io.File(ui.activity.filesDir,"verification").apply{mkdirs()}
+        java.io.File(evidence,"m1-long-capture.png").outputStream().use{long.compress(Bitmap.CompressFormat.PNG,100,it)}
         val uri=runBlocking{AppMedia(ui.activity).save(long)}
         val bounds=android.graphics.BitmapFactory.Options().apply{inJustDecodeBounds=true}
         ui.activity.contentResolver.openInputStream(uri)!!.use{android.graphics.BitmapFactory.decodeStream(it,null,bounds)}

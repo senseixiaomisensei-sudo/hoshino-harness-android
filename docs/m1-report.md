@@ -2,6 +2,14 @@
 
 尚未完成 M1 验收，不能将开发构建称为正式交付或全量通过。
 
+## preview.1 已确认失败，暂缓使用
+
+2026-10-24 12:03 发布 preview.1，晚于 12:00 要求 3 分钟；两包下载、签名和 SHA256 已核验，但随后首次真实 APK 仪器冒烟发现内核启动退出 1（`.research/m1-ui-smoke.log`）。已经通知用户暂缓安装并将 Release 说明改为警告，未删除复现产物，也未宣称 M1 通过。
+
+根因是部署瘦身过滤器把 `yaml/dist/doc/*.js` 当作说明文档删除。锁定版本 YAML 2.9.1 的 composer 实际 require `../doc/directives.js`，导致原版 skill-filesystem 导入失败。没有修改 dsh 上游。修复为保留运行目录，并在刷新旧缓存时从 npm lock 的原始 tarball 恢复 5 个 JS 文件、校验 SHA512；新增打包后实际组合模块导入检查与 Android 原生冒烟 CI。
+
+在自有模拟器临时恢复这 5 个原始文件后，诊断性仪器测试成功：`.research/m1-diagnostic-ui-smoke.log`，32.707 秒，真实 PTY、PixelCopy、局部 FLAG_SECURE、消息/代码复制、长图尺寸与 MediaStore。**这是修改过的诊断环境，不能作为原始 preview.1 或尚未重装的修复 APK 通过证据。** 修复包将重新安装、触发完整 rootfs 解包并重跑后再推荐下载。
+
 ## 2026-10-24 午间测试包
 
 用户要求 12 点前先交付 APK，并在交付后继续开发。本次为预发布测试快照；完整 M1AcceptanceTest、arm64 真机、厂商后台、完整文件管理交互与全部 self 回滚验收仍未完成，不作为 M1 通过结论。

@@ -7,7 +7,10 @@ interface CompositionRow {id:string;name:string;config?:object;inject?:string[]}
 export async function writeSelfDocs(ctx:Context,rows:CompositionRow[],destination:string,inputPath:string):Promise<void> {
   const input=JSON.parse(await readFile(inputPath,'utf8')) as Record<string,unknown>;
   const schemas=ctx.tools.schemas();
-  const plugins=rows.map(row=>({...row,name:row.name.includes('/plugins/')||row.name.includes('\\plugins\\') ? `plugins/${row.id}` : row.name,source:row.name.startsWith('@deepseek-ai/') ? `node_modules/${row.name}` : `plugins/${row.id}/index.ts`}));
+  const plugins=rows.map(row=> {
+    const normalized=row.name.replaceAll('\\','/');const local=normalized.includes('/plugins/') ? 'plugins/'+normalized.split('/plugins/').at(-1)! : undefined;
+    return {...row,name:local ?? row.name,source:local ? local.replace(/\.js$/,'.ts') : `node_modules/${row.name}`};
+  });
   const manifest={...input,plugins,tools:schemas};
   const json=(value:unknown)=>'```json\n'+JSON.stringify(value,null,2)+'\n```\n';
   const paths={rootfs:'Android filesDir/alpine-{ABI}',workspace:'/root/workspace',dsh:'/opt/hoshino/node-host/node_modules',source:'/opt/hoshino/dsh-source',self:'/root/.hoshino/self',config:'/root/.hoshino/config',plugins:'/root/.hoshino/plugins',skills:'/root/.hoshino/skills',ui:'/root/.hoshino/ui/overrides.json',sessions:'/home/hoshino/sessions',snapshots:'/root/.hoshino/snapshots',logs:'self_inspect: bounded classified Android runtime diagnostics',mcp:'Not composed in M1; 即将支持',hooks:'Not composed in M1; 即将支持'};

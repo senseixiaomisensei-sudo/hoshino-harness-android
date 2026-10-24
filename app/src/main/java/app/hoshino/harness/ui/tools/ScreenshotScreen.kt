@@ -84,7 +84,7 @@ fun ScreenshotScreen(onBack:()->Unit,onAttach:(Attachment)->Unit) {
             GroupCard {ListRow("隐藏 thinking",trailing={HSwitch(thinking,{thinking=it})});ListRow("隐藏工具细节",trailing={HSwitch(tools,{tools=it})});ListRow("H 标志水印",trailing={HSwitch(watermark,{watermark=it})})}
         }
         if(error.isNotEmpty())Text(error,color=c.danger,modifier=Modifier.padding(16.dp))
-        bitmap?.let{image->Image(image.asImageBitmap(),"截图预览",Modifier.fillMaxWidth().heightIn(max=500.dp));Text("裁剪顶部 / 底部",style=HoshinoTheme.type.caption,color=c.text2,modifier=Modifier.padding(16.dp));androidx.compose.material3.Slider(cropTop,{cropTop=it.coerceAtMost(cropBottom-0.01f)},valueRange=0f..0.99f);androidx.compose.material3.Slider(cropBottom,{cropBottom=it.coerceAtLeast(cropTop+0.01f)},valueRange=0.01f..1f)}
+        bitmap?.let{image->Image(image.asImageBitmap(),"截图预览",Modifier.fillMaxWidth().heightIn(max=500.dp));Text("裁剪顶部 / 底部",style=HoshinoTheme.type.caption,color=c.text2,modifier=Modifier.padding(16.dp));HSlider(cropTop,{cropTop=it.coerceAtMost(cropBottom-0.01f)},0f..0.99f);HSlider(cropBottom,{cropBottom=it.coerceAtLeast(cropTop+0.01f)},0.01f..1f)}
         Row(Modifier.padding(16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             HButton("保存",{action{media.save(cropped());toast(context,"已保存到 Pictures/Hoshino Harness")}},enabled=bitmap!=null)
             HButton("分享",{action{media.shareImage(cropped())}},enabled=bitmap!=null)

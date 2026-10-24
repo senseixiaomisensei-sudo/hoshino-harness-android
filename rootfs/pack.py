@@ -1,7 +1,7 @@
 """Select the M1 dependency closure and stream identical tar content into gzip and xz.
 Only deployment files are selected; no upstream implementation is edited.
 """
-import gzip,hashlib,io,json,lzma,pathlib,posixpath,tarfile,time
+import base64,gzip,hashlib,io,json,lzma,pathlib,posixpath,tarfile,time,subprocess
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 PREFIX='opt/hoshino/node-host/'
 DENIED=set() # M1 enables native dsh attachments and therefore restores Sharp/libvips.
@@ -53,7 +53,8 @@ def pack(source, abi, target, baseline, refresh=False):
             if package not in selected:
                 return any(path.startswith(name.rstrip('/')+'/') for path in selected)
             local=name[len(package)+1:]
-            if any(p in ['docs','doc','test','tests','__tests__','examples','example'] for p in local.split('/')):return False
+            # Names inside dist/lib are implementation paths (yaml/dist/doc is required code).
+            if local.split('/')[0] in ['docs','doc','test','tests','__tests__','examples','example']:return False
             lower=posixpath.basename(name).lower()
             if lower.endswith(('.map','.d.ts','.h','.hpp')):return False
             if lower.endswith('.md') and not any(k in lower for k in ['license','copying','copyright','notice']):return False
@@ -61,7 +62,22 @@ def pack(source, abi, target, baseline, refresh=False):
         return True
     target.parent.mkdir(parents=True,exist_ok=True);baseline.parent.mkdir(parents=True,exist_ok=True)
     temporary=target.with_suffix('.packing');gztemporary=baseline.with_suffix('.packing')
-    files=[];unpacked=0
+    files=[];unpacked=0;present=set()
+    # Earlier deployment archives stripped yaml/dist/doc. Repair from the exact npm-lock
+    # tarball so --refresh-host can reuse the native build without copying Windows binaries.
+    restored={}
+    if refresh:
+        locked=json.loads((ROOT/'node-host/package-lock.json').read_text(encoding='utf-8'))['packages']['node_modules/yaml']
+        package=locate('yaml');assert packages[package]['version']==locked['version']
+        cache=ROOT/'.research/runtime'/('yaml-'+locked['version']+'.tgz');cache.parent.mkdir(parents=True,exist_ok=True)
+        if not cache.exists():subprocess.run(['curl','-fLsS','--retry','3',locked['resolved'],'-o',str(cache)],check=True)
+        expected=locked['integrity'].removeprefix('sha512-')
+        assert base64.b64encode(hashlib.sha512(cache.read_bytes()).digest()).decode()==expected,'YAML npm integrity mismatch'
+        with tarfile.open(cache,'r:gz') as original:
+            for item in original:
+                local=item.name.removeprefix('package/')
+                if item.isfile() and local.startswith('dist/doc/') and local.endswith('.js'):
+                    restored[package+'/'+local]=original.extractfile(item).read()
     with tarfile.open(source,'r:*') as archive,gzip.open(gztemporary,'wb',compresslevel=6) as gz,lzma.open(temporary,'wb',preset=6) as xz:
         class Both:
             def write(self,data):gz.write(data);xz.write(data);return len(data)
@@ -71,11 +87,14 @@ def pack(source, abi, target, baseline, refresh=False):
                 if item.name=='opt/hoshino/runtime-selection.json':continue
                 if not keep(item.name):continue
                 if refresh and (item.name==PREFIX+'dist' or item.name.startswith(PREFIX+'dist/')):continue
+                if item.name in restored:continue
                 data=archive.extractfile(item) if item.isfile() or item.islnk() else None
                 if item.islnk():item.type=tarfile.REGTYPE;item.linkname='';payload=data.read();item.size=len(payload);data=io.BytesIO(payload)
                 output.addfile(item,data)
                 if item.isfile():files.append({'path':item.name,'bytes':item.size});unpacked+=item.size
             if refresh:
+                for name,payload in restored.items():
+                    item=tarfile.TarInfo(name);item.size=len(payload);item.mode=0o644;output.addfile(item,io.BytesIO(payload));files.append({'path':name,'bytes':len(payload)});unpacked+=len(payload)
                 for path in sorted((ROOT/'node-host/dist').rglob('*')):
                     if path.is_file():
                         name=PREFIX+'dist/'+path.relative_to(ROOT/'node-host/dist').as_posix();size=path.stat().st_size

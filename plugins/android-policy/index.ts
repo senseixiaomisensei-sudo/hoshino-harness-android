@@ -2,6 +2,8 @@ import type { Context } from '../../node-host/src/platform.js';
 import { readFile, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { workspacePath } from './paths.js';
+import {resolve} from 'node:path';
+import type {} from '@deepseek-ai/dsh-working-directory';
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs';
 import type { ToolExecutionToken } from '@deepseek-ai/dsh-tools';
 export interface SessionOptions { tier?: string; planMode?: boolean; prompt?: string }
@@ -12,7 +14,7 @@ export interface MobilePolicy {
 }
 declare module '@deepseek-ai/cordis' { interface Context { mobilePolicy: MobilePolicy } }
 export const name = 'android-policy';
-export const inject = ['androidBridge', 'tools', 'fs', 'agents', 'systemPrompt'];
+export const inject = ['androidBridge', 'tools', 'fs', 'agents', 'systemPrompt','workingDirectory'];
 export function apply(ctx: Context): void {
   const options=new Map<string,SessionOptions>();
   const changes=new Map<string,Change>();
@@ -43,10 +45,25 @@ export function apply(ctx: Context): void {
     const args=exec.arguments as Record<string,unknown>;
     let path: string|undefined;
     if(['read','read_image','write','edit'].includes(exec.name)) {
-      try { path=await workspacePath(ctx.androidBridge.bootstrap.workspace,String(args.file_path ?? '')); }
-      catch { return {kind:'deny',reason:'Path is outside the private workspace or follows an escaping link'}; }
+      const cwd=exec.agent ? await ctx.workingDirectory.ensure(exec.agent,exec.signal) : ctx.androidBridge.bootstrap.workspace;
+      const target=await ctx.fs.resolve(String(args.file_path ?? ''),{cwd,signal:exec.signal});
+      const executionPath=ctx.fs.processPath(target);
+      const root=ctx.androidBridge.bootstrap.workspace;
+      // Old M0 logs record /workspace. Preserve that execution-world alias without changing JSONL.
+      const legacy=root==='/root/workspace' && (executionPath==='/workspace' || executionPath.startsWith('/workspace/'));
+      try { path=await workspacePath(legacy ? '/workspace' : root,executionPath); }
+      catch {
+        if(exec.name==='read') {
+          const home=ctx.androidBridge.bootstrap.selfHome ?? resolve(ctx.androidBridge.bootstrap.home,'hoshino');
+          for(const publicRoot of [resolve(home,'self'),'/opt/hoshino/dsh-source']) {
+            try{path=await workspacePath(publicRoot,executionPath);break;}catch{}
+          }
+        }
+        if(!path)return {kind:'deny',reason:'Path is outside the private workspace and public self documentation'};
+      }
       if(exec.name==='write' || exec.name==='edit') {
-        const target=await ctx.fs.resolve(path);const info=await ctx.fs.stat(target);
+        if(exec.name==='write' && Buffer.byteLength(String(args.content ?? ''))>2*1024*1024)return {kind:'deny',reason:'Writes over 2 MiB cannot be reviewed in this deployment'};
+        const info=await ctx.fs.stat(target);
         if(info && (info.type!=='file' || (info.size ?? 0)>2*1024*1024))return {kind:'deny',reason:'Only UTF-8 files up to 2 MiB can be changed with a reviewable diff'};
         const before=info ? await readFile(path,'utf8') : null;
         guards.set(exec.token,{path,target,before,info});
