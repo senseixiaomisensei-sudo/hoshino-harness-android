@@ -42,3 +42,12 @@ UI 迁移时移除了 M0 Activity 的全局 FLAG_SECURE；旧消息使用普通 
 完整交付时补齐 ZIP README 页面逐行对照、截图、全绿 CI、指标、未完成项、两个 APK 的 SHA256 及公开 Release 下载直链。
 
 首次扩展后的本地启动等待 60 秒超时，无错误输出；加入只含固定服务名与 ready/pending 的启动诊断后，第二次完整集成 35.39 秒成功。尚未证明首次超时的根因，未将其归因于未经证实的组件。
+
+
+## preview.3 请求失败修复（2026-10-24）
+
+用户报告正常接口在聊天中仅显示通用失败。已复现应用对无推理模型强传 off 的兼容缺陷；原版 dsh 明确返回 session/model-unavailable。改为没有推理能力时省略 effort，同时去除 provider 强制 medium、整理完整端点地址、修复密钥编辑占位符和 Bearer 前缀。未修改 dsh 源码、持久化或 Agent loop。
+
+桌面回归 .research/m1-provider-fix-node-build.log、.research/m1-provider-fix-node-test.log：实际原版 dsh 双协议 6 轮通过，包含设备工具、内置 write、流式及会话中切换；两个厂商真实接口因没有凭据跳过。Android 整包构建及仪器复验正在进行。未获得用户具体接口错误详情，不能把这轮回归写成用户真机已通过。
+
+CI 40063104406 的 Android 作业未执行：ARM 后打包模块检查通过，x86 辅助容器因为 Docker manifest digest 多架构缓存冲突失败；验证脚本已调整为固定宿主架构，等待后续运行。

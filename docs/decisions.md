@@ -43,3 +43,15 @@
 37. **fixture 首段必须匹配本轮**：原版 dsh 会追加 user 角色上下文，因此 mock 在完整消息集合查找唯一基准标记。第一段文本回显该标记，仪器必须看到对应标记才结束首 token 计时；不读取历史消息或伪造就绪事件。
 38. **不下载未使用的旧 proot 二进制**：旧 Termux proot 包已返回 404，当前实际使用固定上游源码构建。源码构建流程只下载其必需的 talloc / shmem，保留锁定的来源与校验，不改用未知镜像或升级 dsh。
 39. **先编译后启动 CI 模拟器**：预构建两个 ABI APK、两个测试 APK 与单测，再停止构建守护进程、启动模拟器，减少构建与内存测量相互争用。完整工作流继续校验指标导出、30 份 meminfo 及 APK 大小，任一失败都不能记全绿。
+
+
+## 2026-10-24 M1 preview.3 请求兼容修复
+
+- 仅在 android-api Cordis 插件边界整理常见完整端点和 /v1 地址；继续由原版 pi-ai 发送 Anthropic Messages / OpenAI Chat Completions，不修改 dsh。设置页模型探测使用同一规则。
+- 取消 profile 强制 medium thinking，只接受会话显式选择的 effort。
+- 已保存密钥不再作为可编辑占位符写入输入框；旧版占位符前缀及复制的 Bearer 前缀在 Keystore 解密后内存规范化，不导出明文。
+- 依据原版 packages/core/session/src/types.ts 的 reason.error: LlmFailure 显示脱敏错误，避免所有失败都变成检查模型与凭据；不把响应正文写日志。
+- 截图不足以确定用户特定接口的最终错误；先修复可复现的应用端缺陷，未经真实接口复测不声称用户案例已验收。
+- CI 后打包检查固定使用 amd64 辅助容器，目标 ARM Node 交给已注册 binfmt；避免 Docker classic image store 对同一 manifest digest 的多架构覆盖报错。
+
+- 补充复现：对模型 metadata.reasoning=false 传 reasoningEffort=off，原版 session/selectModel 返回 session/model-unavailable（does not support reasoning effort off）。Kotlin 现在仅为已声明推理能力的模型附加 effort；无推理模型省略字段。双协议无推理回归通过。

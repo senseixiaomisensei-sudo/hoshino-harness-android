@@ -15,12 +15,13 @@ class ProviderProbe {
     suspend fun models(provider: Provider,key: String,headers: Map<String,String>): JSONArray=withContext(Dispatchers.IO) {
         val uri=java.net.URI(provider.baseURL)
         require(uri.scheme in listOf("http","https") && uri.host!=null && uri.userInfo==null && uri.query==null && uri.fragment==null)
-        val base=provider.baseURL.trimEnd('/')
-        val url=base+if(provider.type=="anthropic" && !base.endsWith("/v1"))"/v1/models" else "/models"
+        val base=providerBaseURL(provider.type,provider.baseURL)
+        val url=base+if(provider.type=="anthropic")"/v1/models" else "/models"
         val request=Request.Builder().url(url)
         headers.forEach { (name,value) -> request.header(name,value) }
-        if(provider.type=="anthropic")request.header("x-api-key",key).header("anthropic-version","2023-06-01")
-        else if(key.isNotEmpty())request.header("Authorization","Bearer $key")
+        val credential=normalizeApiKey(key)
+        if(provider.type=="anthropic")request.header("x-api-key",credential).header("anthropic-version","2023-06-01")
+        else if(credential.isNotEmpty())request.header("Authorization","Bearer $credential")
         http.newCall(request.build()).execute().use { response ->
             check(response.isSuccessful) { "模型列表接口返回 HTTP ${response.code}" }
             val body=response.body ?: error("接口没有返回模型列表")

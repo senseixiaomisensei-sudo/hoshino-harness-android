@@ -12,6 +12,10 @@ export function createMockLlm() {
     const messages = body.messages;
     const user = [...messages].reverse().find(m => m.role === 'user' && (typeof m.content === 'string' || m.content.some?.(c => c.type === 'text')));
     const prompt = typeof user?.content === 'string' ? user.content : user?.content.filter(c => c.type === 'text').map(c => c.text).join(' ') ?? '';
+    if (prompt.includes('m1-error-fixture')) {
+      res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:{type:'invalid_request_error',message:'fixture request rejected'}}));
+      return;
+    }
     const last = messages.at(-1);
     const hasResult = last?.role === 'tool' || last?.content?.some?.(c => c.type === 'tool_result');
     const tool = !hasResult && /设备|device/.test(prompt) ? 'get_device_info' : !hasResult && /hello\.txt/.test(prompt) ? 'write' : undefined;

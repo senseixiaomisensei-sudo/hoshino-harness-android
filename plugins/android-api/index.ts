@@ -5,6 +5,7 @@ import { HostConnectionService } from '@deepseek-ai/dsh-client-connection';
 import '@deepseek-ai/dsh-host-webserver';
 import '@deepseek-ai/dsh-api-session-controller';
 import type {} from '../hoshino-self/index.js';
+import { providerBaseURL } from './provider-config.js';
 export const name = 'android-api';
 export const inject = ['llm', 'connection', 'webServer', 'sessionController', 'androidBridge', 'hoshinoControl'];
 export async function apply(ctx: Context): Promise<void> {
@@ -16,7 +17,7 @@ export async function apply(ctx: Context): Promise<void> {
       if (!/^[a-z][a-z0-9-]*$/.test(p.id) || !p.models.length) throw new Error('Invalid provider configuration');
       map[p.id] = {
         api: p.type === 'anthropic' ? 'anthropic-messages' : 'openai-completions',
-        baseURL: p.baseURL, apiKeyEnv: p.apiKey, headers: p.headers ?? {}, displayName: p.metadata?.name ?? p.id,
+        baseURL: providerBaseURL(p.type, p.baseURL), apiKeyEnv: p.apiKey, headers: p.headers ?? {}, displayName: p.metadata?.name ?? p.id,
         models: p.models.map(id => {
           const model=p.metadata?.models?.find(model=>model.id===id);
           const reasoning=model?.reasoning ?? p.type==='anthropic';
@@ -24,7 +25,8 @@ export async function apply(ctx: Context): Promise<void> {
             ...(reasoning ? { reasoningEfforts: { off: null, low: 'low', medium: 'medium', high: 'high', max: 'max' } } : {}),
             contextWindow: model?.contextLength ?? 128000, maxTokens: model?.maxOutput ?? 4096 };
         }),
-        ...(p.type === 'anthropic' ? { reasoning: 'medium', thinkingBudgets: { medium: 1024 } } : {}),
+        // Only session/selectModel's explicit effort may enable thinking.
+        ...(p.type === 'anthropic' ? { thinkingBudgets: { low: 1024, medium: 2048, high: 3072 } } : {}),
         retryPolicy: { mode: 'normal', maxRetries: 0 },
       };
     }

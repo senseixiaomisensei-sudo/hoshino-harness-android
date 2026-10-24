@@ -32,7 +32,7 @@ class ProviderStore(private val context: Context) {
         val uri = java.net.URI(provider.baseURL)
         require(uri.scheme in listOf("http", "https") && uri.host != null && uri.userInfo == null && uri.query == null && uri.fragment == null) { "请输入有效的 API 地址" }
         require(provider.models.isNotEmpty() && provider.models.all { it.isNotBlank() })
-        if (apiKey.isNotEmpty()) putSecret(provider.credentialRef,apiKey)
+        if (apiKey.isNotEmpty()) putSecret(provider.credentialRef,normalizeApiKey(apiKey))
         writeConfig(list().filterNot { it.id == provider.id } + provider)
     }
     private fun writeConfig(all: List<Provider>) {
@@ -68,7 +68,8 @@ class ProviderStore(private val context: Context) {
         val value = encrypted.getString(ref, null) ?: return null
         val bytes = Base64.decode(value, Base64.NO_WRAP)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, masterKey(), GCMParameterSpec(128, bytes.copyOfRange(0,12))) }
-        return String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)))
+        val decoded = String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)))
+        return if (ref.startsWith("KEY_")) normalizeApiKey(decoded) else decoded
     }
     private fun masterKey(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

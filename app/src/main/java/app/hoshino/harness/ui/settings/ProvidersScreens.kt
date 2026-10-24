@@ -168,7 +168,7 @@ fun ProviderEditScreen(vm: ConfigViewModel, providerId: String, onBack: () -> Un
     var name by remember { mutableStateOf(initial.name) }
     var protocol by remember { mutableStateOf(initial.protocol) }
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
-    var apiKey by remember { mutableStateOf(initial.apiKey) }
+    var apiKey by remember { mutableStateOf(if (initial.apiKey == "••••••••") "" else initial.apiKey) }
     var headers by remember { mutableStateOf(initial.headers.joinToString("\n") { "${it.first}: ${it.second}" }) }
     var enabled by remember { mutableStateOf(initial.enabled) }
     var models by remember { mutableStateOf(initial.models) }
@@ -183,7 +183,7 @@ fun ProviderEditScreen(vm: ConfigViewModel, providerId: String, onBack: () -> Un
         name = name.trim().ifBlank { "未命名" },
         protocol = protocol,
         baseUrl = baseUrl.trim(),
-        apiKey = apiKey.trim(),
+        apiKey = apiKey.trim().ifBlank { initial.apiKey },
         headers = headers.lines().filter { it.contains(':') }.map { it.substringBefore(':').trim() to it.substringAfter(':').trim() },
         enabled = enabled,
         models = models,
@@ -205,7 +205,7 @@ fun ProviderEditScreen(vm: ConfigViewModel, providerId: String, onBack: () -> Un
                 Segmented(ProviderProtocol.entries, protocol, { it.label }, { protocol = it }, Modifier.fillMaxWidth())
             }
             HTextField(baseUrl, { baseUrl = it }, label = "Base URL", placeholder = "https://api.example.com/v1", mono = true, keyboardType = KeyboardType.Uri)
-            HTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = "sk-…", mono = true, password = true, hint = "保存在 Android Keystore，仅本机")
+            HTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = if (initial.apiKey.isNotBlank()) "留空保留已保存的密钥" else "sk-…", mono = true, password = true, hint = "保存在 Android Keystore，仅本机")
             HTextField(headers, { headers = it }, label = "自定义 Header", placeholder = "X-Org-Id: my-org", mono = true, singleLine = false, minLines = 2, hint = "每行一个，格式 Name: Value")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("启用", style = t.body, color = c.text, modifier = Modifier.weight(1f))

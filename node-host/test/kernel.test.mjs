@@ -20,7 +20,7 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
     if (req.headers.authorization !== 'Bearer test-callback-secret') { res.writeHead(401).end(); return; }
     let raw=''; for await(const b of req) raw+=b; const body=JSON.parse(raw);
     let result = {};
-    if (req.url === '/providers') result=['claude','compatible'].map((id,i)=>({id,type:i?'openai-compatible':'anthropic',baseURL:`http://127.0.0.1:${mockPort}${i?'/v1':''}`,apiKey:`KEY_${id.toUpperCase()}`,models:['mock-model']}));
+    if (req.url === '/providers') result=['claude','compatible'].map((id,i)=>({id,type:i?'openai-compatible':'anthropic',baseURL:`http://127.0.0.1:${mockPort}${i?'/v1/chat/completions':'/v1/messages'}`,apiKey:`KEY_${id.toUpperCase()}`,models:['mock-model'],metadata:{models:[{id:'mock-model',reasoning:false}]}}));
     if (req.url === '/credential') result={value:canary,source:'test-memory'};
     if (req.url === '/device-info') { deviceCalls++; result={model:'M0 virtual Android',androidVersion:'16',battery:72}; }
     if (req.url === '/approve') { approvals.push(body); result={approved:true}; }
@@ -39,9 +39,9 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   const exchange=await fetch(`${base}/mobile/connect?token=${info.token}`,{redirect:'manual'});
   assert.equal(exchange.status,302); const cookie=exchange.headers.get('set-cookie').split(';')[0];
   assert.equal((await fetch(`${base}/mobile/connect?token=${info.token}`,{redirect:'manual'})).status,401);
-  const rpc=async(method, request)=>{
+  const rpc=async(method, request,allowFailure=false)=>{
     const response=await fetch(`${base}/api/${method}`,{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:crypto.randomUUID(),method,payload:{args:{...(request===undefined?{}:{request})}}})});
-    const json=await response.json(); assert.equal(json.result.ok,true,JSON.stringify(json)); return json.result.value;
+    const json=await response.json(); if(allowFailure)return json.result;assert.equal(json.result.ok,true,JSON.stringify(json)); return json.result.value;
   };
   const socket=new WebSocket(base.replace('http','ws')+'/api/remote.mux',{headers:{Cookie:cookie}});await once(socket,'open');t.after(()=>socket.terminate());
   const {sessionId}=await rpc('session/create',{cwd:workspace});
@@ -50,6 +50,9 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   const wait=async(predicate)=>{const deadline=Date.now()+20000;while(!predicate()){if(Date.now()>deadline)throw new Error(`Timed out; frames=${JSON.stringify(frames).slice(-12000)}; logs=${logs}`);await new Promise(r=>setTimeout(r,50));}};
   let turns=0;
   for(const provider of ['claude','compatible']) {
+    const incompatible=await rpc('session/selectModel',{sessionId,provider,model:'mock-model',reasoningEffort:'off'},true);
+    assert.equal(incompatible.ok,false);
+    assert.equal(incompatible.error.code,'session/model-unavailable');
     await rpc('session/selectModel',{sessionId,provider,model:'mock-model'});
     for(const prompt of ['你好','读取设备 device 信息','写入 hello.txt']) {
       const before=frames.length;
@@ -64,6 +67,7 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   const wire=JSON.stringify(frames);assert.ok(wire.includes('assistant-stream'));assert.ok(wire.includes('thinking'));assert.ok(wire.includes('get_device_info'));
   assert.ok(frames.some(f=>f.value?.event?.type==='assistant/message' && JSON.stringify(f.value.event.data.message).includes('M0 virtual Android')),'Model reply must use actual device tool result');
   assert.ok(mock.requests.some(r=>r.path==='/v1/messages'));assert.ok(mock.requests.some(r=>r.path==='/v1/chat/completions'));
+  assert.ok(mock.requests.filter(r=>r.path==='/v1/messages').every(r=>r.body.thinking?.type!=='enabled'),'No implicit Anthropic thinking budget');
   assert.ok(approvals.some(a=>a.kind==='network'));assert.ok(approvals.some(a=>a.tool==='write'));
   assert.ok(!logs.includes(canary));assert.ok(!logs.includes(info.token));
   let durableLog='';

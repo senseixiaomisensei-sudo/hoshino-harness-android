@@ -143,7 +143,19 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val id="e:$seq";val data=event.optJSONObject("data") ?: return
         when(event.getString("type")) {
             "turn/start" -> { publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
-            "turn/end" -> { live.remove(sid)?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) };publish(HarnessEvent.TurnFinished(sid,id,data.optJSONObject("reason")?.optString("kind")=="cancelled"));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=false,updatedAt=System.currentTimeMillis()) else it } };if(data.optJSONObject("reason")?.optString("kind")=="error")publish(HarnessEvent.Notice(sid,"error:$seq","模型请求失败，请检查协议、模型与凭据")) }
+            "turn/end" -> {
+                live.remove(sid)?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) }
+                val reason=data.optJSONObject("reason")
+                publish(HarnessEvent.TurnFinished(sid,id,reason?.optString("kind")=="aborted"))
+                sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=false,updatedAt=System.currentTimeMillis()) else it } }
+                if(reason?.optString("kind")=="error") {
+                    // dsh TurnEndReasonMap.error contains `error: LlmFailure`.
+                    val failure=reason.optJSONObject("error")
+                    val facts=listOfNotNull(failure?.optString("code")?.takeIf { it.isNotBlank() },failure?.optInt("status")?.takeIf { it in 100..599 }?.let { "HTTP $it" }).joinToString(" · ")
+                    val detail=vault.redact(failure?.optString("message").orEmpty()).take(1500).ifBlank { "内核未返回错误详情" }
+                    publish(HarnessEvent.Notice(sid,"error:$seq","请求未完成${if(facts.isBlank()) "" else "（$facts）"}：$detail"))
+                }
+            }
             "user/message" -> if(data.optJSONObject("source")?.optString("kind")=="user") {
                 val attachments=data.optJSONArray("content")?.rows().orEmpty().filter{it.optString("type") in setOf("image","file")}.map{block->val a=block.optJSONObject("attachment") ?: JSONObject();Attachment(a.optString("attachmentId"),a.optString("name","附件"),if(block.optString("type")=="image")AttachmentKind.Image else AttachmentKind.File,"${a.optLong("bytes")/1024} KB")}
                 publish(HarnessEvent.UserMessage(sid,id,content(data.optJSONArray("content"),"text"),attachments))
@@ -194,7 +206,12 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val modelInfo=providers.value.first{it.id==model.providerId}.models.first{it.id==model.modelId}
         require(attachments.none{it.kind==AttachmentKind.Image || it.kind==AttachmentKind.Camera} || modelInfo.vision){"当前模型未开启视觉，请在模型设置开启或切换模型"}
         control("session-options",JSONObject().put("sessionId",sessionId).put("tier",options.tier.key).put("planMode",options.planMode))
-        client.rpc("session/selectModel",JSONObject().put("sessionId",sessionId).put("provider",model.providerId).put("model",model.modelId).put("reasoningEffort",options.effort.key))
+        val selection=JSONObject().put("sessionId",sessionId).put("provider",model.providerId).put("model",model.modelId)
+        // dsh exposes no reasoning capability for a non-reasoning model; even
+        // sending "off" then causes session/model-unavailable before any HTTP call.
+        if(providerRows.value.firstOrNull{it.id==model.providerId}?.models?.firstOrNull{it.id==model.modelId}?.reasoning==true)
+            selection.put("reasoningEffort",options.effort.key)
+        client.rpc("session/selectModel",selection)
         val content=JSONArray().put(JSONObject().put("type","text").put("text",text))
         val media=AppMedia(context)
         for(attachment in attachments) {
