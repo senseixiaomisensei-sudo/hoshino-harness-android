@@ -60,7 +60,10 @@ class ChatViewModel : ViewModel() {
     val shizuku = client.shizuku
     val supportedPermissionTiers = client.supportedPermissionTiers
     private val submission=Mutex()
-    val slashCommands = client.slashCommands
+    val uiCustomization=client.uiCustomization
+    val slashCommands = combine(client.slashCommands,uiCustomization) { commands,custom ->
+        (custom.commands.map{app.hoshino.harness.core.SlashCommand(it.name,it.description,"用户覆盖")}+commands).distinctBy{it.name}
+    }.stateIn(viewModelScope,SharingStarted.Eagerly,client.slashCommands.value)
 
     private val _currentId = MutableStateFlow<String?>(null)
     val currentId: StateFlow<String?> = _currentId.asStateFlow()

@@ -4,6 +4,8 @@ import app.hoshino.harness.R
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -250,6 +252,8 @@ fun KernelScreen(vm: ConfigViewModel, onBack: () -> Unit) {
     val c = HoshinoTheme.colors
     var logs by remember { mutableStateOf<List<String>?>(null) }
     var confirm by remember { mutableStateOf(false) }
+    var snapshots by remember { mutableStateOf<List<String>?>(null) }
+    var restore by remember { mutableStateOf<String?>(null) }
     CollectToasts(vm)
     PageScaffold("内核", onBack) {
         SectionLabel("dsh 内核 · headless")
@@ -275,6 +279,7 @@ fun KernelScreen(vm: ConfigViewModel, onBack: () -> Unit) {
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             HButton("重启内核", { confirm = true }, Modifier.fillMaxWidth(), style = BtnStyle.Primary, icon = HIcons.Refresh)
             HButton("查看日志", { vm.run { logs = kernelLogs() } }, Modifier.fillMaxWidth(), style = BtnStyle.Secondary, icon = HIcons.ListIcon)
+            HButton("配置快照与回滚", {vm.run{snapshots=configurationSnapshots()}},Modifier.fillMaxWidth(),style=BtnStyle.Secondary,icon=HIcons.Refresh,enabled=vm.client.configurationRollbackSupported)
         }
     }
     if (confirm) {
@@ -288,6 +293,20 @@ fun KernelScreen(vm: ConfigViewModel, onBack: () -> Unit) {
                 l.forEach { Text(it, style = HoshinoTheme.type.codeSmall, color = c.text) }
             }
             Spacer(Modifier.height(12.dp))
+        }
+    }
+    snapshots?.let{items->
+        HSheet(onDismiss={snapshots=null},title="配置快照（最近 20 份）") {
+            Text("恢复公开配置、用户插件、技能与 UI 覆盖。会话和凭据独立保存。",style=HoshinoTheme.type.caption,color=c.text3,modifier=Modifier.padding(16.dp))
+            Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState())) {
+                if(items.isEmpty())Text("尚无配置快照",style=HoshinoTheme.type.body,color=c.text2,modifier=Modifier.padding(20.dp))
+                items.forEach{id->ListRow("恢复此快照",subtitle=id,onClick={restore=id;snapshots=null});Hairline()}
+            }
+        }
+    }
+    restore?.let{id->
+        HDialog("恢复配置快照？",onDismiss={restore=null},confirmText="恢复",danger=true,onConfirm={restore=null;vm.run("配置快照已恢复"){rollbackConfiguration(id)}}) {
+            Text("将以所选快照恢复配置及用户扩展：$id",style=HoshinoTheme.type.body,color=c.text2)
         }
     }
 }

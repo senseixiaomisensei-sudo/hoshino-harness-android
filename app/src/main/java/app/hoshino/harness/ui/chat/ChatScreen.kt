@@ -109,6 +109,7 @@ fun ChatScreen(
     val connection by vm.connection.collectAsStateWithLifecycle()
     val shizuku by vm.shizuku.collectAsStateWithLifecycle()
     val slash by vm.slashCommands.collectAsStateWithLifecycle()
+    val custom by vm.uiCustomization.collectAsStateWithLifecycle()
     val files by vm.fileSuggestions.collectAsStateWithLifecycle()
 
     var input by remember { mutableStateOf(TextFieldValue("")) }
@@ -151,6 +152,7 @@ fun ChatScreen(
     }
 
     fun runSlash(cmd: SlashCommand) {
+        custom.commands.firstOrNull{it.name==cmd.name}?.let{input=TextFieldValue(it.prompt,TextRange(it.prompt.length));return}
         val name = cmd.name
         when (name) {
             "/goal", "/plan", "/schedule" -> input = TextFieldValue("$name ", TextRange(name.length + 1))
@@ -188,6 +190,7 @@ fun ChatScreen(
                 windowInsets = WindowInsets(0, 0, 0, 0),
             ) {
                 Sidebar(
+                    customization = custom,
                     onSearchSessions = vm::searchSessions,
                     sessions = sessions,
                     workspaces = workspaces,
@@ -293,6 +296,8 @@ fun ChatScreen(
             Box(Modifier.fillMaxWidth().weight(1f).imePadding()) {
                 if (isHero) {
                     Hero(
+                        customization = custom,
+                        onCustomPrompt = {input=TextFieldValue(it,TextRange(it.length))},
                         workspaces = workspaces.map { it.id to it.name },
                         selectedWorkspace = composer.workspaceId,
                         onSelectWorkspace = { vm.selectWorkspace(it) },
@@ -389,6 +394,8 @@ fun ChatScreen(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Hero(
+    customization: app.hoshino.harness.core.UiCustomization,
+    onCustomPrompt: (String)->Unit,
     workspaces: List<Pair<String, String>>,
     selectedWorkspace: String,
     onSelectWorkspace: (String) -> Unit,
@@ -405,7 +412,7 @@ private fun Hero(
         Spacer(Modifier.height(48.dp))
         HoshinoMark(56.dp)
         Spacer(Modifier.height(20.dp))
-        Text(stringResource(R.string.hero_title), style = HoshinoTheme.type.headline, color = c.text, textAlign = TextAlign.Center)
+        Text(customization.tagline ?: stringResource(R.string.hero_title), style = HoshinoTheme.type.headline, color = c.text, textAlign = TextAlign.Center)
         Spacer(Modifier.height(16.dp))
         Box {
             var open by remember { mutableStateOf(false) }
@@ -440,10 +447,13 @@ private fun Hero(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.widthIn(max = 640.dp),
         ) {
-            Pill(stringResource(R.string.chip_plan), icon = HIcons.ListIcon, onClick = { onChip(0) })
-            Pill(stringResource(R.string.chip_goal), icon = HIcons.Target, onClick = { onChip(1) })
-            Pill(stringResource(R.string.chip_mcp), icon = HIcons.Server, onClick = { onChip(2) })
-            Pill(stringResource(R.string.chip_provider), icon = HIcons.Cpu, onClick = { onChip(3) })
+            if(customization.capsules!=null)customization.capsules.forEach{capsule->Pill(capsule.label,icon=HIcons.Sparkle,onClick={onCustomPrompt(capsule.prompt)})}
+            else {
+                Pill(stringResource(R.string.chip_plan), icon = HIcons.ListIcon, onClick = { onChip(0) })
+                Pill(stringResource(R.string.chip_goal), icon = HIcons.Target, onClick = { onChip(1) })
+                Pill(stringResource(R.string.chip_mcp), icon = HIcons.Server, onClick = { onChip(2) })
+                Pill(stringResource(R.string.chip_provider), icon = HIcons.Cpu, onClick = { onChip(3) })
+            }
         }
         Spacer(Modifier.height(48.dp))
     }

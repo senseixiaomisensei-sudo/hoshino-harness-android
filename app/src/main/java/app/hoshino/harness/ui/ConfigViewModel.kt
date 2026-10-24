@@ -51,7 +51,7 @@ class ConfigViewModel : ViewModel() {
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _messages.tryEmit(e.message ?: "操作失败")
+                _messages.tryEmit(client.describeFailure(e))
             }
         }
     }

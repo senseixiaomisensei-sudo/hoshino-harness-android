@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import app.hoshino.harness.core.SessionInfo
 import app.hoshino.harness.core.Workspace
 import app.hoshino.harness.core.SessionSearchResults
+import app.hoshino.harness.core.UiCustomization
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import app.hoshino.harness.ui.chat.ActionSheet
@@ -59,6 +60,7 @@ import app.hoshino.harness.ui.theme.HoshinoShapes
 import app.hoshino.harness.ui.theme.HoshinoTheme
 
 enum class SessionAction { Rename, Fork, Export, Archive, Unarchive, Delete }
+private data class SidebarNav(val route:String,val icon:ImageVector?,val label:String)
 
 enum class SessionSort(val label: String) { Updated("按更新时间"), Created("按创建时间"), Title("按标题") }
 
@@ -76,6 +78,7 @@ fun Sidebar(
     onToggleTheme: () -> Unit,
     modifier: Modifier = Modifier,
     onSearchSessions: suspend (String)->SessionSearchResults = { SessionSearchResults(emptyList()) },
+    customization: UiCustomization = UiCustomization(),
 ) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
@@ -101,6 +104,8 @@ fun Sidebar(
     }
     val hits=results.items.associateBy{it.sessionId}
     val groups=workspaces+sessions.map{it.workspaceId}.distinct().filter{id->workspaces.none{it.id==id}}.map{Workspace(it,"历史工作区","")}
+    fun ordered(entries:List<SidebarNav>)=entries.filter{entry->customization.sidebar.none{it.route==entry.route && !it.visible}}
+        .sortedBy{entry->customization.sidebar.indexOfFirst{it.route==entry.route}.takeIf{it>=0} ?: (customization.sidebar.size+entries.indexOf(entry))}
 
     val filtered = sessions
         .filter { needle.isBlank() || it.title.contains(needle, ignoreCase = true) || it.id in hits }
@@ -131,20 +136,23 @@ fun Sidebar(
                     Text(stringResource(R.string.new_session), style = t.bodyMedium, color = c.text)
                 }
                 Spacer(Modifier.height(8.dp))
-                NavEntry(HIcons.Plug, stringResource(R.string.nav_plugins)) { onNavigate(Routes.PLUGINS) }
-                NavEntry(HIcons.Sparkle, stringResource(R.string.nav_skills)) { onNavigate(Routes.SKILLS) }
-                NavEntry(HIcons.Server, stringResource(R.string.nav_mcp)) { onNavigate(Routes.MCP) }
-                NavEntry(HIcons.Clock, stringResource(R.string.nav_schedules)) { onNavigate(Routes.SCHEDULES) }
-                NavEntry(HIcons.Target, stringResource(R.string.nav_goals)) { onNavigate(Routes.GOALS) }
+                ordered(listOf(
+                    SidebarNav(Routes.PLUGINS,HIcons.Plug,stringResource(R.string.nav_plugins)),
+                    SidebarNav(Routes.SKILLS,HIcons.Sparkle,stringResource(R.string.nav_skills)),
+                    SidebarNav(Routes.MCP,HIcons.Server,stringResource(R.string.nav_mcp)),
+                    SidebarNav(Routes.SCHEDULES,HIcons.Clock,stringResource(R.string.nav_schedules)),
+                    SidebarNav(Routes.GOALS,HIcons.Target,stringResource(R.string.nav_goals)),
+                )).forEach{entry->NavEntry(entry.icon,entry.label){onNavigate(entry.route)}}
                 NavEntry(HIcons.Terminal, stringResource(R.string.nav_tools), trailing = if (showTools) HIcons.ChevronUp else HIcons.ChevronDown) { showTools = !showTools }
                 if (showTools) {
-                    NavEntry(null, stringResource(R.string.nav_terminal), indent = true) { onNavigate(Routes.TERMINAL) }
-                    NavEntry(null, "文件", indent = true) { onNavigate(Routes.FILES) }
-                    NavEntry(null, "截图预览", indent = true) { onNavigate(Routes.SCREENSHOT) }
-                    NavEntry(null, stringResource(R.string.nav_hooks), indent = true) { onNavigate(Routes.HOOKS) }
-                    NavEntry(null, stringResource(R.string.nav_inspector), indent = true) { onNavigate(Routes.INSPECTOR) }
-                    NavEntry(null, stringResource(R.string.nav_web), indent = true) { onNavigate(Routes.WEB) }
-                    NavEntry(null, stringResource(R.string.nav_lsp), indent = true) { onNavigate(Routes.LSP) }
+                    ordered(listOf(
+                        SidebarNav(Routes.TERMINAL,null,stringResource(R.string.nav_terminal)),
+                        SidebarNav(Routes.FILES,null,"文件"),SidebarNav(Routes.SCREENSHOT,null,"截图预览"),
+                        SidebarNav(Routes.HOOKS,null,stringResource(R.string.nav_hooks)),
+                        SidebarNav(Routes.INSPECTOR,null,stringResource(R.string.nav_inspector)),
+                        SidebarNav(Routes.WEB,null,stringResource(R.string.nav_web)),
+                        SidebarNav(Routes.LSP,null,stringResource(R.string.nav_lsp)),
+                    )).forEach{entry->NavEntry(entry.icon,entry.label,indent=true){onNavigate(entry.route)}}
                 }
                 Spacer(Modifier.height(8.dp))
                 HTextField(query, { query = it }, Modifier.padding(horizontal = 12.dp), placeholder = stringResource(R.string.search_sessions), leading = HIcons.Search)

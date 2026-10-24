@@ -52,8 +52,9 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val skills=skillRows.asStateFlow()
     private val inspectorRows=MutableStateFlow<List<InspectorNode>>(emptyList())
     override val inspector=inspectorRows.asStateFlow()
-    val uiOverrides=MutableStateFlow(JSONObject())
-    val selfError=MutableStateFlow<String?>(null)
+    override val uiCustomization=MutableStateFlow(UiCustomization())
+    override val uiCustomizationError=MutableStateFlow<String?>(null)
+    override val configurationRollbackSupported=true
     val files=dev.hoshino.bridge.WorkspaceFiles(java.io.File(context.filesDir,"workspace"),java.io.File(context.filesDir,"hoshino-trash"))
     private val metadata=context.getSharedPreferences("m1-session-metadata",Context.MODE_PRIVATE)
     private val restartAfter=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -283,8 +284,23 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         pluginRows.value=built+user
         skillRows.value=state.getJSONArray("skills").rows().map{row->Skill(row.getString("name"),row.getString("name"),row.optString("description"),true,row.optString("source"),"")}
         inspectorRows.value=listOf(InspectorNode("dsh","Cordis","就绪",pluginRows.value.map{InspectorNode(it.id,it.pkg,if(it.enabled)"已挂载" else "已停用")}))
-        val overrides=control("ui-read");uiOverrides.value=overrides.getJSONObject("value");selfError.value=if(overrides.optBoolean("valid",true))null else overrides.optString("error")
+        val overrides=control("ui-read")
+        val parsed=runCatching { check(overrides.optBoolean("valid",true));parseUiCustomization(overrides.getJSONObject("value")) }
+        uiCustomization.value=parsed.getOrDefault(UiCustomization())
+        uiCustomizationError.value=if(parsed.isSuccess)null else "UI 覆盖配置无效，已恢复原始界面；可在内核设置中回滚"
     }
+    private fun parseUiCustomization(value:JSONObject):UiCustomization {
+        fun scale(key:String)=if(value.has(key))value.getDouble(key).also{require(it.isFinite() && it in 0.8..1.5)}.toFloat() else null
+        val accent=value.optString("accent").takeIf{it.isNotBlank()}?.also{require(it.matches(Regex("#[a-fA-F0-9]{6}")))}
+        return UiCustomization(accent,scale("bodyScale"),scale("codeScale"),value.optString("tagline").takeIf{it.isNotBlank()},
+            value.optJSONArray("capsules")?.rows()?.map{UiCapsule(it.getString("label"),it.getString("prompt"))},
+            value.optJSONArray("commands")?.rows().orEmpty().map{UiCommand("/"+it.getString("name"),it.getString("description"),it.getString("prompt"))},
+            value.optJSONArray("sidebar")?.rows().orEmpty().map{UiSidebarEntry(it.getString("route"),it.getBoolean("visible"))})
+    }
+    override suspend fun configurationSnapshots():List<String> {
+        val rows=control("snapshots").getJSONArray("items");return (0 until rows.length()).map{rows.getString(it)}
+    }
+    override suspend fun rollbackConfiguration(snapshotId:String) {control("rollback",JSONObject().put("id",snapshotId));refreshControl()}
     override suspend fun setPluginEnabled(pluginId:String,enabled:Boolean) {require(plugins.value.none{it.id==pluginId && it.source==PluginSource.BuiltIn}){"内置依赖请通过源码组合替换"};control("enable-plugin",JSONObject().put("id",pluginId).put("enabled",enabled));refreshControl()}
     override suspend fun removePlugin(pluginId:String) {require(plugins.value.none{it.id==pluginId && it.source==PluginSource.BuiltIn});control("remove-plugin",JSONObject().put("id",pluginId));refreshControl()}
     override suspend fun readPluginConfig(pluginId:String)=control("config-read",JSONObject().put("path","plugins/$pluginId/config.json")).getString("content")

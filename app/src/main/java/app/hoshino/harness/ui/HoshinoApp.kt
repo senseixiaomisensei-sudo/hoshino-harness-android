@@ -11,6 +11,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -51,6 +54,7 @@ import app.hoshino.harness.ui.tools.TrajectoryScreen
 import app.hoshino.harness.ui.tools.WebPreviewScreen
 import app.hoshino.harness.ui.tools.ScreenshotScreen
 import app.hoshino.harness.ui.tools.FilesScreen
+import app.hoshino.harness.ui.components.toast
 
 /** 应用根：主题 + 导航。ChatViewModel / AppViewModel 为 Activity 级，跨页面共享。 */
 @Composable
@@ -58,6 +62,10 @@ fun HoshinoApp() {
     val app: AppViewModel = viewModel()
     val chat: ChatViewModel = viewModel()
     val prefs by app.prefs.collectAsStateWithLifecycle()
+    val custom by app.customization.collectAsStateWithLifecycle()
+    val customizationError by app.customizationError.collectAsStateWithLifecycle()
+    val context=LocalContext.current
+    LaunchedEffect(customizationError){customizationError?.let{toast(context,it)}}
     val systemDark = isSystemInDarkTheme()
     val isDark = when (prefs.themeMode) {
         ThemeMode.System -> systemDark
@@ -65,7 +73,8 @@ fun HoshinoApp() {
         ThemeMode.Dark -> true
     }
 
-    HoshinoTheme(mode = prefs.themeMode, bodyScale = prefs.bodyScale, codeScale = prefs.codeScale) {
+    HoshinoTheme(mode = prefs.themeMode, bodyScale = custom.bodyScale ?: prefs.bodyScale, codeScale = custom.codeScale ?: prefs.codeScale,
+        accent=custom.accent?.let{Color(android.graphics.Color.parseColor(it))}) {
         val nav = rememberNavController()
         val back: () -> Unit = { nav.popBackStack() }
         val go: (String) -> Unit = { route -> nav.navigate(route) { launchSingleTop = true } }

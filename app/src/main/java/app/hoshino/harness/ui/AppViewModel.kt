@@ -20,6 +20,8 @@ data class UiPrefs(
 )
 
 class AppViewModel : ViewModel() {
+    val customization=app.hoshino.harness.core.Hoshino.client.uiCustomization
+    val customizationError=app.hoshino.harness.core.Hoshino.client.uiCustomizationError
     private val _prefs = MutableStateFlow(UiPrefs())
     val prefs: StateFlow<UiPrefs> = _prefs.asStateFlow()
 

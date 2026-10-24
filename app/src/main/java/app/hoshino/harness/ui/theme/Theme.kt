@@ -16,6 +16,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -135,6 +136,7 @@ fun HoshinoTheme(
     mode: ThemeMode = ThemeMode.System,
     bodyScale: Float = 1f,
     codeScale: Float = 1f,
+    accent: Color? = null,
     content: @Composable () -> Unit,
 ) {
     val dark = when (mode) {
@@ -142,7 +144,8 @@ fun HoshinoTheme(
         ThemeMode.Light -> false
         ThemeMode.Dark -> true
     }
-    val c = if (dark) DarkHoshinoColors else LightHoshinoColors
+    val base = if (dark) DarkHoshinoColors else LightHoshinoColors
+    val c = if(accent==null)base else base.copy(accent=accent,accentSoft=accent.copy(alpha=if(dark)0.12f else 0.08f),onAccent=if(accent.luminance()>0.5f)Color.Black else Color.White)
     val type = hoshinoType(bodyScale, codeScale)
 
     val scheme = if (dark) {

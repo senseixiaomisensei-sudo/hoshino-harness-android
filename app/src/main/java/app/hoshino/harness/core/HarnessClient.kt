@@ -19,6 +19,11 @@ interface HarnessClient {
     fun describeFailure(failure: Throwable): String = if(failure is UnsupportedOperationException) failure.message ?: "即将支持" else "操作未完成"
     /** Select the UI's active session without starting an Agent turn. */
     fun activateSession(sessionId: String) {}
+    val uiCustomization: StateFlow<UiCustomization> get() = DefaultUiCustomization.value
+    val uiCustomizationError: StateFlow<String?> get() = DefaultUiCustomization.error
+    val configurationRollbackSupported:Boolean get() = false
+    suspend fun configurationSnapshots():List<String> = throw UnsupportedOperationException("配置回滚即将支持")
+    suspend fun rollbackConfiguration(snapshotId:String):Unit = throw UnsupportedOperationException("配置回滚即将支持")
 
     // ---------- 连接 & 会话 ----------
     val connection: StateFlow<ConnectionState>

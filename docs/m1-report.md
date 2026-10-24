@@ -57,3 +57,18 @@ CI 40063104406 的 Android 作业未执行：ARM 后打包模块检查通过，x
 针对手机已支持 Shizuku 却无法在完全访问档发送，以及历史会话搜不到，接通官方 UserService 的真实 Android `system_shell` Cordis 工具，修复原版 session/list 命名参数、标题投影、工作区恢复与全文搜索配置。原版 dsh `0.2.1-rc.2`、JSONL 持久化、SessionStore 均保持原样；KernelLauncher 与 Cordis seam 可替换。
 
 双 ABI 本地构建和单测成功，arm64 109,495,566 字节、x86_64 114,387,692 字节，两个包原签名核验成功。桌面原版 dsh 8 轮回归成功，原生最终回归 150.168 秒、`OK (6 tests)`，涵盖系统 UID、拒绝/超时/取消和冷重启归档正文搜索。完整过程、失败记录、SHA256 和边界见 [本次修复报告](m1-preview4-fix.md)。CI 未有本次提交全绿记录时保持未验证；不将修复测试包称为完整 M1 通过。
+
+公开测试包 [preview.4](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.1.0-m1-preview.4)，源码 `e6932a4cb93379f59c8b1ffa3b040e29cd5191e4`；两个 ABI 和原始验证输出、SHA256SUMS 已上传，服务端 digest 均与本地一致。
+
+## 声明式 UI 与回滚：后续开发快照
+
+已将现有 Cordis UI 覆盖接到 HarnessClient 的类型化流，原生界面实际应用强调色/字号/标语/胶囊/自定义命令，以及现有侧栏分组内的顺序与显隐。内核设置页显示实际快照并确认恢复；非法覆盖退回原始 UI 并提示。此部分属于后续版本，**不包含在已发布 preview.4 中**。
+
+| 检查 | 实测结果 |
+|---|---|
+| 双 ABI assembleDebug、单测、仪器 APK | `.research/m1-ui-customization-build.log`，成功 3m34 |
+| 共享主题修改后的截图、复制、PTY、长图及双协议聊天 | `.research/m1-ui-customization-first-attempt.log`，对应两项通过；该轮第三项因测试误选屏幕外搜索框失败 |
+| 可见输入框定位修正、独立 provider 夹具的测试 APK | `.research/m1-ui-customization-test-build.log`，成功 38s |
+| 实际窗口颜色、胶囊/命令、隐藏侧栏、原生回滚、非法配置回退 | `.research/m1-ui-customization-native.log`，40.898 秒、`OK (1 test)` |
+
+完整 M1AcceptanceTest、安全模式、文件管理/终端补项及指标仍未完成，继续实施。没有新的整工作流结果就不记本阶段 CI 通过。

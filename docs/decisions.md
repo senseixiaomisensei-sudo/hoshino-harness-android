@@ -78,3 +78,10 @@
 - 全文搜索调用原版 session/search。原 profile 的 `session-query-sqlite.openAt=never` 明确禁止搜索；改为原接口支持的 `first-search`，保留 `path=:memory:`。SQLite 只作为可重建的内存查询索引；原版 `session-persistence-jsonl` 仍拥有会话持久化，没有替换存储。搜索合并标题与正文结果，展示片段，展开匹配的归档/折叠分组并显示错误。
 - 冷重启测试暴露进程销毁时日志管道抛出 InterruptedIOException；启动器只捕获 I/O 关闭并等待原进程退出，不把未捕获线程异常传播为应用崩溃。
 - mock 明确选择测试用户输入：dsh 可能在用户消息后追加 runtime context 和 skill catalog，不能把最后一个 user 角色消息直接当成真实请求。测试仍使用真实 Agent loop 和原厂协议适配器。
+
+## 2026-10-24 M1 声明式原生 UI 与回滚
+
+- 通过 HarnessClient 的类型化 StateFlow 传递 UI 覆盖，不在 Compose 中转换 Cordis 配置或调用 Node。未提供覆盖时继续使用 ZIP 原始 Token 和布局；覆盖强调色、字号、标语、胶囊、命令及现有分组内的侧栏顺序/显隐。设置入口持续可达，便于恢复误配置。
+- 自定义胶囊和命令只填入草稿，用户确认发送后仍经过原有模型及工具审批；覆盖中不能携带可执行代码、任意路由组件或 WebView。
+- 原版 Cordis 控制插件校验覆盖 JSON，原生映射再检查颜色和字号。无效数据回到原始界面并显示提示，原文件保留以便检查或回滚。
+- 内核设置页读取实际快照清单并经确认调用现有 Cordis rollback；不用 UI 自建一套快照或会话存储。新增仪器测试验证实际窗口颜色、胶囊、命令、隐藏侧栏、原生回滚按钮和非法文件回退，结果按日志记录。
