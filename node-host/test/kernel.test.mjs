@@ -14,7 +14,7 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   const workspace = join(root,'workspace'); await mkdir(workspace);
   const mock = createMockLlm(); const mockPort = await listen(mock.server);
   const canary = `sk-m0-${crypto.randomUUID()}`;
-  let ready, deviceCalls = 0; const approvals = [];
+  let ready, deviceCalls = 0, systemCalls=0, systemAuthorized=false, denySystem=false; const approvals = [];
   const kernelReady = new Promise(r => ready = r);
   const callback = createServer(async (req,res) => {
     if (req.headers.authorization !== 'Bearer test-callback-secret') { res.writeHead(401).end(); return; }
@@ -23,7 +23,9 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
     if (req.url === '/providers') result=['claude','compatible'].map((id,i)=>({id,type:i?'openai-compatible':'anthropic',baseURL:`http://127.0.0.1:${mockPort}${i?'/v1/chat/completions':'/v1/messages'}`,apiKey:`KEY_${id.toUpperCase()}`,models:['mock-model'],metadata:{models:[{id:'mock-model',reasoning:false}]}}));
     if (req.url === '/credential') result={value:canary,source:'test-memory'};
     if (req.url === '/device-info') { deviceCalls++; result={model:'M0 virtual Android',androidVersion:'16',battery:72}; }
-    if (req.url === '/approve') { approvals.push(body); result={approved:true}; }
+    if (req.url === '/approve') { approvals.push(body); result={approved:!(denySystem && body.tool==='system_shell')}; }
+    if (req.url === '/system-access') result={authorized:systemAuthorized};
+    if (req.url === '/system-shell') { systemCalls++;result={uid:2000,cwd:'/data/local/tmp',exitCode:0,stdout:'2000\nfixture Android\n',stderr:'',timedOut:false}; }
     if (req.url === '/ready') ready(body);
     res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(result));
   });
@@ -40,7 +42,7 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   assert.equal(exchange.status,302); const cookie=exchange.headers.get('set-cookie').split(';')[0];
   assert.equal((await fetch(`${base}/mobile/connect?token=${info.token}`,{redirect:'manual'})).status,401);
   const rpc=async(method, request,allowFailure=false)=>{
-    const response=await fetch(`${base}/api/${method}`,{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:crypto.randomUUID(),method,payload:{args:{...(request===undefined?{}:{request})}}})});
+    const response=await fetch(`${base}/api/${method}`,{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:crypto.randomUUID(),method,payload:{args:{...(request===undefined?{}:{[method==='session/list'?'_request':'request']:request})}}})});
     const json=await response.json(); if(allowFailure)return json.result;assert.equal(json.result.ok,true,JSON.stringify(json)); return json.result.value;
   };
   const socket=new WebSocket(base.replace('http','ws')+'/api/remote.mux',{headers:{Cookie:cookie}});await once(socket,'open');t.after(()=>socket.terminate());
@@ -68,12 +70,29 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   assert.ok(frames.some(f=>f.value?.event?.type==='assistant/message' && JSON.stringify(f.value.event.data.message).includes('M0 virtual Android')),'Model reply must use actual device tool result');
   assert.ok(mock.requests.some(r=>r.path==='/v1/messages'));assert.ok(mock.requests.some(r=>r.path==='/v1/chat/completions'));
   assert.ok(mock.requests.filter(r=>r.path==='/v1/messages').every(r=>r.body.thinking?.type!=='enabled'),'No implicit Anthropic thinking budget');
+  await rpc('session/rename',{sessionId,title:'History title fixture'});
+  const listed=await rpc('session/list',{});
+  assert.equal(listed.items.find(row=>row.sessionId===sessionId).projections.values.title,'History title fixture','Native list must consume original title projection');
+  const history=await rpc('session/search',{query:'device'});
+  assert.ok(history.items.some(row=>row.sessionId===sessionId && row.snippet.includes('device')),'Original history search must find message text unrelated to the renamed title');
+  const control=async request=>fetch(`${base}/mobile/control`,{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({action:'session-options',request})});
+  assert.equal((await control({sessionId,tier:'full-access'})).status,400,'Full access must require the actual Android authorization callback');
+  systemAuthorized=true;
+  assert.equal((await control({sessionId,tier:'full-access'})).status,200);
+  for(const denied of [true,false]) {
+    denySystem=denied;const before=frames.length;
+    await rpc('session/prompt',{sessionId,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text:'system command shizuku id'}]});
+    await wait(()=>frames.slice(before).some(f=>f.value?.event?.type==='turn/end'));
+    assert.equal(systemCalls,denied?0:1,'A rejected system command must not reach the Kotlin execution callback');
+    if(!denied)assert.ok(JSON.stringify(frames.slice(before)).includes('fixture Android'));
+    turns++;
+  }
   assert.ok(approvals.some(a=>a.kind==='network'));assert.ok(approvals.some(a=>a.tool==='write'));
   assert.ok(!logs.includes(canary));assert.ok(!logs.includes(info.token));
   let durableLog='';
   async function scan(dir){for(const e of await readdir(dir,{withFileTypes:true})){const p=join(dir,e.name);if(e.isDirectory())await scan(p);else {const bytes=await readFile(p);assert.ok(!bytes.includes(Buffer.from(canary)),p);if(e.name.endsWith('.jsonl'))durableLog+=bytes.toString('utf8');}}}
   await scan(root);
   assert.ok(durableLog.includes('user/message') && durableLog.includes('tool/result'),'Original JSONL checkpoints must contain actual conversation and tool events');
-  console.log(`dsh turns=${turns}, device callbacks=${deviceCalls}, authenticated original Session/Mux protocol verified`);
+  console.log(`dsh turns=${turns}, device callbacks=${deviceCalls}, synthetic system callbacks=${systemCalls}, authenticated original Session/Mux protocol verified`);
 });
 

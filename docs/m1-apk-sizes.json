@@ -2,13 +2,13 @@
   {
     "abi": "arm64-v8a",
     "apk": "Hoshino-Harness-0.1.0-m1-arm64-v8a-debug.apk",
-    "bytes": 82231030,
-    "sha256": "e5e3f29dbfdde363256852ec54aa1f24979fff2c5fcc760568fc8beac6176370",
+    "bytes": 109495566,
+    "sha256": "8a9fb1d2d5c8fce1d8899a0b3325fae95301d2cb1fbbc141f7aed7aa57ef09c3",
     "within150MB": true,
     "largestFiles": [
       {
         "path": "assets/kernel/arm64-v8a.txz",
-        "bytes": 38131976
+        "bytes": 38132540
       },
       {
         "path": "classes.dex",
@@ -24,7 +24,7 @@
       },
       {
         "path": "classes5.dex",
-        "bytes": 1097360
+        "bytes": 1105360
       },
       {
         "path": "classes4.dex",
@@ -32,7 +32,7 @@
       },
       {
         "path": "classes11.dex",
-        "bytes": 605964
+        "bytes": 622144
       },
       {
         "path": "resources.arsc",
@@ -44,20 +44,20 @@
       },
       {
         "path": "classes2.dex",
-        "bytes": 144432
+        "bytes": 175840
       }
     ]
   },
   {
     "abi": "x86_64",
     "apk": "Hoshino-Harness-0.1.0-m1-x86_64-debug.apk",
-    "bytes": 84685280,
-    "sha256": "3528e3361a6b914e8b11c734a4a23468ec8d40dbad090bd69ccb500d3f1edcc9",
+    "bytes": 114387692,
+    "sha256": "63add06481e81e54d8ac419df6ef772c389057947d39b0149852a5238ba0c4c5",
     "within150MB": true,
     "largestFiles": [
       {
         "path": "assets/kernel/x86_64.txz",
-        "bytes": 40569280
+        "bytes": 40569856
       },
       {
         "path": "classes.dex",
@@ -73,7 +73,7 @@
       },
       {
         "path": "classes5.dex",
-        "bytes": 1097336
+        "bytes": 1105336
       },
       {
         "path": "classes4.dex",
@@ -81,7 +81,7 @@
       },
       {
         "path": "classes11.dex",
-        "bytes": 605960
+        "bytes": 622148
       },
       {
         "path": "resources.arsc",
@@ -93,7 +93,7 @@
       },
       {
         "path": "classes2.dex",
-        "bytes": 144432
+        "bytes": 175840
       }
     ]
   }

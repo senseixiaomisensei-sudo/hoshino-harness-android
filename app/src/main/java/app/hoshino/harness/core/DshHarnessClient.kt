@@ -12,9 +12,12 @@ import java.util.UUID
 
 /** Only adapts the real dsh Session Controller/Gateway to the ZIP's unmodified event reducer. */
 class DshHarnessClient(private val context: Context) : UnavailableHarnessClient() {
+    override val supportedPermissionTiers=PermissionTier.entries.toSet()
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val vault=ProviderStore(context)
+    override fun describeFailure(failure: Throwable)=vault.redact(failure.message.orEmpty()).take(1500).ifBlank { "操作未完成，内核没有返回错误详情" }
     private val shizukuConnection=dev.hoshino.bridge.ShizukuConnection(context.applicationContext)
+    private val systemShell=dev.hoshino.bridge.ShizukuShell(context.applicationContext)
     override val shizuku=shizukuConnection.state.map { ShizukuStatus.valueOf(it.name) }.stateIn(scope,SharingStarted.Eagerly,ShizukuStatus.valueOf(shizukuConnection.state.value.name))
     override suspend fun refreshShizuku(){shizukuConnection.refresh()}
     override suspend fun requestShizukuPermission()=withContext(Dispatchers.Main){shizukuConnection.requestPermission()}
@@ -67,7 +70,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         scope.launch { runtime.state.map { it.phase }.distinctUntilChanged().collect { if(it=="已连接")runCatching { refreshSessions();refreshControl() }.onFailure { runtime.diagnostic("sessions: ${it.javaClass.simpleName}") } } }
     }
     fun startKernel()=runtime.start()
-    fun stopKernel() { approvals.values.forEach { it.complete(ApprovalDecision.Deny) };runtime.stop() }
+    fun stopKernel() { approvals.values.forEach { it.complete(ApprovalDecision.Deny) };systemShell.close();runtime.stop() }
     override suspend fun restartKernel() {
         for(session in sessions.value.filter { it.running })runCatching { api().rpc("session/cancel",JSONObject().put("sessionId",session.id)) }
         withTimeoutOrNull(5000) { sessions.first { rows -> rows.none { it.running } } }
@@ -80,6 +83,15 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private suspend fun publish(event: HarnessEvent)=eventBus.emit(event)
     private suspend fun callback(method: String,body: JSONObject): Any {
         when(method) {
+            "system-access" -> {shizukuConnection.refresh();return JSONObject().put("authorized",shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready)}
+            "system-shell" -> {
+                shizukuConnection.refresh()
+                check(shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready){"Shizuku 尚未运行或授权已失效"}
+                val sid=body.getString("sessionId")
+                check(sessionRows.value.firstOrNull{it.id==sid}?.tier==PermissionTier.FullAccess){"系统命令仅允许在已授权的完全访问会话中执行"}
+                return systemShell.execute(body.getString("id"),sid,body.getString("command"),body.optInt("timeout",120000)) { text -> appendAgentTerminal(sid,text,TerminalStream.Output) }
+            }
+            "system-shell-cancel" -> {systemShell.cancel(body.getString("id"),body.getString("sessionId"));return JSONObject()}
             "terminal-output" -> {appendAgentTerminal(body.getString("sessionId"),body.getString("text"),if(body.optString("stream")=="stderr")TerminalStream.Error else TerminalStream.Output);return JSONObject()}
             "ui-action" -> return withContext(Dispatchers.Main) {
                 AppSurface.activity()
@@ -189,11 +201,26 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     suspend fun refreshSessions() {
         val client=api();val items=client.rpc("session/list",JSONObject()).getJSONArray("items").rows()
-        sessionRows.value=items.map { row -> val id=row.getString("sessionId");val old=sessionRows.value.firstOrNull { it.id==id };SessionInfo(id,old?.title ?: "会话 ${id.take(8)}",old?.workspaceId ?: metadata.getString("workspace:$id","ws-default")!!,old?.presetId ?: metadata.getString("preset:$id","standard")!!,old?.tier ?: PermissionTier.entries.firstOrNull{it.key==metadata.getString("tier:$id",null)} ?: PermissionTier.WorkspaceWrite,old?.createdAt ?: row.getLong("updatedAt"),row.getLong("updatedAt"),row.getBoolean("running"),old?.archived ?: metadata.getBoolean("archived:$id",false),row.optString("parentSessionId").ifEmpty { null }) }
+        val recovered=workspaceRows.value.toMutableList()
+        val rows=items.map { row ->
+            val id=row.getString("sessionId");val old=sessionRows.value.firstOrNull { it.id==id }
+            val cwd=row.optString("cwd").replace(Regex("^/workspace(?=/|$)"),"/root/workspace")
+            val saved=old?.workspaceId ?: metadata.getString("workspace:$id","ws-default")!!
+            val workspace=recovered.firstOrNull{it.path==cwd} ?: recovered.firstOrNull{it.id==saved} ?: Workspace(saved,cwd.substringAfterLast('/').ifBlank{"历史工作区"},cwd.ifBlank{"/root/workspace"}).also{recovered.add(it)}
+            val title=(row.optJSONObject("projections")?.optJSONObject("values")?.opt("title") as? String)?.takeIf{it.isNotBlank()} ?: old?.title
+            SessionInfo(id,title ?: "会话 ${id.take(8)}",workspace.id,old?.presetId ?: metadata.getString("preset:$id","standard")!!,old?.tier ?: PermissionTier.entries.firstOrNull{it.key==metadata.getString("tier:$id",null)} ?: PermissionTier.WorkspaceWrite,old?.createdAt ?: row.getLong("updatedAt"),row.getLong("updatedAt"),row.getBoolean("running"),old?.archived ?: metadata.getBoolean("archived:$id",false),row.optString("parentSessionId").ifEmpty { null })
+        }
+        workspaceRows.value=recovered.distinctBy{it.id};sessionRows.value=rows
         sessionRows.value.forEach { client.follow(it.id) }
     }
+    override suspend fun searchSessions(query:String):SessionSearchResults {
+        val value=api().rpc("session/search",JSONObject().put("query",query.trim()))
+        val hits=value.getJSONArray("items").rows().map{SessionSearchHit(it.getString("sessionId"),vault.redact(it.getString("snippet")))}
+        if(hits.any{hit->sessionRows.value.none{it.id==hit.sessionId}})refreshSessions()
+        return SessionSearchResults(hits,value.optBoolean("hasMore"))
+    }
     override suspend fun createSession(workspaceId: String,presetId: String,tier: PermissionTier): SessionInfo {
-        require(tier!=PermissionTier.FullAccess) { "系统完全访问即将支持" }
+        require(tier!=PermissionTier.FullAccess || shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready) { "请先启动 Shizuku 并授权 Hoshino Harness" }
         val path=workspaceRows.value.firstOrNull { it.id==workspaceId }?.path ?: "/root/workspace"
         val client=api();val id=client.rpc("session/create",JSONObject().put("cwd",path)).getString("sessionId")
         val now=System.currentTimeMillis();val result=SessionInfo(id,"新会话",workspaceId,presetId,tier,now,now)
@@ -203,7 +230,11 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     override suspend fun renameSession(sessionId: String,title: String) { val value=api().rpc("session/rename",JSONObject().put("sessionId",sessionId).put("title",title));sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(title=value.getString("title")) else it } } }
     override suspend fun forkSession(sessionId: String): SessionInfo { val id=api().rpc("session/fork",JSONObject().put("sessionId",sessionId)).getString("sessionId");refreshSessions();return sessionRows.value.first { it.id==id } }
-    override suspend fun setSessionTier(sessionId: String,tier: PermissionTier) { require(tier!=PermissionTier.FullAccess) { "系统完全访问即将支持" };sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(tier=tier) else it } };metadata.edit().putString("tier:$sessionId",tier.key).apply();control("session-options",JSONObject().put("sessionId",sessionId).put("tier",tier.key)) }
+    override suspend fun setSessionTier(sessionId: String,tier: PermissionTier) {
+        require(tier!=PermissionTier.FullAccess || shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready) { "请先启动 Shizuku 并授权 Hoshino Harness" }
+        control("session-options",JSONObject().put("sessionId",sessionId).put("tier",tier.key))
+        sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(tier=tier) else it } };metadata.edit().putString("tier:$sessionId",tier.key).apply()
+    }
     override suspend fun send(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) {
         val client=api();activeSession=sessionId
         val model=options.model ?: error("请先配置模型供应商")
@@ -263,7 +294,10 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun addWorkspace(name:String,path:String):Workspace {
         val file=files.resolve(path);if(!file.exists())files.createDirectory(path);check(file.isDirectory)
         val public=files.publicPath(file);val result=api().rpc("workspace/create",JSONObject().put("path",public))
-        val id=result.optString("workspaceId",UUID.randomUUID().toString());val row=Workspace(id,name,public);workspaceRows.update{it+row};return row
+        val registered=result.getJSONObject("workspace")
+        val id=registered.getString("workspaceId")
+        val renamed=api().rpc("workspace/rename",JSONObject().put("workspaceId",id).put("title",name)).getJSONObject("workspace")
+        val row=Workspace(id,renamed.getString("title"),renamed.getString("path"));workspaceRows.update{it.filterNot{old->old.id==id}+row};return row
     }
     override suspend fun searchWorkspaceFiles(workspaceId:String,query:String)=files.search(query)
     override suspend fun setArchived(sessionId:String,archived:Boolean) {api().rpc(if(archived)"workspace/archiveSession" else "workspace/unarchiveSession",JSONObject().put("sessionId",sessionId));metadata.edit().putBoolean("archived:$sessionId",archived).apply();sessionRows.update{list->list.map{if(it.id==sessionId)it.copy(archived=archived) else it}}}

@@ -151,16 +151,19 @@ fun SecurityScreen(vm: ConfigViewModel, app: AppViewModel, onBack: () -> Unit, o
         SectionLabel("新会话默认权限档")
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             PermissionTier.entries.forEach { tier ->
-                val sel = prefs.defaultTier == tier
+                val available=tier in vm.client.supportedPermissionTiers
+                val selected=prefs.defaultTier.takeIf { it in vm.client.supportedPermissionTiers } ?: PermissionTier.WorkspaceWrite
+                val sel = selected == tier
                 Row(
                     Modifier.fillMaxWidth().hairlineCard(if (sel) c.accentSoft else c.surface, if (sel) c.accent else c.line)
-                        .clickable { if (tier == PermissionTier.FullAccess && !sel) risk = true else app.setDefaultTier(tier) }
+                        .clickable(enabled=available) { if (tier == PermissionTier.FullAccess && !sel) risk = true else app.setDefaultTier(tier) }
                         .padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(tier.label, style = t.bodyMedium, color = if (tier == PermissionTier.FullAccess) c.danger else c.text)
                         Text(tier.description, style = t.caption, color = c.text2)
+                        if(!available)Tag("即将支持")
                     }
                     if (sel) HIcon(HIcons.Check, size = 18.dp, tint = c.accent)
                 }
@@ -183,7 +186,7 @@ fun SecurityScreen(vm: ConfigViewModel, app: AppViewModel, onBack: () -> Unit, o
         SectionLabel("沙箱后端")
         GroupCard {
             ListRow(
-                kernel.sandbox, icon = HIcons.Terminal, subtitle = "终端命令在 proot 中运行；完全访问档可经 Shizuku 越出沙箱",
+                kernel.sandbox, icon = HIcons.Terminal, subtitle = "bash 在 proot 中运行；system_shell 经 Shizuku 使用真实 ADB/Root 权限，仍需审批",
                 trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         StatusDot(if (kernel.sandboxReady) c.success else c.warning, size = 6.dp)
@@ -205,7 +208,7 @@ fun ShizukuScreen(vm: ConfigViewModel, onBack: () -> Unit) {
     val c = HoshinoTheme.colors
     PageScaffold("Shizuku", onBack) {
         Text(
-            "完全访问档通过 Shizuku 以 ADB/Root 身份执行命令。Hoshino Harness 只在你选择完全访问的会话中使用它。",
+            "完全访问会话可通过 system_shell 使用 Shizuku 的真实 ADB/Root 权限。普通 bash 和文件工具仍在私有工作区中，系统命令继续走审批。",
             style = HoshinoTheme.type.caption, color = c.text2, modifier = Modifier.padding(20.dp),
         )
         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().hairlineCard(c.surface, c.line).padding(16.dp)) {

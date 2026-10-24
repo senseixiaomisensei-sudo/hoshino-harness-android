@@ -64,3 +64,17 @@
 - Android 11+ 显式 queries 指定 moe.shizuku.privileged.api；受 INTERACT_ACROSS_USERS_FULL 保护的官方 Provider 接收服务 Binder。仅查询安装不认定为授权。
 - 安装变化、Binder 连接/死亡、授权结果及 Activity.onResume 更新 StateFlow。用户明确点击才请求授权；本次不增加系统命令执行通道，也不自动开启完全访问。
 - 官方 Shizuku 管理器仅作为独立模拟器验收夹具，不打包进主 APK。
+
+
+## 2026-10-24 preview.4 系统执行、发送失败与历史搜索修复
+
+- 用户截图中的完全访问档由 UI 在 Shizuku Ready 后开放，但当前 Cordis session-options 和 DshHarnessClient 明确不支持该档位，发送前 createSession 会拒绝。这是权限能力同步遗漏。
+- 用户明确要求实际使用手机支持的 Shizuku，因此生产客户端接通官方 UserService 和 Cordis `system_shell`，不把禁用完全访问当作完成。`HarnessClient.supportedPermissionTiers` 保留给其他可替换宿主；生产档位要求 Binder 真实运行且已授权。
+- 系统命令使用真实 Android shell、`/data/local/tmp` 及 Shizuku 的 adb/root UID；普通 bash/PTY 继续在 Alpine 中运行，不将 proot 的 UID 当作系统 root。工具沿用 Cordis 审批；拒绝不执行，超时或取消只终止本应用所建进程组。UserService 校验调用应用 UID，经文件描述符写入应用私有工作区，不放宽文件目录权限，不停止用户的全局 Shizuku 服务。
+- ViewModel 切档前校验能力与授权，原版 dsh JSONL 和 KernelLauncher seam 保留。系统工具通过 `plugins/android-shizuku` 注册，未改 dsh 上游。
+- 请求确认接收后才清空输入和对应附件；失败保留草稿，等待期间用互斥锁防止重复提交。界面显示经过 Keystore 凭据脱敏的具体异常。
+- 新增 PermissionCapabilityTest：其他宿主未实现的档位仍禁用；createSession 拒绝后输入和具体原因均保留。ShizukuExecutionTest 使用官方服务器验证实际 UID、人工拒绝/允许、超时和取消，结果以测试日志为准。
+- 历史列表的真实命名参数是 `_request`：依据锁定包 `@deepseek-ai/dsh-api-session-controller/lib/typert.host.js` 的 session/list 元数据修正，其他接口继续使用其原有 request。标题从 `projections.values.title` 读取，工作区分组从原 cwd 和 UI 元数据恢复；follow 去重，避免刷新多次开启同名 Mux 流。
+- 全文搜索调用原版 session/search。原 profile 的 `session-query-sqlite.openAt=never` 明确禁止搜索；改为原接口支持的 `first-search`，保留 `path=:memory:`。SQLite 只作为可重建的内存查询索引；原版 `session-persistence-jsonl` 仍拥有会话持久化，没有替换存储。搜索合并标题与正文结果，展示片段，展开匹配的归档/折叠分组并显示错误。
+- 冷重启测试暴露进程销毁时日志管道抛出 InterruptedIOException；启动器只捕获 I/O 关闭并等待原进程退出，不把未捕获线程异常传播为应用崩溃。
+- mock 明确选择测试用户输入：dsh 可能在用户消息后追加 runtime context 和 skill catalog，不能把最后一个 user 角色消息直接当成真实请求。测试仍使用真实 Agent loop 和原厂协议适配器。

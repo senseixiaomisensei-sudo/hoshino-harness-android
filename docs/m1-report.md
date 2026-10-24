@@ -51,3 +51,9 @@ UI 迁移时移除了 M0 Activity 的全局 FLAG_SECURE；旧消息使用普通 
 桌面回归 .research/m1-provider-fix-node-build.log、.research/m1-provider-fix-node-test.log：实际原版 dsh 双协议 6 轮通过，包含设备工具、内置 write、流式及会话中切换；两个厂商真实接口因没有凭据跳过。Android 整包构建及仪器复验正在进行。未获得用户具体接口错误详情，不能把这轮回归写成用户真机已通过。
 
 CI 40063104406 的 Android 作业未执行：ARM 后打包模块检查通过，x86 辅助容器因为 Docker manifest digest 多架构缓存冲突失败；验证脚本已调整为固定宿主架构，等待后续运行。
+
+## preview.4 完全访问与历史搜索（2026-10-24）
+
+针对手机已支持 Shizuku 却无法在完全访问档发送，以及历史会话搜不到，接通官方 UserService 的真实 Android `system_shell` Cordis 工具，修复原版 session/list 命名参数、标题投影、工作区恢复与全文搜索配置。原版 dsh `0.2.1-rc.2`、JSONL 持久化、SessionStore 均保持原样；KernelLauncher 与 Cordis seam 可替换。
+
+双 ABI 本地构建和单测成功，arm64 109,495,566 字节、x86_64 114,387,692 字节，两个包原签名核验成功。桌面原版 dsh 8 轮回归成功，原生最终回归 150.168 秒、`OK (6 tests)`，涵盖系统 UID、拒绝/超时/取消和冷重启归档正文搜索。完整过程、失败记录、SHA256 和边界见 [本次修复报告](m1-preview4-fix.md)。CI 未有本次提交全绿记录时保持未验证；不将修复测试包称为完整 M1 通过。

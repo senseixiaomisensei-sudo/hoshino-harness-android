@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 class FakeHarnessClient(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) : HarnessClient {
+    override val supportedPermissionTiers = PermissionTier.entries.toSet()
 
     private val ids = AtomicInteger(0)
     private fun nid(prefix: String) = "$prefix-${ids.incrementAndGet()}"

@@ -12,7 +12,7 @@
 | AndroidX Navigation Compose / SplashScreen | 2.9.5 / 1.2.0 | Apache-2.0；[Navigation](https://developer.android.com/jetpack/androidx/releases/navigation)、[Core](https://developer.android.com/jetpack/androidx/releases/core) |
 | OkHttp / Commons Compress | 4.12.0 / 1.27.1 | Apache-2.0 |
 | XZ for Java | 1.10 | 0BSD；纯 Java 解压 |
-| Shizuku API / Provider | 13.1.5 | MIT；[官方源码和接入文档](https://github.com/RikkaApps/Shizuku-API)，仅用于真实安装、Binder 状态和授权检测 |
+| Shizuku API / Provider | 13.1.5 | MIT；[官方源码和接入文档](https://github.com/RikkaApps/Shizuku-API)，安装、Binder 状态、授权检测及经审批的独立 UserService 系统命令 |
 | Node | Alpine nodejs 24.18.1-r0 | MIT 等独立通知；官方 APK 与构建用头文件的 SHA256 见 rootfs/node-apk-lock.json |
 | node-pty | 1.2.0-beta.15 | MIT；为目标 Linux musl ABI 从源码编译，未使用桌面预编译 PTY |
 | Sharp | 0.35.5 | Apache-2.0；原版 dsh 图片附件使用 |

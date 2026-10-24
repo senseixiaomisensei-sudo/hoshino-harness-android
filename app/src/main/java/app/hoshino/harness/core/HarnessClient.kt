@@ -14,6 +14,9 @@ import kotlinx.coroutines.flow.StateFlow
  * 当前 UI 由 [FakeHarnessClient] 驱动，零后端即可运行。
  */
 interface HarnessClient {
+    /** Execution modes actually implemented by this host; Shizuku authorization is separate. */
+    val supportedPermissionTiers: Set<PermissionTier> get() = setOf(PermissionTier.ReadOnly,PermissionTier.WorkspaceWrite)
+    fun describeFailure(failure: Throwable): String = if(failure is UnsupportedOperationException) failure.message ?: "即将支持" else "操作未完成"
     /** Select the UI's active session without starting an Agent turn. */
     fun activateSession(sessionId: String) {}
 
@@ -23,6 +26,7 @@ interface HarnessClient {
     val events: SharedFlow<HarnessEvent>
     val workspaces: StateFlow<List<Workspace>>
     val sessions: StateFlow<List<SessionInfo>>
+    suspend fun searchSessions(query:String):SessionSearchResults = SessionSearchResults(sessions.value.filter{it.title.contains(query,ignoreCase=true)}.map{SessionSearchHit(it.id,"")})
 
     suspend fun addWorkspace(name: String, path: String): Workspace
     suspend fun createSession(workspaceId: String, presetId: String, tier: PermissionTier): SessionInfo

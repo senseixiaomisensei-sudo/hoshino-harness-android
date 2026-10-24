@@ -161,7 +161,7 @@ fun PresetEditScreen(vm: ConfigViewModel, presetId: String, onBack: () -> Unit) 
             PermissionTier.entries, tier, { it.label }, { if (it != PermissionTier.FullAccess) tier = it },
             Modifier.fillMaxWidth().padding(horizontal = 16.dp), enabled = !readOnly,
         )
-        Text("完全访问不能设为预设默认值，需要在会话中手动开启。", style = t.caption, color = c.text3, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        Text("完全访问需要在会话中手动确认，并取得 Shizuku 授权，不能设为预设默认值。", style = t.caption, color = c.text3, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
         if (!readOnly && vm.presets.value.any { it.id == initial.id }) {
             Spacer(Modifier.height(16.dp))
             HButton("删除预设", { confirmDelete = true }, Modifier.fillMaxWidth().padding(horizontal = 16.dp), style = BtnStyle.Secondary, icon = HIcons.Trash)

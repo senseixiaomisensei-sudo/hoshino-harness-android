@@ -53,7 +53,7 @@ fun tierColor(t: PermissionTier): Color {
 
 /** 权限三档选择弹层 */
 @Composable
-fun TierSheet(current: PermissionTier, shizuku: ShizukuStatus, onPick: (PermissionTier) -> Unit, onDismiss: () -> Unit) {
+fun TierSheet(current: PermissionTier, shizuku: ShizukuStatus, onPick: (PermissionTier) -> Unit, onDismiss: () -> Unit, supportedTiers: Set<PermissionTier> = PermissionTier.entries.toSet()) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
     HSheet(onDismiss = onDismiss, title = "权限") {
@@ -63,13 +63,14 @@ fun TierSheet(current: PermissionTier, shizuku: ShizukuStatus, onPick: (Permissi
             PermissionTier.entries.forEach { tier ->
                 val sel = tier == current
                 val danger = tier == PermissionTier.FullAccess
+                val available = tier in supportedTiers
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .clip(HoshinoShapes.card)
                         .background(if (sel) (if (danger) c.danger.copy(alpha = 0.08f) else c.accentSoft) else c.surface)
                         .border(1.dp, if (sel) (if (danger) c.danger else c.accent) else c.line, HoshinoShapes.card)
-                        .clickable { onPick(tier) }
+                        .clickable(enabled = available) { onPick(tier) }
                         .padding(14.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
@@ -87,6 +88,7 @@ fun TierSheet(current: PermissionTier, shizuku: ShizukuStatus, onPick: (Permissi
                             Text(tier.label, style = t.bodyMedium, color = if (danger) c.danger else c.text)
                             Spacer(Modifier.width(6.dp))
                             Text(tier.key, style = t.codeSmall, color = c.text3)
+                            if(!available) { Spacer(Modifier.width(6.dp));Tag("即将支持") }
                             if (tier == PermissionTier.WorkspaceWrite) {
                                 Spacer(Modifier.width(6.dp)); Tag("默认")
                             }
@@ -140,7 +142,7 @@ fun FullAccessRiskDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
         ) {
             listOf(
                 "通过 Shizuku 获得系统级（ADB/Root）权限",
-                "终端命令将自动执行，不再弹出审批卡",
+                "system_shell 使用真实系统权限，执行前仍会弹出审批卡",
                 "可能修改或删除工作区以外的文件、安装/卸载应用、更改系统设置",
                 "模型出错或被提示注入时，后果可能无法撤销",
             ).forEach {
@@ -236,17 +238,18 @@ fun ShizukuGuideSheet(
     onRequest: () -> Unit,
     onEnable: () -> Unit,
     onDismiss: () -> Unit,
+    executionAvailable: Boolean = true,
 ) {
     HSheet(onDismiss = onDismiss, title = "Shizuku 引导") {
         ShizukuGuide(status, onRefresh, onRequest, Modifier.padding(horizontal = 20.dp))
         if (pendingEnable) {
             Spacer(Modifier.height(16.dp))
             HButton(
-                if (status == ShizukuStatus.Ready) "启用完全访问" else "完成以上步骤后可启用",
+                if (!executionAvailable) "系统执行即将支持" else if (status == ShizukuStatus.Ready) "启用完全访问" else "完成以上步骤后可启用",
                 onEnable,
                 Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                 style = BtnStyle.Danger,
-                enabled = status == ShizukuStatus.Ready,
+                enabled = executionAvailable && status == ShizukuStatus.Ready,
             )
         }
         Spacer(Modifier.height(8.dp))

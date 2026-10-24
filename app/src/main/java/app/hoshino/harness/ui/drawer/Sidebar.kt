@@ -24,6 +24,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.hoshino.harness.core.SessionInfo
 import app.hoshino.harness.core.Workspace
+import app.hoshino.harness.core.SessionSearchResults
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import app.hoshino.harness.ui.chat.ActionSheet
 import app.hoshino.harness.ui.chat.MenuEntry
 import app.hoshino.harness.ui.chat.Spinner
@@ -71,6 +75,7 @@ fun Sidebar(
     onAddWorkspace: (String, String) -> Unit,
     onToggleTheme: () -> Unit,
     modifier: Modifier = Modifier,
+    onSearchSessions: suspend (String)->SessionSearchResults = { SessionSearchResults(emptyList()) },
 ) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
@@ -83,9 +88,22 @@ fun Sidebar(
     var actionFor by remember { mutableStateOf<SessionInfo?>(null) }
     var sortMenu by remember { mutableStateOf(false) }
     var addWs by remember { mutableStateOf(false) }
+    var results by remember { mutableStateOf(SessionSearchResults(emptyList())) }
+    var searching by remember { mutableStateOf(false) }
+    var searchError by remember { mutableStateOf<String?>(null) }
+    val needle=query.trim()
+    LaunchedEffect(needle,sessions.size) {
+        results=SessionSearchResults(emptyList());searchError=null
+        if(needle.isNotEmpty()) {
+            searching=true;delay(250)
+            try {results=onSearchSessions(needle)} catch(cancelled:CancellationException){throw cancelled} catch(failure:Exception){searchError=failure.message ?: "历史会话搜索失败"} finally {searching=false}
+        } else searching=false
+    }
+    val hits=results.items.associateBy{it.sessionId}
+    val groups=workspaces+sessions.map{it.workspaceId}.distinct().filter{id->workspaces.none{it.id==id}}.map{Workspace(it,"历史工作区","")}
 
     val filtered = sessions
-        .filter { query.isBlank() || it.title.contains(query, ignoreCase = true) }
+        .filter { needle.isBlank() || it.title.contains(needle, ignoreCase = true) || it.id in hits }
         .filter { !onlyRunning || it.running }
         .let { list ->
             when (sort) {
@@ -130,6 +148,10 @@ fun Sidebar(
                 }
                 Spacer(Modifier.height(8.dp))
                 HTextField(query, { query = it }, Modifier.padding(horizontal = 12.dp), placeholder = stringResource(R.string.search_sessions), leading = HIcons.Search)
+                if(searching)Text("正在搜索历史内容…",style=t.caption,color=c.text3,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))
+                searchError?.let{Text(it,style=t.caption,color=c.danger,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))}
+                if(results.hasMore)Text("还有更多结果，请输入更具体的关键词",style=t.caption,color=c.text3,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))
+                if(onlyRunning)Text("仅看运行中 · 点击清除此筛选",style=t.caption,color=c.accent,modifier=Modifier.clickable{onlyRunning=false}.padding(horizontal=20.dp,vertical=4.dp))
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.workspaces), style = t.caption.copy(fontWeight = FontWeight.Medium), color = c.text3, modifier = Modifier.weight(1f))
                     Box {
@@ -153,7 +175,7 @@ fun Sidebar(
                     IconBtn(HIcons.Plus, "添加工作区", { addWs = true }, tint = c.text3, iconSize = 18.dp)
                 }
             }
-            if (active.isEmpty()) {
+            if (filtered.isEmpty() && !searching) {
                 item {
                     Text(
                         stringResource(if (sessions.isEmpty()) R.string.no_sessions else R.string.no_matching_sessions),
@@ -162,7 +184,7 @@ fun Sidebar(
                     )
                 }
             }
-            workspaces.forEach { ws ->
+            groups.forEach { ws ->
                 val list = active.filter { it.workspaceId == ws.id }
                 if (list.isNotEmpty()) {
                     item(key = "ws-${ws.id}") {
@@ -178,9 +200,10 @@ fun Sidebar(
                             HIcon(if (isCollapsed) HIcons.ChevronRight else HIcons.ChevronDown, size = 14.dp, tint = c.text3)
                         }
                     }
-                    if (ws.id !in collapsed) {
+                    if (ws.id !in collapsed || needle.isNotBlank()) {
                         items(list, key = { it.id }) { s ->
                             SessionRow(s, s.id == currentId, onClick = { onOpenSession(s.id) }, onLongClick = { actionFor = s })
+                            hits[s.id]?.snippet?.takeIf{it.isNotBlank()}?.let{Text(it,style=t.caption,color=c.text3,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))}
                         }
                     }
                 }
@@ -197,9 +220,10 @@ fun Sidebar(
                         HIcon(if (showArchived) HIcons.ChevronDown else HIcons.ChevronRight, size = 14.dp, tint = c.text3)
                     }
                 }
-                if (showArchived) {
+                if (showArchived || needle.isNotBlank()) {
                     items(archived, key = { "a-${it.id}" }) { s ->
                         SessionRow(s, s.id == currentId, onClick = { onOpenSession(s.id) }, onLongClick = { actionFor = s })
+                        hits[s.id]?.snippet?.takeIf{it.isNotBlank()}?.let{Text(it,style=t.caption,color=c.text3,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))}
                     }
                 }
             }

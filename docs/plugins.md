@@ -46,3 +46,9 @@ Compose 读取 ViewModel 暴露的 StateFlow；HTML 不加载进运行时。替�
 Linux guest 的 `rootfs/android-compat.c` 只解决 Android seccomp 与 musl 旧式文件调用的兼容，随 rootfs 编译并通过 guest 的 LD_PRELOAD 加载，不链接到 Android 主程序。更换 KernelLauncher 时可以按所选运行环境替换该平台适配。会话的磁盘检查点由原版 `dsh-session-checkpoint-policy` 执行，不在 Kotlin 中另造日志。
 
 独立 proot 由 `python3 rootfs/build-proot.py` 使用固定 NDK 与固定上游归档编译；需要 Linux 工具链。`prepare.py` 默认会调用它。CI 分步构建 proot 和 Linux rootfs，再在 APK 打包前合并；`--rootfs-only` 仅供这种已有 proot 产物的流程使用。不能退回已知会在应用域删除模拟硬链接时崩溃的旧预编译包。
+
+## M1 系统命令与历史搜索
+
+`plugins/android-shizuku` 是手机能力扩展范例：用 `defineTool` 注册 `system_shell`，注入 `androidBridge` 和 `mobilePolicy`，通过鉴权回环回调调用 Kotlin 的 `ShizukuShell`。需要 Shizuku 运行、授权以及 FullAccess 会话，仍逐次审批；普通 bash 和 PTY 在 Alpine 中运行。真实系统执行由官方 UserService 加载 `PrivilegedShellService`，通过 AIDL 和文件描述符接收结果，支持取消和超时。替换实现时保持工具 schema、审批及回调边界，不接管 Agent loop。
+
+原版 `session/list` 的 Connection 命名参数是 `_request`，`session/search` 为 `request`；客户端按锁定版本真实元数据适配。全文搜索使用原版 `session-query-sqlite` 的 `path=:memory:`、`openAt=first-search`，索引可从原版 JSONL 重建，没有更换会话持久化。UI 的归档/权限/工作区辅助状态保存在独立元数据中，不编辑 JSONL。

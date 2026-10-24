@@ -12,7 +12,7 @@ enum class ConnectionState(val label: String) {
 enum class PermissionTier(val label: String, val key: String, val description: String) {
     ReadOnly("只读", "read-only", "只看不改，所有写操作都会被拒绝。"),
     WorkspaceWrite("工作区内修改", "workspace-write", "只能修改当前工作区；危险操作会弹出审批卡。"),
-    FullAccess("完全访问", "full-access", "通过 Shizuku 获取系统级权限，终端命令自动执行、不再审批。"),
+    FullAccess("完全访问", "full-access", "通过 Shizuku 使用系统执行能力；危险操作仍需审批。"),
 }
 
 enum class ReasoningEffort(val label: String, val key: String) {
@@ -24,6 +24,8 @@ enum class ShizukuStatus(val label: String) {
 }
 
 data class Workspace(val id: String, val name: String, val path: String)
+data class SessionSearchHit(val sessionId:String,val snippet:String)
+data class SessionSearchResults(val items:List<SessionSearchHit>,val hasMore:Boolean=false)
 
 data class ModelRef(val providerId: String, val modelId: String)
 

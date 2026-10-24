@@ -66,8 +66,13 @@ export async function apply(ctx: Context): Promise<void> {
       }
       case 'session-options': {
         const id=String(request.sessionId ?? '');if(!id)throw new Error('Missing session');
-        if(!['read-only','workspace-write'].includes(String(request.tier)))throw new Error('System-level access is not enabled in M1');
-        const options={tier:String(request.tier),planMode:request.planMode===true,prompt:typeof request.prompt==='string' ? request.prompt.slice(0,32000) : ''};
+        if(!['read-only','workspace-write','full-access'].includes(String(request.tier)))throw new Error('Unknown session permission tier');
+        if(request.tier==='full-access') {
+          const access=await ctx.androidBridge.call<{authorized:boolean}>('system-access');
+          if(!access.authorized)throw new Error('Shizuku authorization is required for full-access');
+        }
+        const prior=ctx.mobilePolicy.options.get(id);
+        const options={tier:String(request.tier),planMode:typeof request.planMode==='boolean' ? request.planMode : prior?.planMode ?? false,prompt:typeof request.prompt==='string' ? request.prompt.slice(0,32000) : prior?.prompt ?? ''};
         ctx.mobilePolicy.options.set(id,options);return {};
       }
       case 'resolve-diff': await ctx.mobilePolicy.resolveDiff(String(request.sessionId),String(request.id),request.accept===true);return {};

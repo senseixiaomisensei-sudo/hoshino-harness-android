@@ -64,8 +64,14 @@ class ProotKernelLauncher : KernelLauncher {
         child.outputStream.bufferedWriter().use { it.write(bootstrap.put("workspace", "/root/workspace").put("home", "/home/hoshino").put("selfHome","/root/.hoshino").toString()); it.newLine() }
         Thread {
             // Arbitrary child output may contain tool data or credentials. Keep only classified diagnostics.
-            child.inputStream.bufferedReader().forEachLine { onDiagnostic(classifyDiagnostic(it)) }
-            onExit(child.waitFor())
+            try {
+                child.inputStream.bufferedReader().useLines { lines -> lines.forEach { onDiagnostic(classifyDiagnostic(it)) } }
+            } catch (_: java.io.IOException) {
+                // Process.destroy closes this pipe during an ordinary stop/restart.
+                onDiagnostic("host: diagnostic stream closed")
+            } finally {
+                try { onExit(child.waitFor()) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+            }
         }.apply { isDaemon = true; start() }
         child
         }

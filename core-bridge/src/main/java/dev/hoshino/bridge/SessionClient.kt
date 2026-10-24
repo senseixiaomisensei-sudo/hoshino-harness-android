@@ -21,6 +21,7 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
     private var base = ""
     private var cookie = ""
     private var socket: WebSocket? = null
+    private val followed=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     suspend fun connect(port: Int, token: String) = withContext(Dispatchers.IO) {
         base = "http://127.0.0.1:$port"
         http.newCall(Request.Builder().url("$base/mobile/connect?token=$token").build()).execute().use {
@@ -55,7 +56,8 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
         kotlinx.coroutines.withTimeout(15000) { ready.await() }
     }
     suspend fun rpc(method: String, request: JSONObject? = null): JSONObject {
-        val args = JSONObject(); if(request != null) args.put("request",request)
+        // Exact named parameter in dsh-api-session-controller/lib/typert.host.js.
+        val args = JSONObject(); if(request != null) args.put(if(method=="session/list")"_request" else "request",request)
         return rpcArgs(method,args) as? JSONObject ?: JSONObject()
     }
     /** Named wire parameters from dsh's generated Typert metadata (including agentId). */
@@ -65,13 +67,14 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
         http.newCall(Request.Builder().url("$base/api/$method").header("Cookie",cookie).post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use {
             check(it.isSuccessful) { "内核请求失败 (${it.code})" }
             val result=JSONObject(it.body!!.string()).getJSONObject("result")
-            check(result.optBoolean("ok")) { "内核拒绝请求：" + result.optJSONObject("error")?.optString("code", "unknown") }
+            check(result.optBoolean("ok")) { val error=result.optJSONObject("error");"内核拒绝请求：" + (error?.optString("message")?.takeIf { message->message.isNotBlank() } ?: error?.optString("code","unknown")) }
             result.opt("value").takeUnless { value -> value==JSONObject.NULL }
         }
     }
     fun follow(sessionId: String) {
+        if(!followed.add(sessionId))return
         val request=JSONObject().put("address",JSONObject().put("kind","session").put("sessionId",sessionId)).put("assistantStream",true)
-        openStream("session:$sessionId","session/follow",request)
+        try {openStream("session:$sessionId","session/follow",request)}catch(failure:Exception){followed.remove(sessionId);throw failure}
     }
     fun openStream(id: String, endpoint: String, request: JSONObject) {
         openNamedStream(id,endpoint,JSONObject().put("request",request))
@@ -83,6 +86,7 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
         check(socket?.send(JSONObject().put("type","item").put("streamId",id).put("value",value).toString())==true) { "终端连接已断开" }
     }
     fun cancelStream(id: String) {
+        if(id.startsWith("session:"))followed.remove(id.removePrefix("session:"))
         socket?.send(JSONObject().put("type","cancel").put("streamId",id).toString())
     }
     suspend fun mobile(method: String, request: JSONObject = JSONObject()): JSONObject = withContext(Dispatchers.IO) {
@@ -103,5 +107,5 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
     suspend fun reloadProviders() = withContext(Dispatchers.IO) {
         http.newCall(Request.Builder().url("$base/mobile/providers").header("Cookie",cookie).post("{}".toRequestBody("application/json".toMediaType())).build()).execute().use { check(it.isSuccessful) { "模型配置未生效" } }
     }
-    override fun close() { socket?.close(1000,"shutdown"); http.dispatcher.executorService.shutdown();http.connectionPool.evictAll() }
+    override fun close() { followed.clear();socket?.close(1000,"shutdown"); http.dispatcher.executorService.shutdown();http.connectionPool.evictAll() }
 }

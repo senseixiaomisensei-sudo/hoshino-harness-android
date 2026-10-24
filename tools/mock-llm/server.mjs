@@ -10,16 +10,17 @@ export function createMockLlm() {
     const body = JSON.parse(raw); requests.push({ path, body });
     const anthropic = path === '/v1/messages';
     const messages = body.messages;
-    const user = [...messages].reverse().find(m => m.role === 'user' && (typeof m.content === 'string' || m.content.some?.(c => c.type === 'text')));
-    const prompt = typeof user?.content === 'string' ? user.content : user?.content.filter(c => c.type === 'text').map(c => c.text).join(' ') ?? '';
+    const userTexts = messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : m.content?.filter?.(c => c.type === 'text').map(c => c.text).join(' ') ?? '');
+    // dsh appends runtime context and the skill catalog after the real user message.
+    const prompt = [...userTexts].reverse().find(text => /system command|系统命令|shizuku.*id|读取设备|\bdevice\b|hello\.txt|m1-error-fixture|message-needle-|m0-benchmark-|你好/i.test(text)) ?? userTexts.at(-1) ?? '';
     if (prompt.includes('m1-error-fixture')) {
       res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:{type:'invalid_request_error',message:'fixture request rejected'}}));
       return;
     }
     const last = messages.at(-1);
     const hasResult = last?.role === 'tool' || last?.content?.some?.(c => c.type === 'tool_result');
-    const tool = !hasResult && /设备|device/.test(prompt) ? 'get_device_info' : !hasResult && /hello\.txt/.test(prompt) ? 'write' : undefined;
-    const args = tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'} : {};
+    const tool = !hasResult && /system command|系统命令|shizuku.*id/i.test(prompt) ? 'system_shell' : !hasResult && /设备|device/.test(prompt) ? 'get_device_info' : !hasResult && /hello\.txt/.test(prompt) ? 'write' : undefined;
+    const args = tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'} : tool==='system_shell' ? {command:'id -u; getprop ro.build.version.release',timeout_ms:5000} : {};
     const resultText = hasResult ? (typeof last.content === 'string' ? last.content : last.content.filter(c=>c.type==='tool_result').map(c=>typeof c.content==='string'?c.content:JSON.stringify(c.content)).join(' ')) : '';
     const answer = hasResult ? `工具已完成，返回结果：${resultText}` : '你好，我是 Hoshino。';
     // dsh may append another user-role context message; identify the fixture in the full request.

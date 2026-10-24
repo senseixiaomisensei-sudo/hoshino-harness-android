@@ -29,6 +29,6 @@ class AppViewModel : ViewModel() {
     fun setBodyScale(v: Float) = _prefs.update { it.copy(bodyScale = v) }
     fun setCodeScale(v: Float) = _prefs.update { it.copy(codeScale = v) }
     fun setLanguage(v: String) = _prefs.update { it.copy(language = v) }
-    fun setDefaultTier(t: PermissionTier) = _prefs.update { it.copy(defaultTier = t) }
+    fun setDefaultTier(t: PermissionTier) { if(t in app.hoshino.harness.core.Hoshino.client.supportedPermissionTiers)_prefs.update { it.copy(defaultTier = t) } }
     fun setApprovalPolicy(p: ApprovalPolicy) = _prefs.update { it.copy(approvalPolicy = p) }
 }

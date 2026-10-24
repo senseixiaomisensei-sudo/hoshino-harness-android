@@ -47,9 +47,9 @@ class M1UiSmokeTest {
         ui.onNodeWithText("copy-fixture").performTouchInput{longClick()}
         ui.onNodeWithText("复制全文").performClick();ui.waitForIdle()
         val clipboard=ui.activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        assertEquals("copy-fixture",clipboard.primaryClip!!.getItemAt(0).text.toString())
+        ui.waitUntil(5000){clipboard.primaryClip?.getItemAt(0)?.text?.toString()=="copy-fixture"}
         ui.onNodeWithText("复制",useUnmergedTree=true).performClick();ui.waitForIdle()
-        assertEquals("echo code-only",clipboard.primaryClip!!.getItemAt(0).text.toString())
+        ui.waitUntil(5000){clipboard.primaryClip?.getItemAt(0)?.text?.toString()=="echo code-only"}
         val items=listOf(ChatItem.Assistant("one","Long capture first message",false),ChatItem.Assistant("two","Second message",false))
         val first=runBlocking{app.hoshino.harness.ui.tools.LongCapture.render(items.take(1),false,watermark=false)}
         val second=runBlocking{app.hoshino.harness.ui.tools.LongCapture.render(items.drop(1),false,watermark=false)}

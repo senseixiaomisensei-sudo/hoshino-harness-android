@@ -36,11 +36,12 @@ export function apply(ctx: Context): void {
   }});
   ctx.systemPrompt.context({name:'hoshino-session-policy',order:501,required:true,text:()=> {
     const id=ctx.agents.currentInitiator()?.id;const current=id ? options.get(id) : undefined;
-    return [current?.prompt,current?.planMode ? 'Plan mode: do not write files, execute shell, or change configuration. Read and explain only.' : ''].filter(Boolean).join('\n');
+    return [current?.prompt,current?.tier==='full-access' ? 'Full-access is authorized. For Android system commands use system_shell through Shizuku. Its real uid and cwd are returned. Ordinary bash remains inside Alpine and file tools remain in the private workspace. System commands still require approval.' : '',current?.planMode ? 'Plan mode: do not write files, execute shell, or change configuration. Read and explain only.' : ''].filter(Boolean).join('\n');
   }});
   ctx.on('tools/pre-execute', async (exec, next) => {
     const sessionId=exec.agent?.id ?? '';
     const policy=options.get(sessionId);
+    if(exec.name==='system_shell' && policy?.tier!=='full-access')return {kind:'deny',reason:'System shell requires an authorized full-access session'};
     if(!reads.has(exec.name) && (policy?.tier==='read-only' || policy?.planMode))return {kind:'deny',reason:'Read-only session'};
     const args=exec.arguments as Record<string,unknown>;
     let path: string|undefined;

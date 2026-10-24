@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 
 /** 输入框草稿与本轮选项 */
 data class ComposerState(
@@ -57,6 +58,8 @@ class ChatViewModel : ViewModel() {
     val providers = client.providers
     val routing = client.routing
     val shizuku = client.shizuku
+    val supportedPermissionTiers = client.supportedPermissionTiers
+    private val submission=Mutex()
     val slashCommands = client.slashCommands
 
     private val _currentId = MutableStateFlow<String?>(null)
@@ -80,7 +83,7 @@ class ChatViewModel : ViewModel() {
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
     private val errors=CoroutineExceptionHandler { _, failure ->
-        _messages.tryEmit(if(failure is UnsupportedOperationException) "即将支持" else "操作未完成，请检查模型配置、内核连接或权限")
+        _messages.tryEmit(client.describeFailure(failure))
     }
 
     init {
@@ -112,11 +115,13 @@ class ChatViewModel : ViewModel() {
         list.firstOrNull { it.id == ref.providerId }?.models?.firstOrNull { it.id == ref.modelId }
 
     fun modelInfo(ref: ModelRef?): ModelInfo? = ref?.let { findModel(providers.value, it) }
+    suspend fun searchSessions(query:String):app.hoshino.harness.core.SessionSearchResults = try {client.searchSessions(query)} catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch(failure:Exception){throw IllegalStateException(client.describeFailure(failure))}
 
     private fun options(): TurnOptions {
         val c = _composer.value
-        return TurnOptions(c.presetId, current.value?.tier ?: c.tier, c.model, c.effort, c.planMode)
+        return TurnOptions(c.presetId, supportedTier(current.value?.tier ?: c.tier), c.model, c.effort, c.planMode)
     }
+    private fun supportedTier(tier: PermissionTier)=tier.takeIf { it in supportedPermissionTiers } ?: PermissionTier.WorkspaceWrite
 
     // ---------- 会话 ----------
 
@@ -129,7 +134,7 @@ class ChatViewModel : ViewModel() {
         client.activateSession(id)
         _currentId.value = id
         val s = client.sessions.value.firstOrNull { it.id == id } ?: return
-        _composer.update { it.copy(presetId = s.presetId, tier = s.tier, workspaceId = s.workspaceId, attachments = emptyList()) }
+        _composer.update { it.copy(presetId = s.presetId, tier = supportedTier(s.tier), workspaceId = s.workspaceId, attachments = emptyList()) }
     }
 
     fun selectWorkspace(id: String) = _composer.update { it.copy(workspaceId = id) }
@@ -166,13 +171,19 @@ class ChatViewModel : ViewModel() {
 
     // ---------- 发送 ----------
 
-    fun send(text: String) {
+    fun send(text: String, onComplete: (Boolean) -> Unit = {}) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() && _composer.value.attachments.isEmpty()) return
-        if (_composer.value.model==null) { _messages.tryEmit("请先在设置 → 供应商中添加模型");return }
+        if (trimmed.isEmpty() && _composer.value.attachments.isEmpty()) { onComplete(false);return }
+        if (_composer.value.model==null) { _messages.tryEmit("请先在设置 → 供应商中添加模型");onComplete(false);return }
+        if(!submission.tryLock()){onComplete(false);return}
         val attachments = _composer.value.attachments
-        _composer.update { it.copy(attachments = emptyList()) }
         viewModelScope.launch(errors) {
+            var accepted=false
+            try {
+            if(_composer.value.tier !in supportedPermissionTiers) {
+                _composer.update { it.copy(tier=PermissionTier.WorkspaceWrite) }
+                _messages.tryEmit("系统完全访问即将支持，当前使用工作区内修改")
+            }
             var id = _currentId.value
             if (id == null) {
                 val c = _composer.value
@@ -185,6 +196,9 @@ class ChatViewModel : ViewModel() {
             } else {
                 client.send(id, trimmed, attachments, options())
             }
+            accepted=true
+            _composer.update { c -> c.copy(attachments=c.attachments.filterNot { attachment -> attachments.any { it.id==attachment.id } }) }
+            } finally { submission.unlock();onComplete(accepted) }
         }
     }
 
@@ -232,6 +246,8 @@ class ChatViewModel : ViewModel() {
     // ---------- 输入框选项 ----------
 
     fun setTier(t: PermissionTier) {
+        if(t !in supportedPermissionTiers) { _messages.tryEmit("系统完全访问即将支持；Shizuku 授权已单独保存，可继续使用工作区内修改");return }
+        if(t==PermissionTier.FullAccess && shizuku.value!=app.hoshino.harness.core.ShizukuStatus.Ready) { _messages.tryEmit("请先启动 Shizuku 并授权 Hoshino Harness");return }
         _composer.update { it.copy(tier = t) }
         val id = _currentId.value ?: return
         viewModelScope.launch(errors) { client.setSessionTier(id, t) }

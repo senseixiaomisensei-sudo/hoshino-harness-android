@@ -124,7 +124,7 @@ fun ChatScreen(
 
     LaunchedEffect(Unit) { vm.messages.collect { toast(ctx, it) } }
 
-    val tier = current?.tier ?: composer.tier
+    val tier = (current?.tier ?: composer.tier).takeIf { it in vm.supportedPermissionTiers } ?: PermissionTier.WorkspaceWrite
     val presetName = presets.firstOrNull { it.id == composer.presetId }?.name ?: "Standard"
     val modelInfo = vm.modelInfo(composer.model)
     val modelLabel = if (modelInfo == null) "选择模型" else if (modelInfo.reasoning) "${modelInfo.displayName} · ${composer.effort.label}" else modelInfo.displayName
@@ -175,8 +175,7 @@ fun ChatScreen(
         if (exact != null) {
             runSlash(exact); return
         }
-        vm.send(text)
-        input = TextFieldValue("")
+        vm.send(text) { accepted -> if(accepted && input.text.trim()==text)input=TextFieldValue("") }
     }
 
     ModalNavigationDrawer(
@@ -189,6 +188,7 @@ fun ChatScreen(
                 windowInsets = WindowInsets(0, 0, 0, 0),
             ) {
                 Sidebar(
+                    onSearchSessions = vm::searchSessions,
                     sessions = sessions,
                     workspaces = workspaces,
                     currentId = currentId,
@@ -330,7 +330,7 @@ fun ChatScreen(
     }
 
     // ---------------- 弹层 / 对话框
-    if (showTier) TierSheet(tier, shizuku, onPick = { pickTier(it) }, onDismiss = { showTier = false })
+    if (showTier) TierSheet(tier, shizuku, onPick = { pickTier(it) }, onDismiss = { showTier = false }, supportedTiers=vm.supportedPermissionTiers)
     if (showRisk) {
         FullAccessRiskDialog(
             onConfirm = {
@@ -348,6 +348,7 @@ fun ChatScreen(
             onRequest = { scope.launch { Hoshino.client.requestShizukuPermission() } },
             onEnable = { vm.setTier(PermissionTier.FullAccess); showShizuku = false },
             onDismiss = { showShizuku = false },
+            executionAvailable = PermissionTier.FullAccess in vm.supportedPermissionTiers,
         )
     }
     if (showModel) {
