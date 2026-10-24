@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设计 Token（浅色）。Compose 内取色请用 HoshinoTheme.colors；这里供 XML 资源（图标、启动页、窗口背景）使用 -->
+<resources>
+    <color name="hh_bg">#FAFAF8</color>
+    <color name="hh_surface">#FFFFFF</color>
+    <color name="hh_surface2">#F2F2EF</color>
+    <color name="hh_line">#E6E6E1</color>
+    <color name="hh_text">#111214</color>
+    <color name="hh_text2">#5E6066</color>
+    <color name="hh_text3">#9A9CA1</color>
+    <color name="hh_accent">#2F5BEA</color>
+    <color name="hh_accent_soft">#142F5BEA</color>
+    <color name="hh_on_accent">#FFFFFF</color>
+    <color name="hh_success">#1F9D55</color>
+    <color name="hh_warning">#B7791F</color>
+    <color name="hh_danger">#D93636</color>
+    <color name="hh_splash_bg">#FAFAF8</color>
+    <color name="ic_launcher_background">#111214</color>
+</resources>

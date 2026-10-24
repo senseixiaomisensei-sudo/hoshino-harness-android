@@ -12,7 +12,9 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /** dsh 0.2.1-rc.2 Connection RPC envelopes and API Gateway Mux; no local agent loop. */
-class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFailure: (String) -> Unit) : Closeable {
+class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFailure: (String) -> Unit,
+                    private val onScopedFrame: (String, JSONObject) -> Unit) : Closeable {
+    constructor(onFrame: (JSONObject) -> Unit,onFailure: (String) -> Unit): this(onFrame,onFailure,{ _, _ -> })
     private val http = OkHttpClient.Builder().followRedirects(false).readTimeout(0, TimeUnit.SECONDS).build()
     private var base = ""
     private var cookie = ""
@@ -28,7 +30,11 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val message=JSONObject(text)
-                    if(message.optString("type")=="item") onFrame(message.getJSONObject("value"))
+                    if(message.optString("type")=="item") {
+                        val value=message.getJSONObject("value")
+                        onScopedFrame(message.optString("streamId"), value)
+                        onFrame(value)
+                    }
                     else if(message.optString("type")=="error") {
                         val code=message.optJSONObject("error")?.optString("code")?.takeIf { it.matches(Regex("[a-zA-Z0-9/_-]{1,80}")) } ?: "unknown"
                         onFailure("mux:$code")
@@ -58,7 +64,17 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
     }
     fun follow(sessionId: String) {
         val request=JSONObject().put("address",JSONObject().put("kind","session").put("sessionId",sessionId)).put("assistantStream",true)
-        check(socket?.send(JSONObject().put("type","open").put("streamId","session").put("endpoint","session/follow").put("payload",JSONObject().put("args",JSONObject().put("request",request))).toString()) == true)
+        openStream("session:$sessionId","session/follow",request)
+    }
+    fun openStream(id: String, endpoint: String, request: JSONObject) {
+        check(socket?.send(JSONObject().put("type","open").put("streamId",id).put("endpoint",endpoint).put("payload",JSONObject().put("args",JSONObject().put("request",request))).toString()) == true)
+    }
+    suspend fun mobile(method: String, request: JSONObject = JSONObject()): JSONObject = withContext(Dispatchers.IO) {
+        require(method.matches(Regex("[a-z][a-z0-9/-]*")))
+        http.newCall(Request.Builder().url("$base/mobile/$method").header("Cookie",cookie).post(request.toString().toRequestBody("application/json".toMediaType())).build()).execute().use {
+            check(it.isSuccessful) { "手机插件请求失败 (${it.code})" }
+            JSONObject(it.body!!.string())
+        }
     }
     suspend fun prompt(sessionId: String, text: String) = rpc("session/prompt", JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",JSONArray().put(JSONObject().put("type","text").put("text",text))))
     suspend fun select(sessionId: String, provider: String, model: String) = rpc("session/selectModel", JSONObject().put("sessionId",sessionId).put("provider",provider).put("model",model))

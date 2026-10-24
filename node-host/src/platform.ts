@@ -3,7 +3,7 @@ export interface Provider {
   id: string; type: 'anthropic' | 'openai-compatible'; baseURL: string;
   apiKey: string; models: string[];
 }
-export interface Bootstrap { callbackPort: number; callbackToken: string; workspace: string; home: string }
+export interface Bootstrap { callbackPort: number; callbackToken: string; workspace: string; home: string; selfHome?: string }
 export class AndroidBridge {
   constructor(readonly bootstrap: Bootstrap) {}
   async call<T>(method: string, body: unknown = {}, signal?: AbortSignal): Promise<T> {

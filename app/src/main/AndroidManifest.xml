@@ -5,11 +5,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <application android:allowBackup="false" android:usesCleartextTraffic="true" android:label="Hoshino Harness" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:extractNativeLibs="true" android:supportsRtl="true">
-        <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
+    <application android:name="app.hoshino.harness.HoshinoApplication" android:allowBackup="false" android:usesCleartextTraffic="true" android:label="Hoshino Harness" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/Theme.Hoshino" android:extractNativeLibs="true" android:supportsRtl="true">
+        <activity android:name="app.hoshino.harness.MainActivity" android:theme="@style/Theme.Hoshino.Starting" android:exported="true" android:windowSoftInputMode="adjustResize">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
-        <service android:name=".KernelService" android:exported="false" android:foregroundServiceType="specialUse">
+        <service android:name="dev.hoshino.app.KernelService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User initiated on-device AI agent runtime with persistent sessions" />
         </service>
     </application>

@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hoshino Harness 界面文案（简体中文）。
+  主框架（顶栏、首页、输入框、侧栏、会话菜单、权限、设置首页）已通过 stringResource 引用；
+  其余二级页面的长说明文本暂为内联字符串，做多语言时按同样方式迁移到这里。
+-->
+<resources>
+    <string name="app_name">Hoshino Harness</string>
+    <string name="github_url">https://github.com/</string>
+
+    <!-- 顶栏 / 会话 -->
+    <string name="new_session">新会话</string>
+    <string name="cd_sidebar">侧栏</string>
+    <string name="cd_more">更多</string>
+    <string name="menu_rename">重命名</string>
+    <string name="menu_fork">分叉会话</string>
+    <string name="menu_export">导出 ZIP</string>
+    <string name="menu_trajectory">Trajectory 视图</string>
+    <string name="menu_context">上下文用量</string>
+    <string name="menu_stats">会话统计</string>
+    <string name="menu_archive">归档</string>
+    <string name="menu_unarchive">取消归档</string>
+    <string name="menu_delete">删除</string>
+    <string name="rename_title">重命名会话</string>
+    <string name="delete_title">删除会话？</string>
+    <string name="delete_message">「%1$s」及其轨迹将被永久删除，无法恢复。</string>
+    <string name="no_session">当前没有会话</string>
+    <string name="plan_suffix"> · 规划</string>
+
+    <!-- 首页 Hero -->
+    <string name="hero_title">今天想完成什么？</string>
+    <string name="pick_workspace">选择工作区</string>
+    <string name="add_workspace_ellipsis">添加工作区…</string>
+    <string name="chip_plan">规划一个任务 /plan</string>
+    <string name="chip_goal">设定长期目标 /goal</string>
+    <string name="chip_mcp">连接 MCP 服务</string>
+    <string name="chip_provider">添加模型供应商</string>
+
+    <!-- 输入框 -->
+    <string name="composer_placeholder">描述任务，/ 调用命令，@ 引用文件</string>
+    <string name="composer_placeholder_running">继续输入，消息会进入排队…</string>
+    <string name="composer_commands">命令</string>
+    <string name="composer_files">工作区文件</string>
+    <string name="queued_n">排队 %1$d</string>
+    <string name="steer">插话</string>
+    <string name="attach_file">文件</string>
+    <string name="attach_image">图片</string>
+    <string name="attach_camera">拍照</string>
+    <string name="attach_workspace">从工作区 @ 文件</string>
+    <string name="plan_mode">规划协作 /plan</string>
+    <string name="manage_presets">管理 Agent 预设</string>
+    <string name="pick_model">选择模型</string>
+    <string name="no_models">还没有可用模型，先添加模型供应商</string>
+
+    <!-- 侧栏 -->
+    <string name="nav_plugins">插件</string>
+    <string name="nav_skills">Skills</string>
+    <string name="nav_mcp">MCP</string>
+    <string name="nav_schedules">定时任务</string>
+    <string name="nav_goals">长期目标</string>
+    <string name="nav_tools">工具台</string>
+    <string name="nav_terminal">终端</string>
+    <string name="nav_hooks">Hooks / Webhook</string>
+    <string name="nav_inspector">Inspector</string>
+    <string name="nav_web">Web 预览</string>
+    <string name="nav_lsp">LSP 状态</string>
+    <string name="search_sessions">搜索会话</string>
+    <string name="workspaces">工作区</string>
+    <string name="no_sessions">暂无会话</string>
+    <string name="no_matching_sessions">没有匹配的会话</string>
+    <string name="archived_n">已归档 · %1$d</string>
+    <string name="settings">设置</string>
+    <string name="toggle_theme">切换主题</string>
+
+    <!-- 权限 -->
+    <string name="tier_read_only">只读</string>
+    <string name="tier_workspace_write">工作区内修改</string>
+    <string name="tier_full_access">完全访问</string>
+    <string name="full_access_title">开启完全访问？</string>
+    <string name="full_access_ack">我已了解风险</string>
+    <string name="shizuku_guide">Shizuku 引导</string>
+
+    <!-- 设置首页 -->
+    <string name="settings_appearance">外观</string>
+    <string name="settings_models">模型</string>
+    <string name="settings_presets">Agent 预设</string>
+    <string name="settings_security">权限与安全</string>
+    <string name="settings_phone">手机能力</string>
+    <string name="settings_kernel">内核</string>
+    <string name="settings_data">数据与隐私</string>
+    <string name="settings_credentials">凭据管理</string>
+    <string name="settings_feedback">反馈</string>
+    <string name="settings_about">关于</string>
+
+    <!-- 通用 -->
+    <string name="ok">确定</string>
+    <string name="cancel">取消</string>
+    <string name="save">保存</string>
+    <string name="back">返回</string>
+</resources>

@@ -1,10 +1,10 @@
-"""Select the M0 dependency closure and stream identical tar content into gzip and xz.
+"""Select the M1 dependency closure and stream identical tar content into gzip and xz.
 Only deployment files are selected; no upstream implementation is edited.
 """
 import gzip,hashlib,io,json,lzma,pathlib,posixpath,tarfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 PREFIX='opt/hoshino/node-host/'
-DENIED={'sharp'} # attachment-local's lazy raster path is outside the text-only M0 UI/tools.
+DENIED=set() # M1 enables native dsh attachments and therefore restores Sharp/libvips.
 
 def pack(source, abi, target, baseline, refresh=False):
     started=time.monotonic();packages={}
@@ -35,11 +35,12 @@ def pack(source, abi, target, baseline, refresh=False):
             visit(child,directory,manifest.get('peerDependenciesMeta',{}).get(child,{}).get('optional',False))
     for seed in json.loads((ROOT/'rootfs/runtime-seeds.json').read_text()):visit(seed)
     visit('@deepseek-ai/node-addon-system-linux-'+('arm64' if abi=='arm64-v8a' else 'x64'))
+    for native in ['@img/sharp-linuxmusl-','@img/sharp-libvips-linuxmusl-']:
+        visit(native+('arm64' if abi=='arm64-v8a' else 'x64'))
     selected.add(locate('@deepseek-ai/dsh'))
     def keep(name):
         if name.split('/')[0] in ['dev','proc','sys']:return False
         if any(name==p or name.startswith(p+'/') for p in ['usr/include','usr/share/doc','usr/share/man','usr/share/locale','usr/lib/node_modules/npm','root/.npm','build']):return False
-        if name in ['bin/bash','usr/bin/bash']:return False
         if name.startswith(PREFIX+'node_modules/'):
             rest=name[len(PREFIX+'node_modules/'):]
             chunks=rest.split('/');count=2 if chunks[0].startswith('@') else 1
@@ -79,11 +80,11 @@ def pack(source, abi, target, baseline, refresh=False):
                     if path.is_file():
                         name=PREFIX+'dist/'+path.relative_to(ROOT/'node-host/dist').as_posix();size=path.stat().st_size
                         output.add(path,arcname=name,recursive=False);files.append({'path':name,'bytes':size});unpacked+=size
-            manifest=json.dumps({'packages':sorted(selected),'imageProcessing':False,'upstreamSourcesModified':False}).encode()
+            manifest=json.dumps({'packages':sorted(selected),'imageProcessing':True,'upstreamSourcesModified':False}).encode()
             entry=tarfile.TarInfo('opt/hoshino/runtime-selection.json');entry.size=len(manifest);entry.mode=0o644;output.addfile(entry,io.BytesIO(manifest))
             unpacked+=len(manifest)
     temporary.replace(target);gztemporary.replace(baseline)
     report={'abi':abi,'unpackedBytes':unpacked,'xzBytes':target.stat().st_size,'gzipBytes':baseline.stat().st_size,'selectedPackages':len(selected),'largestFiles':sorted(files,key=lambda x:x['bytes'],reverse=True)[:10],'packSeconds':round(time.monotonic()-started,3),'sha256':hashlib.sha256(target.read_bytes()).hexdigest()}
-    (ROOT/'docs'/('m0-size-'+abi+'.json')).write_text(json.dumps(report,indent=2)+'\n')
+    (ROOT/'docs'/('m1-size-'+abi+'.json')).write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report))
     return report

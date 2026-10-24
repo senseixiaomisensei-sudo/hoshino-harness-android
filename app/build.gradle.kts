@@ -1,10 +1,10 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 android {
-    namespace = "dev.hoshino.app"
+    namespace = "app.hoshino.harness"
     compileSdk { version = release(37) { minorApiLevel = 0 } }
     defaultConfig {
         applicationId = "dev.hoshino.app"; minSdk = 29; targetSdk = 37
-        versionCode = 1; versionName = "0.0.1-m0"
+        versionCode = 100; versionName = "0.1.0-m1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -33,6 +33,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
     implementation("androidx.core:core-ktx:1.16.0")
+    implementation("androidx.core:core-splashscreen:1.2.0")
+    implementation("androidx.navigation:navigation-compose:2.9.5")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    testImplementation("junit:junit:4.13.2")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.04.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test:runner:1.6.2")
@@ -53,11 +58,13 @@ val verifyKernelAssets by tasks.registering {
 val stageRuntimeAssets by tasks.registering {
     dependsOn(verifyKernelAssets)
     inputs.dir("src/main/assets/kernel");inputs.dir("src/main/assets/licenses")
+    inputs.file(rootProject.file("THIRD_PARTY.md"))
     outputs.dir(layout.buildDirectory.dir("generated/runtimeAssets"));outputs.dir(layout.buildDirectory.dir("generated/benchmarkAssets"))
     doLast {
         for(abi in listOf("arm64-v8a","x86_64")) {
             copy { from("src/main/assets/kernel/$abi.txz","src/main/assets/kernel/manifest.json");into(layout.buildDirectory.dir("generated/runtimeAssets/$abi/kernel")) }
             copy { from("src/main/assets/licenses/$abi");into(layout.buildDirectory.dir("generated/runtimeAssets/$abi/licenses")) }
+            copy { from(rootProject.file("THIRD_PARTY.md"));into(layout.buildDirectory.dir("generated/runtimeAssets/$abi/licenses")) }
             copy { from(rootProject.file(".research/runtime/$abi.tgz"));rename { "baseline.tgz" };into(layout.buildDirectory.dir("generated/benchmarkAssets/$abi")) }
         }
     }

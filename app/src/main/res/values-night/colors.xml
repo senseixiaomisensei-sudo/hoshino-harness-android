@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设计 Token（深色） -->
+<resources>
+    <color name="hh_bg">#0E0F11</color>
+    <color name="hh_surface">#16171A</color>
+    <color name="hh_surface2">#1D1E22</color>
+    <color name="hh_line">#2A2B30</color>
+    <color name="hh_text">#F2F2EF</color>
+    <color name="hh_text2">#A3A5AB</color>
+    <color name="hh_text3">#6C6E74</color>
+    <color name="hh_accent">#4C7DFF</color>
+    <color name="hh_accent_soft">#1F4C7DFF</color>
+    <color name="hh_on_accent">#FFFFFF</color>
+    <color name="hh_success">#3DBE73</color>
+    <color name="hh_warning">#E0A43A</color>
+    <color name="hh_danger">#F06161</color>
+    <color name="hh_splash_bg">#0E0F11</color>
+</resources>

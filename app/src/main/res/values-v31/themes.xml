@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+：系统 SplashScreen 播放 AVD（四角星旋转放大出现） -->
+    <style name="Theme.Hoshino.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/hh_splash_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/avd_hoshino_splash</item>
+        <item name="windowSplashScreenAnimationDuration">700</item>
+        <item name="postSplashScreenTheme">@style/Theme.Hoshino</item>
+    </style>
+</resources>

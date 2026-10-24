@@ -3,6 +3,10 @@ package dev.hoshino.bridge
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import java.io.File
 
@@ -14,7 +18,9 @@ interface KernelLauncher {
 /** GPL proot is an independent executable in nativeLibraryDir; it is never linked. */
 class ProotKernelLauncher : KernelLauncher {
     private var process: Process? = null
-    override suspend fun launch(context: Context, bootstrap: JSONObject, onExit: (Int) -> Unit, onDiagnostic: (String) -> Unit): Process = withContext(Dispatchers.IO) {
+    override suspend fun launch(context: Context, bootstrap: JSONObject, onExit: (Int) -> Unit, onDiagnostic: (String) -> Unit): Process {
+        val owner=currentCoroutineContext()[Job]
+        return withContext(Dispatchers.IO) {
         val abi = android.os.Build.SUPPORTED_ABIS.first { it == "arm64-v8a" || it == "x86_64" }
         val root = File(context.filesDir, "alpine-$abi")
         val fingerprint = context.assets.open("kernel/manifest.json").bufferedReader().use { JSONObject(it.readText()).getString(abi) }
@@ -35,14 +41,16 @@ class ProotKernelLauncher : KernelLauncher {
         val lib = context.applicationInfo.nativeLibraryDir
         val workspace = File(context.filesDir, "workspace").apply { mkdirs() }
         val home = File(context.filesDir, "dsh-home").apply { mkdirs() }
+        val hoshino = File(context.filesDir,"hoshino").apply { mkdirs() }
+        File(root,"root/workspace").mkdirs();File(root,"root/.hoshino").mkdirs()
         val tmp = File(context.cacheDir, "proot").apply { mkdirs() }
         val network = context.getSystemService(android.net.ConnectivityManager::class.java)
         val dns = network.getLinkProperties(network.activeNetwork)?.dnsServers.orEmpty()
         val resolv = File(context.filesDir, "resolv.conf").apply { writeText(dns.joinToString("\n") { "nameserver ${it.hostAddress}" } + "\n") }
         val args = listOf("$lib/libproot.so", "--link2symlink", "-r", root.path,
-            "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "${workspace.path}:/workspace", "-b", "${home.path}:/home/hoshino",
+            "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "${workspace.path}:/workspace", "-b", "${workspace.path}:/root/workspace", "-b", "${home.path}:/home/hoshino", "-b", "${hoshino.path}:/root/.hoshino",
             "-b", "${resolv.path}:/etc/resolv.conf",
-            "-w", "/workspace", "/usr/bin/env", "HOME=/home/hoshino", "PATH=/usr/bin:/bin", "DSH_TELEMETRY_DISABLED=1",
+            "-w", "/root/workspace", "/usr/bin/env", "HOME=/root", "PATH=/usr/bin:/bin", "DSH_TELEMETRY_DISABLED=1",
             "LD_PRELOAD=/opt/hoshino/libandroid-compat.so",
             "/usr/bin/node", "/opt/hoshino/node-host/dist/node-host/src/main.js")
         val builder = ProcessBuilder(args).directory(context.filesDir).redirectErrorStream(true)
@@ -50,19 +58,25 @@ class ProotKernelLauncher : KernelLauncher {
             put("PROOT_TMP_DIR", tmp.path); put("PROOT_LOADER", "$lib/libproot-loader.so")
             put("LD_LIBRARY_PATH", lib); put("PROOT_NO_SECCOMP", "1")
         }
+        currentCoroutineContext().ensureActive()
         val child = builder.start(); process = child
-        child.outputStream.bufferedWriter().use { it.write(bootstrap.put("workspace", "/workspace").put("home", "/home/hoshino").toString()); it.newLine() }
+        owner?.invokeOnCompletion { cause -> if(cause is CancellationException)child.destroy() }
+        child.outputStream.bufferedWriter().use { it.write(bootstrap.put("workspace", "/root/workspace").put("home", "/home/hoshino").put("selfHome","/root/.hoshino").toString()); it.newLine() }
         Thread {
             // Arbitrary child output may contain tool data or credentials. Keep only classified diagnostics.
             child.inputStream.bufferedReader().forEachLine { onDiagnostic(classifyDiagnostic(it)) }
             onExit(child.waitFor())
         }.apply { isDaemon = true; start() }
         child
+        }
     }
     override fun stop() { process?.destroy(); process = null }
 }
 
 fun classifyDiagnostic(line: String): String {
+    Regex("^hoshino: boot ([A-Za-z]+) (ready|pending)$").matchEntire(line)?.let { match ->
+        if(match.groupValues[1] in setOf("agents","fs","attachments","sessionController","connection","webServer","subprocess","shell","skills","terminals","terminalController"))return "dsh: ${match.groupValues[1]} ${match.groupValues[2]}"
+    }
     val knownPlugins = setOf("workspace", "session-controller", "android-api", "android-policy", "android-credentials", "android-device-info", "sessions", "session-checkpoint-policy", "storage-domain", "storage-json", "webserver", "connection", "typert-gateway", "agent-loop", "llm")
     Regex("^([a-z][a-z0-9-]{0,63}) \\(").find(line)?.groupValues?.get(1)?.takeIf { it in knownPlugins }?.let { id ->
         val code = Regex("Android callback failed \\(([0-9]{3})\\)").find(line)?.groupValues?.get(1)

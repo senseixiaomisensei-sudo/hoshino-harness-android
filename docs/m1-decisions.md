@@ -1,0 +1,11 @@
+# M1 自主决定
+
+1. **M0 门槛按本次任务书执行**：完整全绿运行 40050125544，提交 c171800decf633d1c012cc8516a22e69a4e0ce7f；自动指标、ABI 分包与真机清单已存在。本次任务书要求的四项软件门槛满足，继续 M1；不将此前未签认的真机条目补记为通过。
+2. **交付采用 GitHub Release 直链**：沿用现有公开源码仓库，无新后端、付费存储或手机读取本地路径；发布前核对 APK 签名、字节数、SHA256 与 HTTP 下载响应。
+3. **ZIP 原件只读**：在 .research/m1-ui-input 中检查副本，按 README 方式 B 合入工程；SessionStore 保持原样。ZIP 未包含其引用的 design/SPEC.md，以实际交付的 README、Token、组件、路由、资源和源代码作为可核对依据，不编造缺失规范。
+4. **保持已有应用标识便于升级**：UI 源码和 namespace 使用 ZIP 的 app.hoshino.harness；applicationId 保留 dev.hoshino.app，沿用现有签名与私有数据，避免新包导致会话和 Keystore 配置分离。核心桥接包与 KernelLauncher seam 不改名。
+5. **先保留已验证构建链**：不因 ZIP README 的工具版本声明就升级现有 AGP、Gradle 或 dsh。先用实际可构建的工具链合并；确有 API 兼容问题再做必要调整，并记录验证。
+6. **M1 在 codex/m1 分支实施**：保留已验收的 M0 主分支，M1 的完整 UI 替换、运行时扩展与测试在独立分支迭代；不重置或移动用户未跟踪的原始 ZIP 与任务书。
+7. **截图与复制先修复**：移除旧 Activity 即移除了它的全局 FLAG_SECURE；ZIP 的消息默认没有文本选择容器。只在 provider 密钥编辑页面生命周期启用 FLAG_SECURE，复制通过原 ZIP helper 扩展，统一脱敏与 Android 13 敏感标记。
+8. **开发 CI 不等于验收通过**：开发阶段先验证新增 musl PTY、Sharp 的两个 ABI 构建并上传带版本名的开发 APK；完整 M1AcceptanceTest、截图及指标尚未执行时，报告明确标记未完成。最终交付必须补成完整无条件的仪器验收流水线。
+9. **复用原版 shell 与 PTY 分工**：Agent 的 bash 使用原版 tool-bash + bash-local，以保留超时、取消和溢出文件；交互终端复用原版 api-terminal-controller / subprocess-local 的 PTY。android-subprocess 仅继承原版 provider，将 spillDir 配置到私有 workspace/.hoshino-output，不改上游执行代码。

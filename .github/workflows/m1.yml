@@ -1,0 +1,89 @@
+name: M1 development build
+on:
+  push:
+    branches: [codex/m1]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proot-source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 rootfs/build-proot.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m1-android-proot
+          path: |
+            app/src/main/jniLibs
+            app/src/main/assets/licenses
+  development:
+    needs: proot-source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: docker/setup-qemu-action@v3
+      - name: Compile and test the original dsh composition
+        working-directory: node-host
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm test
+      - uses: actions/cache/restore@v4
+        id: runtime
+        with:
+          path: |
+            app/src/main/assets/kernel
+            app/src/main/assets/licenses
+            app/src/main/jniLibs
+            .research/runtime/*.tgz
+            docs/m1-size-*.json
+          key: m1-kernel-v1-${{ runner.os }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/pack.py', 'rootfs/runtime-seeds.json', 'rootfs/node-apk-lock.json', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
+      - name: Build musl PTY and image runtimes for both ABIs
+        if: steps.runtime.outputs.cache-hit != 'true'
+        run: python3 rootfs/prepare.py --rootfs-only
+      - uses: actions/download-artifact@v4
+        with: { name: m1-android-proot, path: app/src/main }
+      - uses: actions/cache/save@v4
+        if: steps.runtime.outputs.cache-hit != 'true'
+        with:
+          path: |
+            app/src/main/assets/kernel
+            app/src/main/assets/licenses
+            app/src/main/jniLibs
+            .research/runtime/*.tgz
+            docs/m1-size-*.json
+          key: ${{ steps.runtime.outputs.cache-primary-key }}
+      - name: Refresh our host and plugins
+        if: steps.runtime.outputs.cache-hit == 'true'
+        run: python3 rootfs/prepare.py --refresh-host
+      - name: Build development APKs and unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug test -Pkotlin.compiler.execution.strategy=in-process --console=plain
+          python3 tools/package-m1.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hoshino-m1-development
+          path: |
+            build/deliverables/*0.1.0-m1*
+            docs/m1-apk-sizes.json
+            docs/m1-size-*.json
+            core-bridge/build/reports/tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m1-runtime
+          include-hidden-files: true
+          path: |
+            app/src/main/assets/kernel
+            .research/runtime/*.tgz

@@ -1,0 +1,178 @@
+package app.hoshino.harness.core
+
+import android.content.Context
+import dev.hoshino.bridge.NativeKernel
+import dev.hoshino.bridge.ProviderStore
+import dev.hoshino.bridge.Provider as StoredProvider
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
+
+/** Only adapts the real dsh Session Controller/Gateway to the ZIP's unmodified event reducer. */
+class DshHarnessClient(private val context: Context) : UnavailableHarnessClient() {
+    private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+    private val vault=ProviderStore(context)
+    val runtime=NativeKernel(context,callbackHandler=::callback)
+    private val eventBus=MutableSharedFlow<HarnessEvent>(extraBufferCapacity=1024)
+    override val events=eventBus.asSharedFlow()
+    override val connection=runtime.state.map { when(it.phase) { "已连接" -> ConnectionState.Connected; "启动中" -> ConnectionState.Connecting; else -> ConnectionState.Disconnected } }.stateIn(scope,SharingStarted.Eagerly,ConnectionState.Disconnected)
+    override val kernel=runtime.state.map { KernelInfo("0.2.1-rc.2","24.18.1",it.phase=="已连接","proot + Alpine",it.phase=="已连接") }.stateIn(scope,SharingStarted.Eagerly,KernelInfo("0.2.1-rc.2","24.18.1",false,"proot + Alpine",false))
+    private val sessionRows=MutableStateFlow<List<SessionInfo>>(emptyList())
+    override val sessions=sessionRows.asStateFlow()
+    private val workspaceRows=MutableStateFlow(listOf(Workspace("ws-default","workspace","/root/workspace")))
+    override val workspaces=workspaceRows.asStateFlow()
+    private val providerRows=MutableStateFlow<List<Provider>>(readProviders())
+    override val providers=providerRows.asStateFlow()
+    private val routingRow=MutableStateFlow(ModelRouting())
+    override val routing=routingRow.asStateFlow()
+    override val catalog=listOf(CatalogProvider("anthropic","Anthropic",ProviderProtocol.Anthropic,"https://api.anthropic.com"),CatalogProvider("openai","OpenAI",ProviderProtocol.OpenAICompatible,"https://api.openai.com/v1"),CatalogProvider("deepseek","DeepSeek",ProviderProtocol.OpenAICompatible,"https://api.deepseek.com/v1"),CatalogProvider("ollama","Ollama",ProviderProtocol.OpenAICompatible,"http://127.0.0.1:11434/v1"),CatalogProvider("custom","自定义供应商",ProviderProtocol.OpenAICompatible,""))
+    private val approvals=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<ApprovalDecision>>()
+    private val seen=mutableMapOf<String,MutableSet<Int>>()
+    private data class Live(val id: String,val started: Long=android.os.SystemClock.elapsedRealtime(),var text: String="",var thinking: String="")
+    private val live=mutableMapOf<String,Live>()
+    private val calls=mutableMapOf<String,String>()
+    private var activeSession=""
+
+    init {
+        scope.launch { runtime.frames.collect { (stream,frame) ->
+            try { if(stream.startsWith("session:"))accept(stream.removePrefix("session:"),frame) }
+            catch(failure: Exception) { runtime.diagnostic("mapping: ${failure.javaClass.simpleName}") }
+        } }
+        scope.launch { runtime.state.map { it.phase }.distinctUntilChanged().collect { if(it=="已连接")runCatching { refreshSessions() }.onFailure { runtime.diagnostic("sessions: ${it.javaClass.simpleName}") } } }
+    }
+    fun startKernel()=runtime.start()
+    fun stopKernel() { approvals.values.forEach { it.complete(ApprovalDecision.Deny) };runtime.stop() }
+    override suspend fun restartKernel() {
+        for(session in sessions.value.filter { it.running })runCatching { api().rpc("session/cancel",JSONObject().put("sessionId",session.id)) }
+        withTimeoutOrNull(5000) { sessions.first { rows -> rows.none { it.running } } }
+        approvals.values.forEach { it.complete(ApprovalDecision.Deny) }
+        runtime.stopAndWait();runtime.start()
+        // Keep the reducer's delivered sequence set: replaying it would duplicate the ZIP store's items.
+    }
+    override suspend fun kernelLogs()=runtime.state.value.logs
+    suspend fun api()=runtime.client()
+    private suspend fun publish(event: HarnessEvent)=eventBus.emit(event)
+    private suspend fun callback(method: String,body: JSONObject): Any {
+        if(method!="approve")error("手机能力即将支持")
+        val session=body.optString("sessionId").ifEmpty { activeSession }
+        check(session.isNotEmpty())
+        val id=UUID.randomUUID().toString();val decision=CompletableDeferred<ApprovalDecision>();approvals[id]=decision
+        val network=body.optString("kind")=="network"
+        publish(HarnessEvent.ApprovalRequested(session,id,if(network) "模型网络请求" else "工具执行审批",if(network) "向所选模型接口发送本次上下文" else body.optString("path"),if(network) "发送到当前 provider" else body.optString("tool")))
+        return try {
+            val chosen=withTimeoutOrNull(290000) { decision.await() } ?: ApprovalDecision.Deny
+            publish(HarnessEvent.ApprovalResolved(session,id,chosen))
+            JSONObject().put("approved",chosen!=ApprovalDecision.Deny).put("remember",chosen==ApprovalDecision.AllowSession)
+        } finally { approvals.remove(id) }
+    }
+    override suspend fun respondApproval(sessionId: String,approvalId: String,decision: ApprovalDecision) { approvals[approvalId]?.complete(decision) }
+    private fun JSONArray.rows()=(0 until length()).map { getJSONObject(it) }
+    private fun content(array: JSONArray?,type: String)=array?.rows()?.filter { it.optString("type")==type }?.joinToString("") { it.optString("text") }.orEmpty()
+    private suspend fun accept(sid: String,frame: JSONObject) {
+        when(frame.optString("type")) {
+            "snapshot" -> {
+                frame.getJSONArray("records").rows().forEach { record -> durable(sid,record.getJSONObject("event")) }
+            }
+            "event" -> durable(sid,frame.getJSONObject("event"))
+            "assistant-stream" -> {
+                val f=frame.getJSONObject("frame")
+                when(f.optString("type")) {
+                    "start" -> live[sid]=Live("a:${f.getString("attemptId")}")
+                    "chunk" -> {
+                        val l=live.getOrPut(sid) { Live("a:${f.getString("attemptId")}") };val chunk=f.getJSONObject("chunk");val delta=chunk.optString("text")
+                        when(chunk.optString("type")) {
+                            "text-delta" -> { l.text+=delta;publish(HarnessEvent.AssistantDelta(sid,l.id,delta)) }
+                            "reasoning-delta" -> { l.thinking+=delta;publish(HarnessEvent.ThinkingDelta(sid,"r:${l.id}",delta)) }
+                        }
+                    }
+                    "end" -> live[sid]?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) }
+                }
+            }
+        }
+    }
+    private suspend fun durable(sid: String,event: JSONObject) {
+        val seq=event.getInt("seq");if(!seen.getOrPut(sid) { mutableSetOf() }.add(seq))return
+        val id="e:$seq";val data=event.optJSONObject("data") ?: return
+        when(event.getString("type")) {
+            "turn/start" -> { publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
+            "turn/end" -> { live.remove(sid)?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) };publish(HarnessEvent.TurnFinished(sid,id,data.optJSONObject("reason")?.optString("kind")=="cancelled"));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=false,updatedAt=System.currentTimeMillis()) else it } };if(data.optJSONObject("reason")?.optString("kind")=="error")publish(HarnessEvent.Notice(sid,"error:$seq","模型请求失败，请检查协议、模型与凭据")) }
+            "user/message" -> if(data.optJSONObject("source")?.optString("kind")=="user")publish(HarnessEvent.UserMessage(sid,id,content(data.optJSONArray("content"),"text"),emptyList()))
+            "session/title" -> sessionRows.update { list -> list.map { if(it.id==sid)it.copy(title=data.optString("title",it.title)) else it } }
+            "assistant/message" -> {
+                val message=data.getJSONObject("message");val text=content(message.optJSONArray("content"),"text");val reasoning=content(message.optJSONArray("content"),"reasoning")
+                val l=live.remove(sid)
+                if(l==null) {
+                    if(reasoning.isNotEmpty()) {publish(HarnessEvent.ThinkingDelta(sid,"r:$id",reasoning));publish(HarnessEvent.ThinkingDone(sid,"r:$id",0))}
+                    if(text.isNotEmpty()) {publish(HarnessEvent.AssistantDelta(sid,id,text));publish(HarnessEvent.AssistantDone(sid,id))}
+                } else {
+                    if(text.startsWith(l.text) && text.length>l.text.length)publish(HarnessEvent.AssistantDelta(sid,l.id,text.drop(l.text.length)))
+                    if(text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id))
+                    if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started))
+                }
+            }
+            "tool/call" -> { val call=data.getString("callId");calls["$sid:$call"]=id;val name=data.getString("name");publish(HarnessEvent.ToolCallStarted(sid,id,name,name,data.getString("arguments"),when(name){"bash","terminal" -> ToolKind.Bash;"write","edit" -> ToolKind.Edit;else -> ToolKind.Generic})) }
+            "tool/result" -> {
+                val result=data.getJSONObject("message");val callId=calls["$sid:${result.getString("toolCallId")}"] ?: return
+                publish(HarnessEvent.ToolCallOutput(sid,callId,content(result.optJSONArray("content"),"text")))
+                publish(HarnessEvent.ToolCallFinished(sid,callId,if(result.optBoolean("isError"))ToolStatus.Failed else ToolStatus.Success))
+            }
+        }
+    }
+    suspend fun refreshSessions() {
+        val client=api();val items=client.rpc("session/list",JSONObject()).getJSONArray("items").rows()
+        sessionRows.value=items.map { row -> val old=sessionRows.value.firstOrNull { it.id==row.getString("sessionId") };SessionInfo(row.getString("sessionId"),old?.title ?: "会话 ${row.getString("sessionId").take(8)}",old?.workspaceId ?: "ws-default",old?.presetId ?: "standard",old?.tier ?: PermissionTier.WorkspaceWrite,old?.createdAt ?: row.getLong("updatedAt"),row.getLong("updatedAt"),row.getBoolean("running"),old?.archived ?: false,row.optString("parentSessionId").ifEmpty { null }) }
+        sessionRows.value.forEach { client.follow(it.id) }
+    }
+    override suspend fun createSession(workspaceId: String,presetId: String,tier: PermissionTier): SessionInfo {
+        require(tier!=PermissionTier.FullAccess) { "系统完全访问即将支持" }
+        val path=workspaceRows.value.firstOrNull { it.id==workspaceId }?.path ?: "/root/workspace"
+        val client=api();val id=client.rpc("session/create",JSONObject().put("cwd",path)).getString("sessionId")
+        val now=System.currentTimeMillis();val result=SessionInfo(id,"新会话",workspaceId,presetId,tier,now,now)
+        sessionRows.update { it.filterNot { row -> row.id==id }+result };activeSession=id;client.follow(id)
+        return result
+    }
+    override suspend fun renameSession(sessionId: String,title: String) { val value=api().rpc("session/rename",JSONObject().put("sessionId",sessionId).put("title",title));sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(title=value.getString("title")) else it } } }
+    override suspend fun forkSession(sessionId: String): SessionInfo { val id=api().rpc("session/fork",JSONObject().put("sessionId",sessionId)).getString("sessionId");refreshSessions();return sessionRows.value.first { it.id==id } }
+    override suspend fun setSessionTier(sessionId: String,tier: PermissionTier) { require(tier!=PermissionTier.FullAccess) { "系统完全访问即将支持" };sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(tier=tier) else it } } }
+    override suspend fun send(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) {
+        require(attachments.isEmpty()) { "附件接入中，请稍后使用" }
+        val client=api();activeSession=sessionId
+        val model=options.model ?: error("请先配置模型供应商")
+        client.select(sessionId,model.providerId,model.modelId)
+        client.prompt(sessionId,text)
+    }
+    override suspend fun steer(sessionId: String,text: String) { api().rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","steer").put("content",JSONArray().put(JSONObject().put("type","text").put("text",text)))) }
+    override suspend fun stop(sessionId: String) { api().rpc("session/cancel",JSONObject().put("sessionId",sessionId)) }
+    private fun readProviders(): List<Provider> = vault.list().map { p ->
+        val m=p.metadata;val configured=m.optJSONArray("models")?.rows()?.associateBy { it.getString("id") }.orEmpty()
+        Provider(p.id,m.optString("name",p.id),m.optString("catalogId",p.id),if(p.type=="anthropic")ProviderProtocol.Anthropic else ProviderProtocol.OpenAICompatible,p.baseURL,if(vault.hasSecret(p.credentialRef))"••••••••" else "",m.optJSONArray("headerRefs")?.rows()?.map { it.getString("name") to "••••••••" }.orEmpty(),m.optBoolean("enabled",true),p.models.map { id -> val d=configured[id];ModelInfo(id,d?.optString("displayName",id) ?: id,d?.optInt("contextLength",128000) ?: 128000,d?.optInt("maxOutput",4096) ?: 4096,d?.optBoolean("vision",false) ?: false,d?.optBoolean("reasoning",p.type=="anthropic") ?: (p.type=="anthropic"),runCatching { ReasoningEffort.valueOf(d?.optString("defaultEffort") ?: if(p.type=="anthropic")"Medium" else "Off") }.getOrDefault(ReasoningEffort.Off)) })
+    }
+    override suspend fun upsertProvider(provider: Provider) {
+        require(provider.protocol!=ProviderProtocol.OpenAIResponses) { "OpenAI Responses 即将支持" }
+        val id=provider.id.takeIf { it.matches(Regex("[a-z][a-z0-9-]*")) } ?: "p-"+provider.id.lowercase().replace(Regex("[^a-z0-9-]"),"-")
+        val prior=vault.list().firstOrNull { it.id==id };val oldRefs=prior?.metadata?.optJSONArray("headerRefs")?.rows().orEmpty()
+        val oldValues=oldRefs.associate { it.getString("name") to vault.resolve(it.getString("ref")) }
+        val headers=JSONArray(provider.headers.mapIndexed { i,pair -> val ref="HEADER_"+id.uppercase().replace('-','_')+"_$i";if(pair.second!="••••••••")vault.putSecret(ref,pair.second) else oldValues[pair.first]?.let { vault.putSecret(ref,it) };JSONObject().put("name",pair.first).put("ref",ref) })
+        val metadata=JSONObject().put("name",provider.name).put("catalogId",provider.catalogId).put("enabled",provider.enabled).put("headerRefs",headers).put("models",JSONArray(provider.models.map { m -> JSONObject().put("id",m.id).put("displayName",m.displayName).put("contextLength",m.contextLength).put("maxOutput",m.maxOutput).put("vision",m.vision).put("reasoning",m.reasoning).put("defaultEffort",m.defaultEffort.name) }))
+        vault.save(StoredProvider(id,if(provider.protocol==ProviderProtocol.Anthropic)"anthropic" else "openai-compatible",provider.baseUrl,provider.models.map { it.id },metadata),provider.apiKey.takeUnless { it=="••••••••" }.orEmpty())
+        providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)api().reloadProviders()
+    }
+    override suspend fun deleteProvider(providerId: String) { vault.delete(providerId);providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)api().reloadProviders() }
+    override suspend fun setProviderEnabled(providerId: String,enabled: Boolean) { upsertProvider(providerRows.value.first { it.id==providerId }.copy(enabled=enabled)) }
+    override suspend fun setRouting(routing: ModelRouting) { routingRow.value=routing }
+    override suspend fun fetchModels(provider: Provider): List<ModelInfo> {
+        require(provider.protocol!=ProviderProtocol.OpenAIResponses) { "OpenAI Responses 即将支持" }
+        val stored=vault.list().firstOrNull { it.id==provider.id }
+        val key=if(provider.apiKey=="••••••••")stored?.let { vault.resolve(it.credentialRef) }.orEmpty() else provider.apiKey
+        val existing=stored?.metadata?.optJSONArray("headerRefs")?.rows()?.associate { it.getString("name") to vault.resolve(it.getString("ref")).orEmpty() }.orEmpty()
+        val headers=provider.headers.associate { it.first to if(it.second=="••••••••")existing[it.first].orEmpty() else it.second }
+        val result=try { dev.hoshino.bridge.ProviderProbe().models(StoredProvider(provider.id,if(provider.protocol==ProviderProtocol.Anthropic)"anthropic" else "openai-compatible",provider.baseUrl,emptyList()),key,headers) }
+            catch(cancelled: CancellationException) { throw cancelled } catch(_: Exception) { throw IllegalStateException("拉取模型失败，请检查协议、地址与凭据") }
+        return result.rows().map { row -> provider.models.firstOrNull { it.id==row.getString("id") } ?: ModelInfo(row.getString("id"),row.getString("name"),128000,4096,false,provider.protocol==ProviderProtocol.Anthropic,if(provider.protocol==ProviderProtocol.Anthropic)ReasoningEffort.Medium else ReasoningEffort.Off) }
+    }
+    override suspend fun testProvider(provider: Provider): Result<String> = try {
+        Result.success("连接成功，可获取 ${fetchModels(provider).size} 个模型")
+    } catch(cancelled: CancellationException) { throw cancelled } catch(_: Exception) { Result.failure(IllegalStateException("连接失败，请检查协议、地址和凭据")) }
+}

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 应用主题：只负责窗口层（冷启动背景、系统栏），界面全部由 Compose HoshinoTheme 绘制 -->
+    <style name="Theme.Hoshino" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/hh_bg</item>
+        <item name="android:colorAccent">@color/hh_accent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <!-- 启动页（core-splashscreen 兼容 API 23+；Android 12+ 动画图标见 values-v31） -->
+    <style name="Theme.Hoshino.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/hh_splash_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_hoshino_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.Hoshino</item>
+    </style>
+</resources>

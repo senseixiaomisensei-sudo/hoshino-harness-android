@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动页动画图标：竖杆静止，四角星旋转放大出现（约 700ms） -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="288dp"
+            android:height="288dp"
+            android:viewportWidth="288"
+            android:viewportHeight="288">
+            <group
+                android:scaleX="3"
+                android:scaleY="3"
+                android:translateX="72"
+                android:translateY="72">
+                <path android:fillColor="@color/hh_text" android:pathData="M12.5,7 A3.5,3.5 0 0 1 16,10.5 L16,37.5 A3.5,3.5 0 0 1 12.5,41 A3.5,3.5 0 0 1 9,37.5 L9,10.5 A3.5,3.5 0 0 1 12.5,7 Z" />
+                <path android:fillColor="@color/hh_text" android:pathData="M35.5,7 A3.5,3.5 0 0 1 39,10.5 L39,37.5 A3.5,3.5 0 0 1 35.5,41 A3.5,3.5 0 0 1 32,37.5 L32,10.5 A3.5,3.5 0 0 1 35.5,7 Z" />
+                <group
+                    android:name="star"
+                    android:pivotX="24"
+                    android:pivotY="24"
+                    android:scaleX="0"
+                    android:scaleY="0">
+                    <path android:fillColor="@color/hh_accent" android:pathData="M24,11.5 Q25.3,22.7 35,24 Q25.3,25.3 24,36.5 Q22.7,25.3 13,24 Q22.7,22.7 24,11.5 Z" />
+                </group>
+            </group>
+        </vector>
+    </aapt:attr>
+    <target android:name="star">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator
+                    android:duration="560"
+                    android:startOffset="120"
+                    android:interpolator="@android:interpolator/overshoot"
+                    android:propertyName="scaleX"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+                <objectAnimator
+                    android:duration="560"
+                    android:startOffset="120"
+                    android:interpolator="@android:interpolator/overshoot"
+                    android:propertyName="scaleY"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+                <objectAnimator
+                    android:duration="680"
+                    android:interpolator="@android:interpolator/fast_out_slow_in"
+                    android:propertyName="rotation"
+                    android:valueFrom="-90"
+                    android:valueTo="0"
+                    android:valueType="floatType" />
+            </set>
+        </aapt:attr>
+    </target>
+</animated-vector>

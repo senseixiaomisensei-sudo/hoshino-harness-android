@@ -13,9 +13,9 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-data class Provider(val id: String, val type: String, val baseURL: String, val models: List<String>) {
+data class Provider(val id: String, val type: String, val baseURL: String, val models: List<String>, val metadata: JSONObject = JSONObject()) {
     val credentialRef get() = "KEY_" + id.uppercase().replace('-', '_')
-    fun json() = JSONObject().put("id", id).put("type", type).put("baseURL", baseURL).put("apiKey", credentialRef).put("models", JSONArray(models))
+    fun json() = JSONObject().put("id", id).put("type", type).put("baseURL", baseURL).put("apiKey", credentialRef).put("models", JSONArray(models)).put("metadata",metadata)
 }
 
 /** Only credential references are in providers.json. Secret values are AES-GCM wrapped by a non-exportable Keystore key. */
@@ -24,7 +24,7 @@ class ProviderStore(private val context: Context) {
     private val encrypted = context.getSharedPreferences("keystore-wrapped-credentials", Context.MODE_PRIVATE)
     @Synchronized fun list(): List<Provider> = if (!config.exists()) emptyList() else {
         val array = JSONArray(config.readText())
-        (0 until array.length()).map { i -> val p = array.getJSONObject(i); Provider(p.getString("id"), p.getString("type"), p.getString("baseURL"), p.getJSONArray("models").let { a -> (0 until a.length()).map { a.getString(it) } }) }
+        (0 until array.length()).map { i -> val p = array.getJSONObject(i); Provider(p.getString("id"), p.getString("type"), p.getString("baseURL"), p.getJSONArray("models").let { a -> (0 until a.length()).map { a.getString(it) } },p.optJSONObject("metadata") ?: JSONObject()) }
     }
     @Synchronized fun save(provider: Provider, apiKey: String) {
         require(provider.id.matches(Regex("[a-z][a-z0-9-]*"))) { "ID 仅支持小写字母、数字和连字符" }
@@ -32,15 +32,37 @@ class ProviderStore(private val context: Context) {
         val uri = java.net.URI(provider.baseURL)
         require(uri.scheme in listOf("http", "https") && uri.host != null && uri.userInfo == null && uri.query == null && uri.fragment == null) { "请输入有效的 API 地址" }
         require(provider.models.isNotEmpty() && provider.models.all { it.isNotBlank() })
-        if (apiKey.isNotEmpty()) {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, masterKey()) }
-            val value = cipher.iv + cipher.doFinal(apiKey.toByteArray())
-            check(encrypted.edit().putString(provider.credentialRef, Base64.encodeToString(value, Base64.NO_WRAP)).commit())
-        }
-        val all = list().filterNot { it.id == provider.id } + provider
+        if (apiKey.isNotEmpty()) putSecret(provider.credentialRef,apiKey)
+        writeConfig(list().filterNot { it.id == provider.id } + provider)
+    }
+    private fun writeConfig(all: List<Provider>) {
         val temp = File(context.filesDir, "providers.json.tmp")
         temp.writeText(JSONArray(all.map { it.json() }).toString())
         check(temp.renameTo(config))
+    }
+    @Synchronized fun putSecret(ref: String, value: String) {
+        require(ref.matches(Regex("[A-Z0-9_]{1,180}")))
+        if (value.isNotEmpty()) {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, masterKey()) }
+            val wrapped = cipher.iv + cipher.doFinal(value.toByteArray())
+            check(encrypted.edit().putString(ref, Base64.encodeToString(wrapped, Base64.NO_WRAP)).commit())
+        }
+    }
+    @Synchronized fun delete(id: String) {
+        list().firstOrNull { it.id==id }?.let { p ->
+            val refs=p.metadata.optJSONArray("headerRefs") ?: JSONArray()
+            encrypted.edit().remove(p.credentialRef).apply { for(i in 0 until refs.length()) remove(refs.getJSONObject(i).getString("ref")) }.commit()
+        }
+        writeConfig(list().filterNot { it.id==id })
+    }
+    fun hasSecret(ref: String) = encrypted.contains(ref)
+    fun runtimeJson(provider: Provider): JSONObject {
+        val headers=JSONObject();val refs=provider.metadata.optJSONArray("headerRefs") ?: JSONArray()
+        for(i in 0 until refs.length()) { val row=refs.getJSONObject(i);headers.put(row.getString("name"),resolve(row.getString("ref")) ?: "") }
+        return provider.json().put("headers",headers)
+    }
+    fun redact(text: String): String {
+        return redactCredentials(text,encrypted.all.keys.mapNotNull { ref -> runCatching { resolve(ref) }.getOrNull() })
     }
     @Synchronized fun resolve(ref: String): String? {
         val value = encrypted.getString(ref, null) ?: return null
