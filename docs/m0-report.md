@@ -2,13 +2,16 @@
 
 更新日期：2026-10-24。
 
-**M0 结论：不通过。不能进入 M1。** 当前缺少 arm64 真机逐项签认与国产 ROM 的 ptrace / 后台实测记录。原八项自动验收已取得整条工作流全绿；新增的五次图标冷启动、分阶段内存、xz 对比和 ABI 瘦身在本地完成，新版 CI 仍在验证。未改 dsh 与 JSONL 实现；KernelLauncher 接口与 Cordis seam 保持可替换。
+**M0 结论：不通过。不能进入 M1。** 当前缺少 arm64 真机逐项签认与国产 ROM 的 ptrace / 后台实测记录。软件自动验收已取得整条工作流全绿，包含原八项验收、五次图标冷启动、分阶段内存、xz 对比、ABI 瘦身、指标导出校验和 artifact 上传。未改 dsh 与 JSONL 实现；KernelLauncher 接口与 Cordis seam 保持可替换。
 
-已全绿的基础运行：[40040662718](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40040662718)，提交 `e229ce2c6dfe317dad1792f95ff91d5a17b8caf3`。该链接证明基础版本整条工作流成功，不替代新增量化项目与真机验收。
+**本轮完整全绿运行：[40048468146](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40048468146)，提交 `3c747673711a7a1d2fbab1d93483d814e3139b93`。** 两个仪器测试各 1 test、0 failures、0 errors；运行于 2026-10-24 09:28:48（北京时间）完成。[APK 与测试报告 artifact](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40048468146/artifacts/12542504289)，摘要 SHA256 `001e112d0e1d7ccb0e3308b79898ba97b0d84e3dc67fa4c6d1588a5681088d79`；[保存的运行与指标摘要](verification/ci-40048468146/summary.json)。该记录仅代表 x86_64 模拟器自动验收，不替代真机验收。
+
+历史基础全绿运行：[40040662718](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40040662718)，提交 `e229ce2c6dfe317dad1792f95ff91d5a17b8caf3`，未覆盖本轮新增量化范围。
 
 ## 交付与用户反馈
 
 - 当前分包：`app/build/outputs/apk/arm64/debug/app-arm64-debug.apk` 与 `app/build/outputs/apk/x86/debug/app-x86-debug.apk`，Debug 版本 `0.0.1-m0` / versionCode 1；字节数、SHA256 及内部 ABI 由 [包检查](m0-apk-sizes.json) 给出。
+- 全绿 CI 的 arm64 包为 **54,768,040 字节（54.77 MB）**，SHA256 `e36fb0dfadd3c6fd9506472f219433ccc98f4001f17b9e2715c2d1711d5c4267`；x86_64 包 56,344,658 字节。[CI 包检查](verification/ci-40048468146/m0-apk-sizes.json)。本地构建的 55.05 MB / 56.65 MB 另行记录，不能混用哈希。
 - 初版历史交付文件：`app/build/outputs/apk/debug/Hoshino-M0-debug.apk`，为瘦身前的双 ABI 包。
 - 交付记录：2026-10-23 约 21:56（北京时间）在会话中提供本地 APK 路径。本地构建、APK v2 签名校验和模拟器安装均已通过。
 - 目标环境：minSdk 29、targetSdk 37，包含 arm64-v8a 和 x86_64；没有 WebView 主界面。
@@ -55,7 +58,7 @@ Anthropic 使用 pi-ai 的 `anthropic-messages` 原生适配及 Anthropic SDK，
 | 模块族 | 处理 |
 |---|---|
 | `@deepseek-ai/node-addon-system` 0.1.2 | dsh JSONL writer 的 POSIX flock；官方 linux-x64 / linux-arm64 包包含 glibc 和 musl Node-API v8，Alpine 中选 musl；不可拿 Android/Bionic 直接加载 |
-| sharp 0.35.5、libvips 1.3.4 | 附件服务依赖；rootfs 显式安装 linuxmusl 两种 CPU 预编译包；不在 Android 进程中链接 |
+| sharp 0.35.5、libvips 1.3.4 | 完整锁文件中的附件依赖；确认原版附件服务仅在栅格操作时延迟加载后，从 M0 部署中排除；恢复图片能力时须重新加入对应 musl 包 |
 | node-pty 1.2.0-beta.15 | 终端插件未组合，M0 不调用；安装脚本关闭，不把桌面预编译 PTY 宣称为 Android 可用 |
 | koffi 3.1.1（含 @koromix 平台包） | 桌面原生命令/探测的间接依赖；M0 不使用桌面打开功能 |
 | sherpa-onnx / sherpa-onnx-* 1.13.8 | 语音插件未组合，optional 不打包 |
@@ -83,6 +86,7 @@ Android 仪器测试 `M0AcceptanceTest` 覆盖冷启动、两种协议及 thinki
 | 项目 | 实证结果 | 证据 |
 |---|---|---|
 | 基础全流程 CI | success，含构建、仪器测试、指标取出及 artifact 上传 | [全绿运行](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40040662718)，提交 `e229ce2c6dfe317dad1792f95ff91d5a17b8caf3` |
+| 本地构建与单测 | assembleDebug / test 成功；启动器修正后的基准 APK 编译成功 | [完整构建日志](verification/local-assembleDebug-test.txt)、[基准 APK 编译日志](verification/local-launcher-build.txt) |
 | 瘦身版 Android 八项验收 | 本地 OK，1 test，461.37 秒 | [仪器日志](verification/local-m0-acceptance.txt)、[结果](m0-acceptance-metrics.json) |
 | arm64 单 ABI APK | 55,049,396 字节，55.05 MB，低于 150 MB | [APK 检查及 SHA256](m0-apk-sizes.json) |
 | x86_64 单 ABI APK | 56,646,766 字节；每包一份对应 rootfs / JNI ABI | [APK 内容检查](m0-apk-sizes.json) |
@@ -91,7 +95,7 @@ Android 仪器测试 `M0AcceptanceTest` 覆盖冷启动、两种协议及 thinki
 | 空闲 / 流式内存 | 每阶段五次，Java 应用、proot、Node 分别采集，共 30 份有效原始 meminfo | [汇总](verification/local-m0-summary.json)、[原始报告目录](m0-memory/) |
 | 后台 5 分钟续聊 | sessionPreserved / backgroundContinuation 均 true，实际等待 300 秒 | [结果](m0-acceptance-metrics.json)、[验收日志](verification/local-m0-acceptance.txt) |
 | gzip / xz 解包 | 同 tar 指纹，13,240.59 / 19,882.54 ms | [compression 数据](m0-acceptance-metrics.json) |
-| 新版量化 CI | 该运行失败：基准启动器找不到滚动容器；图标准备已修正，等待重跑，未记成功 | [失败运行](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40045901916)，提交 `86e232bccac04ecd4fa8fe641803047973b0ddfe` |
+| 本轮完整量化 CI | success；五次测量、30 份原始内存、300 秒续聊、同 tar 解包、ABI 与体积、导出校验及上传全部成功 | [全绿运行](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40048468146)，提交 `3c747673711a7a1d2fbab1d93483d814e3139b93`；[原始指标](verification/ci-40048468146/m0-metrics.json)、[摘要](verification/ci-40048468146/summary.json) |
 | arm64 真机 / 国产 ROM | 未接入已授权的 arm64 真机，无逐项签认 | [设备可用性记录](verification/arm64-device-availability.json)、[手动清单](m0-device-checklist.md) |
 | 人工试用 | 2026-10-24 用户反馈“我用的没什么问题”，未细分设备与条目 | 本会话用户反馈，已记录于交付章节 |
 | 真实厂商模型自动化 | 无 CI 凭据，两项按规则跳过 | 全绿运行的 Optional real model tests 步骤 |
@@ -122,6 +126,28 @@ Android 仪器测试 `M0AcceptanceTest` 覆盖冷启动、两种协议及 thinki
 
 部署筛选保留 245 个运行包。删除系统文档、man、locale、头文件与未组合插件依赖；保留运行时所需的 Cordis JSON。实读 `attachment-local` 与 `dsh-lazy-require` 后确认 Sharp 只在栅格操作时加载；M0 不开放图像入口，故删除 Sharp / vips，并用裁剪后的完整 M0 验收验证文本与工具链路。未编辑 dsh 实现、未替换 JSONL 后端。两个 ABI 的根目录最大 10 个文件分别见 [arm64](m0-size-arm64-v8a.json)、[x86_64](m0-size-x86_64.json)；APK 最大文件及哈希见 [包检查](m0-apk-sizes.json)。
 
+## 全绿 CI 的量化实测
+
+环境为 GitHub Actions Ubuntu 24.04 / KVM，AOSP API 36 x86_64、4096 MB；与本地 WHPX 数据分别保存。模型是原生 Anthropic Messages mock；输入与逐次审批仍计入首个可见文本增量。数据全部由仪器测试写入，[原始 JSON](verification/ci-40048468146/m0-metrics.json) 与 [30 份 meminfo](verification/ci-40048468146/m0-memory/) 已保存。
+
+| 次数 | 图标至就绪 ms | 图标至首文本增量 ms |
+|---|---:|---:|
+| 1 | 6888 | 8668 |
+| 2 | 7390 | 9824 |
+| 3 | 5343 | 7168 |
+| 4 | 6826 | 8986 |
+| 5 | 5858 | 7516 |
+| 中位数 | **6826** | **8668** |
+
+内存同样为每阶段五次中位数，单位 KiB；总计逐次求和后取中位数。
+
+| 阶段 | Android 应用 PSS | 其中 Java heap | 其中 Native heap | proot PSS | Node native 进程 PSS | 三进程总 PSS 中位数 |
+|---|---:|---:|---:|---:|---:|---:|
+| 空闲 | 81239 | 14116 | 13532 | 1260 | 118584 | 201366 |
+| 流式 | 87894 | 21980 | 13432 | 1260 | 145132 | 235952 |
+
+后台等待 300 秒后 `sessionPreserved=true`、`backgroundContinuation=true`，实际发送新消息完成续聊。gzip / xz 分别为 49,093,526 / 27,076,584 字节，解包 7,802.26 / 12,051.99 ms，`sameTar=true`；xz 缩小约 44.8%，该次解包慢约 54.5%。两种编码在 CI 中刷新 host 后重新生成，因此不与本地归档混用大小或指纹。以上均为模拟器实测，不是 arm64 真机性能。
+
 ## 问题与绕过
 
 - Windows 中文目录被 AGP 的路径预检拒绝：只为本项目加 `android.overridePathCheck=true`，实际编译继续验证，未搬动用户目录。
@@ -130,13 +156,20 @@ Android 仪器测试 `M0AcceptanceTest` 覆盖冷启动、两种协议及 thinki
 - 自定义模型的 thinking 必须通过 dsh 的 `reasoningEfforts` 声明，不能编造 `reasoning: true` 配置。
 - SDK 37 的包名实际为 `platforms;android-37.0`，最初用旧名称 `android-37` 查询才显示不存在；已改为 compile 37.0 / target 37，AGP 9.1.1、Gradle 9.4.1、Kotlin 2.2.20，本地编译通过。
 - AAPT 会解开后缀 `.gz` 的资产并去掉后缀：最初 APK 只含 `assets/kernel/x86_64.tar`，导致 `open(...tar.gz)` 抛 FileNotFoundException。改为 `.tgz` 并设置 noCompress，保留 gzip 供启动器读取；模拟器已实际解包成功。
-- 本机多个构建守护进程、Docker 与模拟器并行曾导致内存不足。限制构建 workers 为 2、Kotlin heap 为 768 MiB，关闭本任务启动的空闲守护进程和 Docker；未改用户的全局构建配置。
-- Android 应用内探针发现：musl 的 write/fsync 正常，rename 返回 ENOSYS；run-as 不受同一 zygote seccomp 策略约束，不能替代原生验收。这影响原版 dsh 的 storage-json 原子保存。独立 MIT guest 兼容库将 legacy 文件操作映射到相应 *at 调用，保留原子性与错误处理；应用内探针已通过（4.073 秒），完整验收仍需继续。参见 [Android 16 bionic syscall 清单](https://github.com/aosp-mirror/platform_bionic/blob/android-16.0.0_r1/libc/SYSCALLS.TXT) 和 [seccomp 构建输入](https://android.googlesource.com/platform/bionic/+/main/libc/Android.bp)。
+- 本机构建与模拟器并行曾导致内存不足。限制本项目构建 workers 为 2、Kotlin heap 为 768 MiB，停止本任务的空闲构建守护进程；CI 在启动模拟器前完成编译，未改用户的全局构建配置。
+- Android 应用内探针发现：musl 的 write/fsync 正常，rename 返回 ENOSYS；run-as 不受同一 zygote seccomp 策略约束，不能替代原生验收。这影响原版 dsh 的 storage-json 原子保存。独立 MIT guest 兼容库将 legacy 文件操作映射到相应 *at 调用，保留原子性与错误处理；应用内探针已通过（4.073 秒），之后的 x86_64 完整验收亦成功，见验证记录。参见 [Android 16 bionic syscall 清单](https://github.com/aosp-mirror/platform_bionic/blob/android-16.0.0_r1/libc/SYSCALLS.TXT) 和 [seccomp 构建输入](https://android.googlesource.com/platform/bionic/+/main/libc/Android.bp)。
 - Termux proot 5.1.107.99 预编译包在应用域中，`fs.link` 成功后 `fs.unlink` 触发 tracer SIGSEGV；移除 link2symlink 会让原版 JSONL 原子发布的 link 返回 EACCES。移除 fake-root 也无效。改用固定上游归档、固定 NDK 从源码构建独立 proot，最小创建/删除测试 1.057 秒通过，随后已跑到两种协议的模型与工具调用。归档校验和、编译参数及头文件兼容处理全部公开在 `rootfs/build-proot.py`，没有修改 dsh 或替换其持久化实现。
 - mock 会在不同轮次复用 tool call ID，Compose LazyColumn 因此出现重复键错误。界面键改用原版事件 seq，工具结果按最近的 call ID 配对，保留原始数据；两协议同一会话的重复 ID 路径作为集成回归继续验证。
 - 原版检查点策略退出时仍会落盘；测试立即删目录可触发 ENOTEMPTY。桌面测试先等待内核退出再清理，CI 不再把清理竞态混入 Agent 验收。
 - AGP 仪器测试结束后的默认清理使指标路径不可用。根据本地 AGP 9.1.1 的真实 BooleanOption，CI 使用 `android.injected.androidTest.leaveApksInstalledAfterRun=true` 保留测试安装；内存报告在仪器测试结束前采集，随后与 JSON 指标一起取出，避免读取已退出进程的内存。
+- 冷启动测试原先假定 Launcher 存在可滚动容器，CI 中不成立；改用 shell 解析真实 HOME 组件，等待其当前 UI 根节点，在导航栏上方滑动并有限重试图标准备。所有准备发生在计时之前，仍从实际点击图标开始计时。修正后的本地测试五次均成功，见 [启动器修正回归](verification/local-m0-launcher-regression.txt)。
+- dsh 会在用户提示后附加上下文，mock 不能只匹配最后一个 user 消息。fixture 从完整消息集合找本轮唯一标记，并将标记放入第一段流式文本；测量必须看到本轮标记，避免历史消息造成假首 token。
+- Alpine 移动索引已不再列出锁定的 x86_64 Node 24.18.1。下载仍在官方仓库中的原 APK 并核对锁定 SHA256，再由 apk 校验官方签名；没有升级 Node 或放宽版本。独立 proot 已从源码构建，不再下载返回 404 且未使用的旧预编译 proot 包。
 
 ## 对 M1 的建议
 
-只有 APK 内核运行与全部验收被实际证明后才进入 M1。优先压缩 rootfs、评估 proot 在厂商系统上的 ptrace/后台限制，再扩展 shell 和文件编辑；保持 `KernelLauncher` 与 Cordis seam 可替换。不要以桌面测试替代 arm64 真机测试。
+完成 arm64 真机清单，优先记录厂商默认设置下的 ptrace 与五分钟后台行为，再决定是否扩展 shell 和文件编辑。当前已完成 ABI 分包与 rootfs 裁剪，不把重复瘦身作为进入 M1 的前置任务。保持 `KernelLauncher` 与 Cordis seam 可替换。
+
+## 最终判定
+
+**M0 不通过，不能进入 M1。** arm64 APK 可构建且体积达标，但尚无 arm64 真机逐项验收及国产 ROM 的 ptrace / 后台记录。软件自动化结果按上述实际运行填写；x86_64 模拟器和一般使用反馈不能补齐真机证据。

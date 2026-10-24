@@ -1,0 +1,349 @@
+{
+  "serviceStartToReadyMs": 19017,
+  "appPssKb": 95926,
+  "sessionPreserved": true,
+  "backgroundContinuation": true,
+  "backgroundSeconds": 300,
+  "standardsPassed": 8,
+  "compression": {
+    "gzipBytes": 49093526,
+    "gzipUnpackMs": 7802.264466,
+    "xzBytes": 27076584,
+    "xzUnpackMs": 12051.989454,
+    "tarSha256": "eced5065a00e113fbc057beedb6b700d6340c8f577de2fa20b0a3b37a36d5da0",
+    "sameTar": true
+  },
+  "processPssKb": {
+    "2585": 96278,
+    "2619": 1277,
+    "2624": 125220
+  },
+  "startup": {
+    "mode": "process-cold, runtime already installed",
+    "samples": [
+      {
+        "iteration": 1,
+        "iconToReadyMs": 6888,
+        "iconToFirstTokenMs": 8668,
+        "streaming": [
+          {
+            "pid": 3033,
+            "kind": "java-app",
+            "pssKb": 87894,
+            "javaHeapPssKb": 21980,
+            "nativeHeapPssKb": 13236,
+            "dump": "m0-memory\/1-streaming-java-app-3033.txt",
+            "capturedAtElapsedMs": 484161
+          },
+          {
+            "pid": 3065,
+            "kind": "proot",
+            "pssKb": 1273,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 336,
+            "dump": "m0-memory\/1-streaming-proot-3065.txt",
+            "capturedAtElapsedMs": 484177
+          },
+          {
+            "pid": 3070,
+            "kind": "node-native",
+            "pssKb": 150780,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/1-streaming-node-native-3070.txt",
+            "capturedAtElapsedMs": 484189
+          }
+        ],
+        "idle": [
+          {
+            "pid": 3033,
+            "kind": "java-app",
+            "pssKb": 78882,
+            "javaHeapPssKb": 12112,
+            "nativeHeapPssKb": 13428,
+            "dump": "m0-memory\/1-idle-java-app-3033.txt",
+            "capturedAtElapsedMs": 515696
+          },
+          {
+            "pid": 3065,
+            "kind": "proot",
+            "pssKb": 1273,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 336,
+            "dump": "m0-memory\/1-idle-proot-3065.txt",
+            "capturedAtElapsedMs": 515713
+          },
+          {
+            "pid": 3070,
+            "kind": "node-native",
+            "pssKb": 118336,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/1-idle-node-native-3070.txt",
+            "capturedAtElapsedMs": 515726
+          }
+        ]
+      },
+      {
+        "iteration": 2,
+        "iconToReadyMs": 7390,
+        "iconToFirstTokenMs": 9824,
+        "streaming": [
+          {
+            "pid": 3189,
+            "kind": "java-app",
+            "pssKb": 89560,
+            "javaHeapPssKb": 22460,
+            "nativeHeapPssKb": 13816,
+            "dump": "m0-memory\/2-streaming-java-app-3189.txt",
+            "capturedAtElapsedMs": 530484
+          },
+          {
+            "pid": 3216,
+            "kind": "proot",
+            "pssKb": 1260,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 324,
+            "dump": "m0-memory\/2-streaming-proot-3216.txt",
+            "capturedAtElapsedMs": 530501
+          },
+          {
+            "pid": 3223,
+            "kind": "node-native",
+            "pssKb": 145132,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/2-streaming-node-native-3223.txt",
+            "capturedAtElapsedMs": 530513
+          }
+        ],
+        "idle": [
+          {
+            "pid": 3189,
+            "kind": "java-app",
+            "pssKb": 81962,
+            "javaHeapPssKb": 14116,
+            "nativeHeapPssKb": 14232,
+            "dump": "m0-memory\/2-idle-java-app-3189.txt",
+            "capturedAtElapsedMs": 561999
+          },
+          {
+            "pid": 3216,
+            "kind": "proot",
+            "pssKb": 1260,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 324,
+            "dump": "m0-memory\/2-idle-proot-3216.txt",
+            "capturedAtElapsedMs": 562012
+          },
+          {
+            "pid": 3223,
+            "kind": "node-native",
+            "pssKb": 118144,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/2-idle-node-native-3223.txt",
+            "capturedAtElapsedMs": 562022
+          }
+        ]
+      },
+      {
+        "iteration": 3,
+        "iconToReadyMs": 5343,
+        "iconToFirstTokenMs": 7168,
+        "streaming": [
+          {
+            "pid": 3302,
+            "kind": "java-app",
+            "pssKb": 85784,
+            "javaHeapPssKb": 19632,
+            "nativeHeapPssKb": 13432,
+            "dump": "m0-memory\/3-streaming-java-app-3302.txt",
+            "capturedAtElapsedMs": 574190
+          },
+          {
+            "pid": 3327,
+            "kind": "proot",
+            "pssKb": 1257,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 320,
+            "dump": "m0-memory\/3-streaming-proot-3327.txt",
+            "capturedAtElapsedMs": 574206
+          },
+          {
+            "pid": 3331,
+            "kind": "node-native",
+            "pssKb": 144804,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/3-streaming-node-native-3331.txt",
+            "capturedAtElapsedMs": 574219
+          }
+        ],
+        "idle": [
+          {
+            "pid": 3302,
+            "kind": "java-app",
+            "pssKb": 81865,
+            "javaHeapPssKb": 14892,
+            "nativeHeapPssKb": 13532,
+            "dump": "m0-memory\/3-idle-java-app-3302.txt",
+            "capturedAtElapsedMs": 605732
+          },
+          {
+            "pid": 3327,
+            "kind": "proot",
+            "pssKb": 1257,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 320,
+            "dump": "m0-memory\/3-idle-proot-3327.txt",
+            "capturedAtElapsedMs": 605745
+          },
+          {
+            "pid": 3331,
+            "kind": "node-native",
+            "pssKb": 118584,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/3-idle-node-native-3331.txt",
+            "capturedAtElapsedMs": 605755
+          }
+        ]
+      },
+      {
+        "iteration": 4,
+        "iconToReadyMs": 6826,
+        "iconToFirstTokenMs": 8986,
+        "streaming": [
+          {
+            "pid": 3416,
+            "kind": "java-app",
+            "pssKb": 88718,
+            "javaHeapPssKb": 22352,
+            "nativeHeapPssKb": 13432,
+            "dump": "m0-memory\/4-streaming-java-app-3416.txt",
+            "capturedAtElapsedMs": 619457
+          },
+          {
+            "pid": 3444,
+            "kind": "proot",
+            "pssKb": 1252,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 316,
+            "dump": "m0-memory\/4-streaming-proot-3444.txt",
+            "capturedAtElapsedMs": 619470
+          },
+          {
+            "pid": 3449,
+            "kind": "node-native",
+            "pssKb": 151028,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/4-streaming-node-native-3449.txt",
+            "capturedAtElapsedMs": 619482
+          }
+        ],
+        "idle": [
+          {
+            "pid": 3416,
+            "kind": "java-app",
+            "pssKb": 81239,
+            "javaHeapPssKb": 14304,
+            "nativeHeapPssKb": 13580,
+            "dump": "m0-memory\/4-idle-java-app-3416.txt",
+            "capturedAtElapsedMs": 650980
+          },
+          {
+            "pid": 3444,
+            "kind": "proot",
+            "pssKb": 1252,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 316,
+            "dump": "m0-memory\/4-idle-proot-3444.txt",
+            "capturedAtElapsedMs": 650993
+          },
+          {
+            "pid": 3449,
+            "kind": "node-native",
+            "pssKb": 118964,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/4-idle-node-native-3449.txt",
+            "capturedAtElapsedMs": 651005
+          }
+        ]
+      },
+      {
+        "iteration": 5,
+        "iconToReadyMs": 5858,
+        "iconToFirstTokenMs": 7516,
+        "streaming": [
+          {
+            "pid": 3527,
+            "kind": "java-app",
+            "pssKb": 86160,
+            "javaHeapPssKb": 20228,
+            "nativeHeapPssKb": 13248,
+            "dump": "m0-memory\/5-streaming-java-app-3527.txt",
+            "capturedAtElapsedMs": 663011
+          },
+          {
+            "pid": 3552,
+            "kind": "proot",
+            "pssKb": 1264,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 332,
+            "dump": "m0-memory\/5-streaming-proot-3552.txt",
+            "capturedAtElapsedMs": 663024
+          },
+          {
+            "pid": 3556,
+            "kind": "node-native",
+            "pssKb": 144680,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/5-streaming-node-native-3556.txt",
+            "capturedAtElapsedMs": 663035
+          }
+        ],
+        "idle": [
+          {
+            "pid": 3527,
+            "kind": "java-app",
+            "pssKb": 79473,
+            "javaHeapPssKb": 12644,
+            "nativeHeapPssKb": 13396,
+            "dump": "m0-memory\/5-idle-java-app-3527.txt",
+            "capturedAtElapsedMs": 694525
+          },
+          {
+            "pid": 3552,
+            "kind": "proot",
+            "pssKb": 1264,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 332,
+            "dump": "m0-memory\/5-idle-proot-3552.txt",
+            "capturedAtElapsedMs": 694538
+          },
+          {
+            "pid": 3556,
+            "kind": "node-native",
+            "pssKb": 118804,
+            "javaHeapPssKb": 0,
+            "nativeHeapPssKb": 0,
+            "dump": "m0-memory\/5-idle-node-native-3556.txt",
+            "capturedAtElapsedMs": 694549
+          }
+        ]
+      }
+    ],
+    "iterations": 5,
+    "iconToReadyMedianMs": 6826,
+    "iconToFirstTokenMedianMs": 8668,
+    "includesApprovalAndInput": true
+  },
+  "measurementAbi": "x86_64",
+  "measurementApi": 36,
+  "measurementIsEmulator": true,
+  "modelFixture": "claude \/ mock-model; loopback mock"
+}

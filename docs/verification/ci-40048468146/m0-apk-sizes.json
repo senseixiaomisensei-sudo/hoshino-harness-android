@@ -1,0 +1,100 @@
+[
+  {
+    "abi": "arm64-v8a",
+    "apk": "app/build/outputs/apk/arm64/debug/app-arm64-debug.apk",
+    "bytes": 54768040,
+    "sha256": "e36fb0dfadd3c6fd9506472f219433ccc98f4001f17b9e2715c2d1711d5c4267",
+    "within150MB": true,
+    "largestFiles": [
+      {
+        "path": "assets/kernel/arm64-v8a.txz",
+        "bytes": 25516976
+      },
+      {
+        "path": "classes.dex",
+        "bytes": 17890840
+      },
+      {
+        "path": "classes6.dex",
+        "bytes": 9811644
+      },
+      {
+        "path": "lib/arm64-v8a/libproot.so",
+        "bytes": 1325680
+      },
+      {
+        "path": "resources.arsc",
+        "bytes": 422960
+      },
+      {
+        "path": "classes4.dex",
+        "bytes": 205828
+      },
+      {
+        "path": "classes2.dex",
+        "bytes": 62500
+      },
+      {
+        "path": "okhttp3/internal/publicsuffix/publicsuffixes.gz",
+        "bytes": 41394
+      },
+      {
+        "path": "lib/arm64-v8a/libtalloc.so",
+        "bytes": 33592
+      },
+      {
+        "path": "classes3.dex",
+        "bytes": 33356
+      }
+    ]
+  },
+  {
+    "abi": "x86_64",
+    "apk": "app/build/outputs/apk/x86/debug/app-x86-debug.apk",
+    "bytes": 56344658,
+    "sha256": "dc9db226695cf6f539328e1e2c9c216e01a4b8bf091783804b84b8ba8d9bf5cf",
+    "within150MB": true,
+    "largestFiles": [
+      {
+        "path": "assets/kernel/x86_64.txz",
+        "bytes": 27076584
+      },
+      {
+        "path": "classes.dex",
+        "bytes": 17890840
+      },
+      {
+        "path": "classes6.dex",
+        "bytes": 9811644
+      },
+      {
+        "path": "lib/x86_64/libproot.so",
+        "bytes": 1342168
+      },
+      {
+        "path": "resources.arsc",
+        "bytes": 422960
+      },
+      {
+        "path": "classes4.dex",
+        "bytes": 205788
+      },
+      {
+        "path": "classes2.dex",
+        "bytes": 62500
+      },
+      {
+        "path": "okhttp3/internal/publicsuffix/publicsuffixes.gz",
+        "bytes": 41394
+      },
+      {
+        "path": "classes3.dex",
+        "bytes": 33356
+      },
+      {
+        "path": "lib/x86_64/libtalloc.so",
+        "bytes": 32536
+      }
+    ]
+  }
+]

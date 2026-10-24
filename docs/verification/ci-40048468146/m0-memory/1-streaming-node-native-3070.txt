@@ -1,0 +1,26 @@
+Applications Memory Usage (in Kilobytes):
+Uptime: 484183 Realtime: 484183
+                   Pss  Private  Private     Swap      Rss     Heap     Heap     Heap
+                 Total    Dirty    Clean    Dirty    Total     Size    Alloc     Free
+                ------   ------   ------   ------   ------   ------   ------   ------
+  Native Heap        0        0        0        0        0        0        0        0
+  Dalvik Heap        0        0        0        0        0        0        0        0
+        Stack       84       84        0        0       84                           
+     .so mmap       24        8       12        0       28                           
+   Other mmap    57688     1708    55976        0    57696                           
+      Unknown    92984    92984        0        0    92984                           
+        TOTAL   150780    94784    55988        0   150792        0        0        0
+ 
+ App Summary
+                       Pss(KB)                        Rss(KB)
+                        ------                         ------
+           Java Heap:        0                              0
+         Native Heap:        0                              0
+                Code:       20                             28
+               Stack:       84                             84
+            Graphics:        0                              0
+       Private Other:   150668
+              System:        8
+             Unknown:                                  150680
+ 
+           TOTAL PSS:   150780            TOTAL RSS:   150792      TOTAL SWAP (KB):        0

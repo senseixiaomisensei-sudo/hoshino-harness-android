@@ -1,0 +1,211 @@
+{
+  "html_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40048468146",
+  "head_sha": "3c747673711a7a1d2fbab1d93483d814e3139b93",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "created_at": "2026-10-24T01:09:08Z",
+  "updated_at": "2026-10-24T01:28:48Z",
+  "artifactId": 12542504289,
+  "artifactDigest": "sha256:001e112d0e1d7ccb0e3308b79898ba97b0d84e3dc67fa4c6d1588a5681088d79",
+  "junit": [
+    {
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "367.703"
+    },
+    {
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "223.723"
+    }
+  ],
+  "apks": [
+    {
+      "abi": "arm64-v8a",
+      "apk": "app/build/outputs/apk/arm64/debug/app-arm64-debug.apk",
+      "bytes": 54768040,
+      "sha256": "e36fb0dfadd3c6fd9506472f219433ccc98f4001f17b9e2715c2d1711d5c4267",
+      "within150MB": true,
+      "largestFiles": [
+        {
+          "path": "assets/kernel/arm64-v8a.txz",
+          "bytes": 25516976
+        },
+        {
+          "path": "classes.dex",
+          "bytes": 17890840
+        },
+        {
+          "path": "classes6.dex",
+          "bytes": 9811644
+        },
+        {
+          "path": "lib/arm64-v8a/libproot.so",
+          "bytes": 1325680
+        },
+        {
+          "path": "resources.arsc",
+          "bytes": 422960
+        },
+        {
+          "path": "classes4.dex",
+          "bytes": 205828
+        },
+        {
+          "path": "classes2.dex",
+          "bytes": 62500
+        },
+        {
+          "path": "okhttp3/internal/publicsuffix/publicsuffixes.gz",
+          "bytes": 41394
+        },
+        {
+          "path": "lib/arm64-v8a/libtalloc.so",
+          "bytes": 33592
+        },
+        {
+          "path": "classes3.dex",
+          "bytes": 33356
+        }
+      ]
+    },
+    {
+      "abi": "x86_64",
+      "apk": "app/build/outputs/apk/x86/debug/app-x86-debug.apk",
+      "bytes": 56344658,
+      "sha256": "dc9db226695cf6f539328e1e2c9c216e01a4b8bf091783804b84b8ba8d9bf5cf",
+      "within150MB": true,
+      "largestFiles": [
+        {
+          "path": "assets/kernel/x86_64.txz",
+          "bytes": 27076584
+        },
+        {
+          "path": "classes.dex",
+          "bytes": 17890840
+        },
+        {
+          "path": "classes6.dex",
+          "bytes": 9811644
+        },
+        {
+          "path": "lib/x86_64/libproot.so",
+          "bytes": 1342168
+        },
+        {
+          "path": "resources.arsc",
+          "bytes": 422960
+        },
+        {
+          "path": "classes4.dex",
+          "bytes": 205788
+        },
+        {
+          "path": "classes2.dex",
+          "bytes": 62500
+        },
+        {
+          "path": "okhttp3/internal/publicsuffix/publicsuffixes.gz",
+          "bytes": 41394
+        },
+        {
+          "path": "classes3.dex",
+          "bytes": 33356
+        },
+        {
+          "path": "lib/x86_64/libtalloc.so",
+          "bytes": 32536
+        }
+      ]
+    }
+  ],
+  "environment": {
+    "abi": "x86_64",
+    "api": 36,
+    "isEmulator": true,
+    "memoryMb": 4096,
+    "host": "GitHub Actions Ubuntu 24.04 KVM",
+    "modelFixture": "claude / mock-model; loopback mock"
+  },
+  "startup": {
+    "samples": [
+      {
+        "iconToReadyMs": 6888,
+        "iconToFirstTokenMs": 8668
+      },
+      {
+        "iconToReadyMs": 7390,
+        "iconToFirstTokenMs": 9824
+      },
+      {
+        "iconToReadyMs": 5343,
+        "iconToFirstTokenMs": 7168
+      },
+      {
+        "iconToReadyMs": 6826,
+        "iconToFirstTokenMs": 8986
+      },
+      {
+        "iconToReadyMs": 5858,
+        "iconToFirstTokenMs": 7516
+      }
+    ],
+    "iconToReadyMedianMs": 6826,
+    "iconToFirstTokenMedianMs": 8668
+  },
+  "memoryMedianKiB": {
+    "idle": {
+      "java-app": {
+        "pssKb": 81239,
+        "javaHeapPssKb": 14116,
+        "nativeHeapPssKb": 13532
+      },
+      "proot": {
+        "pssKb": 1260,
+        "javaHeapPssKb": 0,
+        "nativeHeapPssKb": 324
+      },
+      "node-native": {
+        "pssKb": 118584,
+        "javaHeapPssKb": 0,
+        "nativeHeapPssKb": 0
+      },
+      "totalPssKb": 201366
+    },
+    "streaming": {
+      "java-app": {
+        "pssKb": 87894,
+        "javaHeapPssKb": 21980,
+        "nativeHeapPssKb": 13432
+      },
+      "proot": {
+        "pssKb": 1260,
+        "javaHeapPssKb": 0,
+        "nativeHeapPssKb": 324
+      },
+      "node-native": {
+        "pssKb": 145132,
+        "javaHeapPssKb": 0,
+        "nativeHeapPssKb": 0
+      },
+      "totalPssKb": 235952
+    }
+  },
+  "rawMemoryDumps": 30,
+  "backgroundSeconds": 300,
+  "sessionPreserved": true,
+  "backgroundContinuation": true,
+  "compression": {
+    "gzipBytes": 49093526,
+    "gzipUnpackMs": 7802.264466,
+    "xzBytes": 27076584,
+    "xzUnpackMs": 12051.989454,
+    "tarSha256": "eced5065a00e113fbc057beedb6b700d6340c8f577de2fa20b0a3b37a36d5da0",
+    "sameTar": true
+  }
+}

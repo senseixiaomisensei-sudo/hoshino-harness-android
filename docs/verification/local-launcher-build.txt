@@ -1,0 +1,75 @@
+Starting a Gradle Daemon, 10 stopped Daemons could not be reused, use --status for details
+
+> Configure project :app
+WARNING: The option setting 'android.overridePathCheck=true' is experimental.
+The current default is 'false'.
+WARNING: The option setting 'android.builtInKotlin=false' is deprecated.
+The current default is 'true'.
+It will be removed in version 10.0 of the Android Gradle plugin.
+WARNING: The option setting 'android.newDsl=false' is deprecated.
+The current default is 'true'.
+It will be removed in version 10.0 of the Android Gradle plugin.
+
+> Task :benchmark-driver:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :benchmark-driver:preBuild UP-TO-DATE
+> Task :benchmark-driver:preDebugBuild UP-TO-DATE
+> Task :benchmark-driver:generateDebugResources UP-TO-DATE
+> Task :benchmark-driver:packageDebugResources UP-TO-DATE
+> Task :benchmark-driver:processDebugNavigationResources UP-TO-DATE
+> Task :benchmark-driver:parseDebugLocalResources UP-TO-DATE
+> Task :benchmark-driver:generateDebugRFile UP-TO-DATE
+> Task :benchmark-driver:compileDebugKotlin NO-SOURCE
+> Task :benchmark-driver:javaPreCompileDebug UP-TO-DATE
+> Task :benchmark-driver:compileDebugJavaWithJavac NO-SOURCE
+> Task :benchmark-driver:checkDebugAarMetadata UP-TO-DATE
+> Task :benchmark-driver:mapDebugSourceSetPaths UP-TO-DATE
+> Task :benchmark-driver:compileDebugNavigationResources UP-TO-DATE
+> Task :benchmark-driver:mergeDebugResources UP-TO-DATE
+> Task :benchmark-driver:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :benchmark-driver:extractDeepLinksDebug UP-TO-DATE
+> Task :benchmark-driver:processDebugMainManifest UP-TO-DATE
+> Task :benchmark-driver:processDebugManifest UP-TO-DATE
+> Task :benchmark-driver:processDebugManifestForPackage UP-TO-DATE
+> Task :benchmark-driver:processDebugResources UP-TO-DATE
+> Task :benchmark-driver:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :benchmark-driver:preDebugAndroidTestBuild SKIPPED
+> Task :benchmark-driver:generateDebugAndroidTestResources UP-TO-DATE
+> Task :benchmark-driver:packageDebugAndroidTestResources UP-TO-DATE
+> Task :benchmark-driver:processDebugAndroidTestNavigationResources UP-TO-DATE
+> Task :benchmark-driver:parseDebugAndroidTestLocalResources UP-TO-DATE
+> Task :benchmark-driver:generateDebugAndroidTestRFile UP-TO-DATE
+> Task :benchmark-driver:javaPreCompileDebugAndroidTest UP-TO-DATE
+> Task :benchmark-driver:generateDebugAndroidTestAssets UP-TO-DATE
+> Task :benchmark-driver:mergeDebugAndroidTestAssets UP-TO-DATE
+> Task :benchmark-driver:compressDebugAndroidTestAssets UP-TO-DATE
+> Task :benchmark-driver:desugarDebugAndroidTestFileDependencies UP-TO-DATE
+> Task :benchmark-driver:checkDebugAndroidTestAarMetadata UP-TO-DATE
+> Task :benchmark-driver:mapDebugAndroidTestSourceSetPaths UP-TO-DATE
+> Task :benchmark-driver:compileDebugAndroidTestNavigationResources UP-TO-DATE
+> Task :benchmark-driver:mergeDebugAndroidTestResources UP-TO-DATE
+> Task :benchmark-driver:processDebugAndroidTestManifest UP-TO-DATE
+> Task :benchmark-driver:processDebugAndroidTestResources UP-TO-DATE
+> Task :benchmark-driver:checkDebugAndroidTestDuplicateClasses UP-TO-DATE
+> Task :benchmark-driver:mergeExtDexDebugAndroidTest UP-TO-DATE
+> Task :benchmark-driver:mergeLibDexDebugAndroidTest UP-TO-DATE
+> Task :benchmark-driver:mergeDebugAndroidTestJniLibFolders UP-TO-DATE
+> Task :benchmark-driver:mergeDebugJniLibFolders UP-TO-DATE
+> Task :benchmark-driver:mergeDebugNativeLibs NO-SOURCE
+> Task :benchmark-driver:mergeDebugAndroidTestNativeLibs NO-SOURCE
+> Task :benchmark-driver:stripDebugAndroidTestDebugSymbols NO-SOURCE
+> Task :benchmark-driver:validateSigningDebugAndroidTest UP-TO-DATE
+> Task :benchmark-driver:writeDebugAndroidTestSigningConfigVersions UP-TO-DATE
+> Task :benchmark-driver:compileDebugAndroidTestKotlin
+> Task :benchmark-driver:compileDebugAndroidTestJavaWithJavac NO-SOURCE
+> Task :benchmark-driver:dexBuilderDebugAndroidTest
+> Task :benchmark-driver:processDebugAndroidTestJavaRes UP-TO-DATE
+> Task :benchmark-driver:mergeDebugAndroidTestJavaResource UP-TO-DATE
+> Task :benchmark-driver:mergeDebugAndroidTestGlobalSynthetics
+> Task :benchmark-driver:mergeProjectDexDebugAndroidTest
+> Task :benchmark-driver:packageDebugAndroidTest
+> Task :benchmark-driver:createDebugAndroidTestApkListingFileRedirect UP-TO-DATE
+> Task :benchmark-driver:assembleDebugAndroidTest
+
+BUILD SUCCESSFUL in 23s
+47 actionable tasks: 5 executed, 42 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.4.1/userguide/configuration_cache_enabling.html
