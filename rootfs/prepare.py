@@ -82,6 +82,11 @@ def rootfs(abi):
     if not header_apk.exists() or hashlib.sha256(header_apk.read_bytes()).hexdigest()!=headers['sha256']:
         payload=download(headers['url'],header_apk)
         assert hashlib.sha256(payload).hexdigest()==headers['sha256'],'Locked Node header APK checksum mismatch'
+    libraries=locked['developmentLibraries']
+    library_apk=ROOT/'rootfs/node-apk'/f'node-libs-{node_arch}.apk'
+    if not library_apk.exists() or hashlib.sha256(library_apk.read_bytes()).hexdigest()!=libraries['sha256']:
+        payload=download(libraries['url'],library_apk)
+        assert hashlib.sha256(payload).hexdigest()==libraries['sha256'],'Locked Node development library checksum mismatch'
     tag = 'hoshino-m0-'+platform
     subprocess.run(['docker','build','--platform','linux/'+platform,'--build-arg','NODE_ARCH='+node_arch,'-f','rootfs/Dockerfile','-t',tag,'.'],cwd=ROOT,check=True)
     cid = subprocess.check_output(['docker','create','--platform','linux/'+platform,tag]).decode().strip()

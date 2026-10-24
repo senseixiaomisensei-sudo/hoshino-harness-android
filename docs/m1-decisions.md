@@ -9,3 +9,5 @@
 7. **截图与复制先修复**：移除旧 Activity 即移除了它的全局 FLAG_SECURE；ZIP 的消息默认没有文本选择容器。只在 provider 密钥编辑页面生命周期启用 FLAG_SECURE，复制通过原 ZIP helper 扩展，统一脱敏与 Android 13 敏感标记。
 8. **开发 CI 不等于验收通过**：开发阶段先验证新增 musl PTY、Sharp 的两个 ABI 构建并上传带版本名的开发 APK；完整 M1AcceptanceTest、截图及指标尚未执行时，报告明确标记未完成。最终交付必须补成完整无条件的仪器验收流水线。
 9. **复用原版 shell 与 PTY 分工**：Agent 的 bash 使用原版 tool-bash + bash-local，以保留超时、取消和溢出文件；交互终端复用原版 api-terminal-controller / subprocess-local 的 PTY。android-subprocess 仅继承原版 provider，将 spillDir 配置到私有 workspace/.hoshino-output，不改上游执行代码。
+10. **锁定完整 Node 编译依赖**：开发运行 40056749850 中 arm64 的 PTY/Sharp 容器自检成功，x86_64 因 nodejs-dev 24.18.1 要求同版本 nodejs-libs，而仓库索引默认选择 24.22.1 失败。补齐官方同版本 libs APK 的 URL、SHA256 与长度，不升级 Node 或跳过签名。删除编译依赖后再测 PTY/Sharp；npm 用 apk del 正常卸载，避免后续按需安装看到损坏的包数据库。
+11. **原生运行时按 ABI 独立缓存与上传**：两种架构分开构建，单个 ABI 失败不会丢失另一架构的构建产物。最终打包必须下载两份、刷新本项目 host/plugins 并重算校验；缓存不作为 Android 验收通过的证据。

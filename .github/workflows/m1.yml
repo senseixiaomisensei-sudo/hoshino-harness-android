@@ -6,6 +6,20 @@ on:
 permissions:
   contents: read
 jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
+      - name: Compile and test the original dsh composition
+        working-directory: node-host
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm test
+      - uses: actions/upload-artifact@v4
+        with: { name: m1-host, path: node-host/dist }
   proot-source:
     runs-on: ubuntu-24.04
     steps:
@@ -17,54 +31,65 @@ jobs:
           path: |
             app/src/main/jniLibs
             app/src/main/assets/licenses
-  development:
-    needs: proot-source
+  runtime:
+    needs: host
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '17' }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
-          log-accepted-android-sdk-licenses: false
       - uses: docker/setup-qemu-action@v3
-      - name: Compile and test the original dsh composition
-        working-directory: node-host
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          npm run build
-          npm test
+      - uses: actions/download-artifact@v4
+        with: { name: m1-host, path: node-host/dist }
       - uses: actions/cache/restore@v4
         id: runtime
         with:
           path: |
-            app/src/main/assets/kernel
-            app/src/main/assets/licenses
-            app/src/main/jniLibs
-            .research/runtime/*.tgz
-            docs/m1-size-*.json
-          key: m1-kernel-v1-${{ runner.os }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/pack.py', 'rootfs/runtime-seeds.json', 'rootfs/node-apk-lock.json', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
-      - name: Build musl PTY and image runtimes for both ABIs
+            app/src/main/assets/kernel/${{ matrix.abi }}.txz
+            .research/runtime/${{ matrix.abi }}.tgz
+            docs/m1-size-${{ matrix.abi }}.json
+          key: m1-kernel-v2-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/pack.py', 'rootfs/runtime-seeds.json', 'rootfs/node-apk-lock.json', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
+      - name: Build and smoke-test musl PTY and image processing
         if: steps.runtime.outputs.cache-hit != 'true'
-        run: python3 rootfs/prepare.py --rootfs-only
-      - uses: actions/download-artifact@v4
-        with: { name: m1-android-proot, path: app/src/main }
+        run: python3 rootfs/prepare.py --rootfs-only --abi ${{ matrix.abi }}
       - uses: actions/cache/save@v4
         if: steps.runtime.outputs.cache-hit != 'true'
         with:
           path: |
-            app/src/main/assets/kernel
-            app/src/main/assets/licenses
-            app/src/main/jniLibs
-            .research/runtime/*.tgz
-            docs/m1-size-*.json
+            app/src/main/assets/kernel/${{ matrix.abi }}.txz
+            .research/runtime/${{ matrix.abi }}.tgz
+            docs/m1-size-${{ matrix.abi }}.json
           key: ${{ steps.runtime.outputs.cache-primary-key }}
-      - name: Refresh our host and plugins
-        if: steps.runtime.outputs.cache-hit == 'true'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m1-runtime-${{ matrix.abi }}
+          include-hidden-files: true
+          path: |
+            app/src/main/assets/kernel/${{ matrix.abi }}.txz
+            .research/runtime/${{ matrix.abi }}.tgz
+            docs/m1-size-${{ matrix.abi }}.json
+  development:
+    needs: [host, runtime, proot-source]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: actions/download-artifact@v4
+        with: { name: m1-host, path: node-host/dist }
+      - uses: actions/download-artifact@v4
+        with: { pattern: m1-runtime-*, path: ., merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { name: m1-android-proot, path: app/src/main }
+      - name: Refresh our host and plugins for both ABIs
         run: python3 rootfs/prepare.py --refresh-host
       - name: Build development APKs and unit tests
         run: |
@@ -80,10 +105,3 @@ jobs:
             docs/m1-apk-sizes.json
             docs/m1-size-*.json
             core-bridge/build/reports/tests
-      - uses: actions/upload-artifact@v4
-        with:
-          name: m1-runtime
-          include-hidden-files: true
-          path: |
-            app/src/main/assets/kernel
-            .research/runtime/*.tgz

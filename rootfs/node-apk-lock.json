@@ -8,6 +8,11 @@
       "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/nodejs-dev-24.18.1-r0.apk",
       "sha256": "437023e0737e4d8fa25c6eafcda0e4a4996e25364ffdb70b0e18163e74d3b7cb",
       "bytes": 310161
+    },
+    "developmentLibraries": {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/nodejs-libs-24.18.1-r0.apk",
+      "sha256": "70bd5da60434610e377a5295067c18f0a81faed941a82efaf58497b8816fe5a5",
+      "bytes": 17249371
     }
   },
   "x86_64": {
@@ -19,6 +24,11 @@
       "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/nodejs-dev-24.18.1-r0.apk",
       "sha256": "4a94bcd128342729942424d00474e50b929a2ddc50db7d3b3f1b47ae190ac996",
       "bytes": 310201
+    },
+    "developmentLibraries": {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/nodejs-libs-24.18.1-r0.apk",
+      "sha256": "1dbf92b7022c5793508d8fc180e5783545bb2e87287cb2dd5e614b41c769a93b",
+      "bytes": 17835268
     }
   }
 }
