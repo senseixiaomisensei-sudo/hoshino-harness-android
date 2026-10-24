@@ -22,3 +22,8 @@ dsh 仍为未修改的 `0.2.1-rc.2`，未改变 Agent loop、原版 JSONL 持久
 | 原生聊天和实际安装探测回归 | `M1ConversationSmokeTest`、`ShizukuDetectionTest`，待最终包执行 |
 
 仅确认有记录的结果。用户特定接口和 arm64 真机现场尚未复测；完整 M1 验收未完成。
+
+
+最终包 versionCode 102，沿用原 Debug 签名 e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1。arm64-v8a 82,231,030 字节，SHA256 e5e3f29dbfdde363256852ec54aa1f24979fff2c5fcc760568fc8beac6176370；x86_64 84,685,280 字节，SHA256 3528e3361a6b914e8b11c734a4a23468ec8d40dbad090bd69ccb500d3f1edcc9。服务端上传 digest 与本地相同。
+
+最新 CI 40065685848 在独立 proot 源码构建阶段失败，原因是对 GitHub codeload 使用已下载文件的 Range 续传。已改为完整下载并保留 SHA 校验，增加不支持 Range 的 HTTP 本地回归，等待新 CI；不将本地成功写成 CI 全绿或完整 M1 通过。

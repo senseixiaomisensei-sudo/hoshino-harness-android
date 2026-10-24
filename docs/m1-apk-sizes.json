@@ -2,13 +2,13 @@
   {
     "abi": "arm64-v8a",
     "apk": "Hoshino-Harness-0.1.0-m1-arm64-v8a-debug.apk",
-    "bytes": 71281292,
-    "sha256": "b5bad281eeb535ff7a11fe52aa02156590f6e8ec53176da74bc159305bb4e4ba",
+    "bytes": 82231030,
+    "sha256": "e5e3f29dbfdde363256852ec54aa1f24979fff2c5fcc760568fc8beac6176370",
     "within150MB": true,
     "largestFiles": [
       {
         "path": "assets/kernel/arm64-v8a.txz",
-        "bytes": 38131748
+        "bytes": 38131976
       },
       {
         "path": "classes.dex",
@@ -16,7 +16,7 @@
       },
       {
         "path": "classes14.dex",
-        "bytes": 10890972
+        "bytes": 10946200
       },
       {
         "path": "lib/arm64-v8a/libproot.so",
@@ -24,7 +24,7 @@
       },
       {
         "path": "classes5.dex",
-        "bytes": 1097060
+        "bytes": 1097360
       },
       {
         "path": "classes4.dex",
@@ -32,7 +32,7 @@
       },
       {
         "path": "classes11.dex",
-        "bytes": 600032
+        "bytes": 605964
       },
       {
         "path": "resources.arsc",
@@ -43,21 +43,21 @@
         "bytes": 322012
       },
       {
-        "path": "classes8.dex",
-        "bytes": 139668
+        "path": "classes2.dex",
+        "bytes": 144432
       }
     ]
   },
   {
     "abi": "x86_64",
     "apk": "Hoshino-Harness-0.1.0-m1-x86_64-debug.apk",
-    "bytes": 73735554,
-    "sha256": "fde608e99e7d6a0bccd75ee218dda45a1f13bcdf4d3a2d6f5d64cbec75e702fe",
+    "bytes": 84685280,
+    "sha256": "3528e3361a6b914e8b11c734a4a23468ec8d40dbad090bd69ccb500d3f1edcc9",
     "within150MB": true,
     "largestFiles": [
       {
         "path": "assets/kernel/x86_64.txz",
-        "bytes": 40569060
+        "bytes": 40569280
       },
       {
         "path": "classes.dex",
@@ -65,7 +65,7 @@
       },
       {
         "path": "classes14.dex",
-        "bytes": 10890972
+        "bytes": 10946200
       },
       {
         "path": "lib/x86_64/libproot.so",
@@ -73,7 +73,7 @@
       },
       {
         "path": "classes5.dex",
-        "bytes": 1097036
+        "bytes": 1097336
       },
       {
         "path": "classes4.dex",
@@ -81,7 +81,7 @@
       },
       {
         "path": "classes11.dex",
-        "bytes": 600028
+        "bytes": 605960
       },
       {
         "path": "resources.arsc",
@@ -92,8 +92,8 @@
         "bytes": 322004
       },
       {
-        "path": "classes8.dex",
-        "bytes": 139668
+        "path": "classes2.dex",
+        "bytes": 144432
       }
     ]
   }

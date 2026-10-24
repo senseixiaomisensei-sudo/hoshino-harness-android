@@ -12,7 +12,9 @@ ABIS = {'arm64-v8a': ('aarch64', 'arm64', 'arm64'), 'x86_64': ('x86_64', 'amd64'
 
 def download(url, target):
     target.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(['curl', '-fLsS', '--retry', '3', '--retry-all-errors', '-C', '-', url, '-o', str(target)], check=True)
+    # Immutable sources are checked by SHA256 at the call sites. Fetch afresh:
+    # GitHub codeload does not support resuming a previous ABI's complete file.
+    subprocess.run(['curl', '-fLsS', '--retry', '3', '--retry-all-errors', url, '-o', str(target)], check=True)
     return target.read_bytes()
 
 def deb_payload(data):

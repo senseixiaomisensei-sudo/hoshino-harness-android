@@ -70,9 +70,11 @@ class M1ConversationSmokeTest {
             }
             for(provider in listOf("claude","compatible")) {
                 if(provider=="compatible") {
-                    ui.onNodeWithText("M1 Claude",substring=true).performClick()
+                    ui.onNodeWithText("M1 Claude",substring=true).performScrollTo().performClick()
+                    ui.waitUntil(10000){ui.onAllNodesWithText("M1 Compatible").fetchSemanticsNodes().isNotEmpty()}
                     ui.onNodeWithText("M1 Compatible").performClick()
                     ui.waitUntil(10000){vm.composer.value.model?.providerId=="compatible"}
+                    androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
                 }
                 turn("你好")
                 val device=turn("读取设备 device 信息")

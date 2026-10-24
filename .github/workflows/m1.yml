@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Verify immutable source downloads without Range support
+        run: python3 tools/test-runtime-download.py
       - uses: actions/setup-node@v4
         with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
       - name: Compile and test the original dsh composition
