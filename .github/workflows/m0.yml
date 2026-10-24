@@ -89,8 +89,9 @@ jobs:
       - name: Build APK and unit tests
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug test --console=plain
+          ./gradlew assembleDebug test :app:assembleX86DebugAndroidTest :benchmark-driver:assembleDebugAndroidTest -Pkotlin.compiler.execution.strategy=in-process --console=plain
           python3 tools/check-apks.py
+          ./gradlew --stop
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -114,6 +115,7 @@ jobs:
             ./gradlew :benchmark-driver:connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --console=plain
             adb shell cat /sdcard/Android/data/dev.hoshino.benchmark/files/m0-metrics.json > docs/m0-metrics.json
             mkdir -p docs/m0-memory
+            find docs/m0-memory -maxdepth 1 -type f -name '*.txt' -delete
             adb pull /sdcard/Android/data/dev.hoshino.benchmark/files/m0-memory/. docs/m0-memory
             python3 tools/verify-metrics.py
       - name: Upload APK and verification reports

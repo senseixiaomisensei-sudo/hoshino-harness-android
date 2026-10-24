@@ -1,0 +1,81 @@
+{
+  "environment": {
+    "abi": "x86_64",
+    "api": 36,
+    "emulator": true,
+    "memoryMb": 3072,
+    "host": "Windows WHPX",
+    "model": "local mock, native Anthropic Messages API"
+  },
+  "startupSamples": [
+    {
+      "iconToReadyMs": 6782,
+      "iconToFirstTokenMs": 8027
+    },
+    {
+      "iconToReadyMs": 5768,
+      "iconToFirstTokenMs": 6996
+    },
+    {
+      "iconToReadyMs": 7275,
+      "iconToFirstTokenMs": 8861
+    },
+    {
+      "iconToReadyMs": 6407,
+      "iconToFirstTokenMs": 7943
+    },
+    {
+      "iconToReadyMs": 5587,
+      "iconToFirstTokenMs": 6966
+    }
+  ],
+  "iconToReadyMedianMs": 6407,
+  "iconToFirstTokenMedianMs": 7943,
+  "memoryMedianKiB": {
+    "idle": {
+      "java-app": {
+        "pssKb": 81679,
+        "javaHeapPssKb": 14052,
+        "nativeHeapPssKb": 13620
+      },
+      "proot": {
+        "pssKb": 1255,
+        "javaHeapPssKb": 0,
+        "nativeHeapPssKb": 324
+      },
+      "node-native": {
+        "pssKb": 118124,
+        "javaHeapPssKb": 0,
+        "nativeHeapPssKb": 0
+      },
+      "totalPssKb": 201449
+    },
+    "streaming": {
+      "java-app": {
+        "pssKb": 89983,
+        "javaHeapPssKb": 23248,
+        "nativeHeapPssKb": 13504
+      },
+      "proot": {
+        "pssKb": 1255,
+        "javaHeapPssKb": 0,
+        "nativeHeapPssKb": 324
+      },
+      "node-native": {
+        "pssKb": 151020,
+        "javaHeapPssKb": 0,
+        "nativeHeapPssKb": 0
+      },
+      "totalPssKb": 240485
+    }
+  },
+  "compression": {
+    "gzipBytes": 49477968,
+    "gzipUnpackMs": 13240.593651,
+    "xzBytes": 27378756,
+    "xzUnpackMs": 19882.53515,
+    "tarSha256": "c8299e80a248aba076bad013d21ca0e2deb8627ec40d6a4ce877a0d513895081",
+    "sameTar": true
+  },
+  "backgroundContinuation": true
+}

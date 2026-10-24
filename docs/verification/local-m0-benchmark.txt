@@ -1,0 +1,8 @@
+
+dev.hoshino.benchmark.M0StartupBenchmark:.
+
+Time: 207.299
+
+OK (1 test)
+
+

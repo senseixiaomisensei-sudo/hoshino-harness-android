@@ -52,11 +52,27 @@ class M0StartupBenchmark {
         for(iteration in 1..5) {
             shell("am force-stop dev.hoshino.app")
             device.wakeUp();shell("wm dismiss-keyguard")
-            device.pressHome();Thread.sleep(350)
-            device.swipe(device.displayWidth/2,device.displayHeight-100,device.displayWidth/2,device.displayHeight/3,20)
-            var icon=device.wait(Until.findObject(By.text("Hoshino Harness")),5000)
-            if(icon==null) {UiScrollable(UiSelector().scrollable(true)).scrollTextIntoView("Hoshino Harness");icon=device.findObject(By.text("Hoshino Harness"))}
-            assertNotNull("Launcher icon unavailable",icon)
+            val launcher=requireNotNull(device.launcherPackageName) {"No default launcher installed"}
+            fun findIcon()=device.findObject(By.pkg(launcher).text("Hoshino Harness")) ?: device.findObject(By.pkg(launcher).descStartsWith("Hoshino Harness"))
+            var icon: UiObject2?=null
+            for(attempt in 1..4) {
+                device.pressHome()
+                waitFor("Launcher unavailable before iteration $iteration",10000) {device.currentPackageName==launcher}
+                Thread.sleep(750)
+                icon=findIcon()
+                if(icon==null) {
+                    // Start in the workspace, above both gesture and three-button navigation areas.
+                    device.swipe(device.displayWidth/2,device.displayHeight*4/5,device.displayWidth/2,device.displayHeight/5,30)
+                    val until=SystemClock.elapsedRealtime()+6000
+                    while(icon==null && SystemClock.elapsedRealtime()<until) {Thread.sleep(100);icon=findIcon()}
+                }
+                if(icon==null && device.hasObject(By.pkg(launcher).scrollable(true))) {
+                    try {UiScrollable(UiSelector().packageName(launcher).scrollable(true)).scrollTextIntoView("Hoshino Harness")} catch(_: UiObjectNotFoundException) { }
+                    icon=findIcon()
+                }
+                if(icon!=null) {Thread.sleep(450);icon=findIcon();if(icon!=null)break}
+            }
+            assertNotNull("Launcher icon unavailable before iteration $iteration",icon)
             val clickedAt=SystemClock.elapsedRealtime()
             icon!!.click()
             waitFor("Kernel readiness timed out",300000) {device.findObject(By.res("kernel-status"))?.text?.contains("已连接")==true}

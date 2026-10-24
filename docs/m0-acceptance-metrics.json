@@ -1,0 +1,21 @@
+{
+  "serviceStartToReadyMs": 63973,
+  "appPssKb": 96221,
+  "sessionPreserved": true,
+  "backgroundContinuation": true,
+  "backgroundSeconds": 300,
+  "standardsPassed": 8,
+  "compression": {
+    "gzipBytes": 49477968,
+    "gzipUnpackMs": 13240.593651,
+    "xzBytes": 27378756,
+    "xzUnpackMs": 19882.53515,
+    "tarSha256": "c8299e80a248aba076bad013d21ca0e2deb8627ec40d6a4ce877a0d513895081",
+    "sameTar": true
+  },
+  "processPssKb": {
+    "2257": 96906,
+    "2314": 1234,
+    "2319": 125072
+  }
+}

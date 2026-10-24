@@ -2,16 +2,19 @@
 
 更新日期：2026-10-24。
 
-结论：M0 基础可用性已得到运行验证，APK 已交付，用户反馈实际使用没有明显问题。原版 dsh 在 APK 内以方案 B 无头运行，由原生 Compose UI 驱动。桌面集成测试通过；2026-10-23 的 CI Android 仪器测试任务也通过，但随后读取指标文件失败，因此该次工作流整体仍为失败。指标采集收尾与增强断言的 CI 正在验证。
+**M0 结论：不通过。不能进入 M1。** 当前缺少 arm64 真机逐项签认与国产 ROM 的 ptrace / 后台实测记录。原八项自动验收已取得整条工作流全绿；新增的五次图标冷启动、分阶段内存、xz 对比和 ABI 瘦身在本地完成，新版 CI 仍在验证。未改 dsh 与 JSONL 实现；KernelLauncher 接口与 Cordis seam 保持可替换。
+
+已全绿的基础运行：[40040662718](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40040662718)，提交 `e229ce2c6dfe317dad1792f95ff91d5a17b8caf3`。该链接证明基础版本整条工作流成功，不替代新增量化项目与真机验收。
 
 ## 交付与用户反馈
 
-- 交付文件：`app/build/outputs/apk/debug/Hoshino-M0-debug.apk`，Debug APK，版本 `0.0.1-m0` / versionCode 1。
+- 当前分包：`app/build/outputs/apk/arm64/debug/app-arm64-debug.apk` 与 `app/build/outputs/apk/x86/debug/app-x86-debug.apk`，Debug 版本 `0.0.1-m0` / versionCode 1；字节数、SHA256 及内部 ABI 由 [包检查](m0-apk-sizes.json) 给出。
+- 初版历史交付文件：`app/build/outputs/apk/debug/Hoshino-M0-debug.apk`，为瘦身前的双 ABI 包。
 - 交付记录：2026-10-23 约 21:56（北京时间）在会话中提供本地 APK 路径。本地构建、APK v2 签名校验和模拟器安装均已通过。
 - 目标环境：minSdk 29、targetSdk 37，包含 arm64-v8a 和 x86_64；没有 WebView 主界面。
 - 用户于 2026-10-24 反馈：“我用的没什么问题”。将此记为实际试用反馈；用户未提供机型、Android 版本、provider/model 和逐项测试清单，覆盖范围尚未细分。
 - 本次范围为 M0：聊天与流式展示、thinking、模型切换、工具卡片、审批、设备信息工具、内置文件工具及凭据保护。M1 的 shell、完整文件管理等功能未在本次交付中开放。
-- APK SHA256：`dde75a9590d9444dfe59fbeb47ac650f62192e10fc9dbfb22f53656cf66367c0`。
+- 初版历史 APK SHA256：`dde75a9590d9444dfe59fbeb47ac650f62192e10fc9dbfb22f53656cf66367c0`；该哈希不用于新分包。
 
 ## 上游与锁定版本
 
@@ -75,16 +78,49 @@ Anthropic 使用 pi-ai 的 `anthropic-messages` 原生适配及 Anthropic SDK，
 
 Android 仪器测试 `M0AcceptanceTest` 覆盖冷启动、两种协议及 thinking 流式增量、设备工具、内置 write、同一会话切换 provider、真实五分钟后台等待、凭据存储及 logcat 扫描。2026-10-23 的 [CI 运行 39963618593](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/39963618593) 在提交 `aee9f26d61af15814486161a766fe542ec5bfdc0` 上完成 1 个仪器测试，`connectedDebugAndroidTest` 显示 BUILD SUCCESSFUL（7 分 55 秒）。之后 `cat m0-metrics.json` 报文件不存在，工作流整体失败；不能将该次记录称为全绿 CI。
 
-后续增强了设备工具结果必须进入模型最终答复的断言，并将全应用存储扫描改为逐字节等价的 Latin-1 字符串搜索，保留跨块匹配。桌面集成测试增强后通过：6 个 turn、2 次设备回调；两个真实厂商测试因无凭据跳过。最终本地仪器重跑未留存完成结果，不能补记为通过。CI 中双 ABI proot 源码构建和 guest 兼容库编译均已通过。
+后续增强了设备工具结果必须进入模型最终答复的断言，并将全应用存储扫描改为逐字节等价的 Latin-1 字符串搜索，保留跨块匹配。桌面集成测试增强后通过：6 个 turn、2 次设备回调；两个真实厂商测试因无凭据跳过。修复指标采集后的完整 CI 结果见上方全绿链接。2026-10-24 瘦身版 M0AcceptanceTest 与五次启动基准已在本地各通过 1 个仪器测试，日志及数据见证据表；双 ABI proot 源码构建和 guest 兼容库编译亦有 CI 成功记录。
 
-| 项目 | 当前证据 |
-|---|---|
-| 已交付 APK 体积 | 454,782,895 字节，约 454.78 MB / 433.71 MiB；双 ABI Debug 构建 |
-| APK 冷启动 | 未测；由仪器测试写 `m0-metrics.json` |
-| Android 内存 | 未测；由仪器测试和 `dumpsys meminfo` 采集 |
-| 全绿 CI | 上述运行仪器测试通过，后续指标采集失败；修正后待验证 |
-| 人工试用 | 用户反馈实际使用没有明显问题；未细分测试覆盖范围 |
-| 真实厂商模型自动化 | 未提供 CI 测试凭据，两项测试按规则跳过 |
+| 项目 | 实证结果 | 证据 |
+|---|---|---|
+| 基础全流程 CI | success，含构建、仪器测试、指标取出及 artifact 上传 | [全绿运行](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40040662718)，提交 `e229ce2c6dfe317dad1792f95ff91d5a17b8caf3` |
+| 瘦身版 Android 八项验收 | 本地 OK，1 test，461.37 秒 | [仪器日志](verification/local-m0-acceptance.txt)、[结果](m0-acceptance-metrics.json) |
+| arm64 单 ABI APK | 55,049,396 字节，55.05 MB，低于 150 MB | [APK 检查及 SHA256](m0-apk-sizes.json) |
+| x86_64 单 ABI APK | 56,646,766 字节；每包一份对应 rootfs / JNI ABI | [APK 内容检查](m0-apk-sizes.json) |
+| 图标至内核就绪 | 本地五次中位数 6,407 ms | [原始五次与内存](m0-metrics.json)、[基准日志](verification/local-m0-benchmark.txt) |
+| 图标至首个文本增量 | 本地五次中位数 7,943 ms | 同上；输入、选择 fixture 模型与审批时间包含在内 |
+| 空闲 / 流式内存 | 每阶段五次，Java 应用、proot、Node 分别采集，共 30 份有效原始 meminfo | [汇总](verification/local-m0-summary.json)、[原始报告目录](m0-memory/) |
+| 后台 5 分钟续聊 | sessionPreserved / backgroundContinuation 均 true，实际等待 300 秒 | [结果](m0-acceptance-metrics.json)、[验收日志](verification/local-m0-acceptance.txt) |
+| gzip / xz 解包 | 同 tar 指纹，13,240.59 / 19,882.54 ms | [compression 数据](m0-acceptance-metrics.json) |
+| 新版量化 CI | 该运行失败：基准启动器找不到滚动容器；图标准备已修正，等待重跑，未记成功 | [失败运行](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40045901916)，提交 `86e232bccac04ecd4fa8fe641803047973b0ddfe` |
+| arm64 真机 / 国产 ROM | 未接入已授权的 arm64 真机，无逐项签认 | [设备可用性记录](verification/arm64-device-availability.json)、[手动清单](m0-device-checklist.md) |
+| 人工试用 | 2026-10-24 用户反馈“我用的没什么问题”，未细分设备与条目 | 本会话用户反馈，已记录于交付章节 |
+| 真实厂商模型自动化 | 无 CI 凭据，两项按规则跳过 | 全绿运行的 Optional real model tests 步骤 |
+
+## 量化方法与本地实测
+
+环境：x86_64 AOSP API 36 模拟器、3072 MB、Windows WHPX；模型为本地 mock 的原生 Anthropic Messages SSE。原始 JSON 由独立仪器进程自动生成，UI 实际点击 Launcher 图标。每次先 force-stop 应用，保留已安装 rootfs，属于进程冷启动；没有把服务内的计时当作图标启动计时。输入、fixture 模型选择和逐次审批的操作时间包含在首增量时长内，数据不是实际厂商 API 的网络 TTFT。
+
+| 次数 | 图标至就绪 ms | 图标至首文本增量 ms |
+|---|---:|---:|
+| 1 | 6782 | 8027 |
+| 2 | 5768 | 6996 |
+| 3 | 7275 | 8861 |
+| 4 | 6407 | 7943 |
+| 5 | 5587 | 6966 |
+| 中位数 | **6407** | **7943** |
+
+内存数值为五次同阶段采样的中位数，单位 KiB。Java/Native heap 是 Android 应用 PSS 中的分类，另外还有 Code、Graphics、Stack 等。Node 的完整进程 PSS 不是其 malloc Native Heap 子分类；不能将子分类的 0 解释为 Node 不占内存。总计先逐次求和再取中位数。
+
+| 阶段 | Android 应用 PSS | 其中 Java heap | 其中 Native heap | proot PSS | Node native 进程 PSS | 三进程总 PSS 中位数 |
+|---|---:|---:|---:|---:|---:|---:|
+| 空闲 | 81679 | 14052 | 13620 | 1255 | 118124 | 201449 |
+| 流式 | 89983 | 23248 | 13504 | 1255 | 151020 | 240485 |
+
+每次流式采集前后都断言仍在输出；首增量须包含本轮唯一 fixture 标记，避免误读历史消息。全部 30 个 JSON 引用的 meminfo 文件存在，PSS 分类已与原文比对。这里是状态采样，不是峰值内存测试。[原始数据](m0-metrics.json)、[采样汇总](verification/local-m0-summary.json)、[原始 meminfo](m0-memory/)。
+
+压缩比较使用同一个 tar 流的 gzip 与 xz 两份编码，仪器调用与启动器相同的安全解包器。x86_64 基线 gzip 为 49,477,968 字节，xz 为 27,378,756 字节；各解包一次，分别 13.24 秒和 19.88 秒，读取的 tar 数据指纹一致。xz 缩小约 44.7%，该次解包耗时增加约 50.2%。解包目录清理不计入计时；首次安装解包与上述五次已安装 rootfs 的进程冷启动分别记录。
+
+部署筛选保留 245 个运行包。删除系统文档、man、locale、头文件与未组合插件依赖；保留运行时所需的 Cordis JSON。实读 `attachment-local` 与 `dsh-lazy-require` 后确认 Sharp 只在栅格操作时加载；M0 不开放图像入口，故删除 Sharp / vips，并用裁剪后的完整 M0 验收验证文本与工具链路。未编辑 dsh 实现、未替换 JSONL 后端。两个 ABI 的根目录最大 10 个文件分别见 [arm64](m0-size-arm64-v8a.json)、[x86_64](m0-size-x86_64.json)；APK 最大文件及哈希见 [包检查](m0-apk-sizes.json)。
 
 ## 问题与绕过
 

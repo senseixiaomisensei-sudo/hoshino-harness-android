@@ -43,7 +43,7 @@ adb -s $deviceSerial pull /sdcard/Android/data/dev.hoshino.app/files/m0-memory.t
 - [ ] `backgroundSeconds=300`、`sessionPreserved=true`、`backgroundContinuation=true`。
 - [ ] gzip / xz 比较 `sameTar=true`，两种耗时及字节数已保存。
 
-更换 provider 设置前自行保留原来的配置记录；仪器测试会保存名为 claude / compatible 的测试配置。真实 key 仅在设置 UI 中输入，不放进终端、adb 参数、截图或报告。
+更换 provider 设置前自行保留原来的配置记录；仪器测试会替换同名 claude / compatible 配置，并写入 workspace/hello.txt。真实 key 仅在设置 UI 中输入，不放进终端、adb 参数、截图或报告。
 
 ## 人工逐项检查
 

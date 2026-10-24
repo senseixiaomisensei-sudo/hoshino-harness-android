@@ -1,0 +1,8 @@
+
+dev.hoshino.app.M0AcceptanceTest:.
+
+Time: 461.37
+
+OK (1 test)
+
+
