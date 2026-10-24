@@ -14,6 +14,10 @@ import java.util.UUID
 class DshHarnessClient(private val context: Context) : UnavailableHarnessClient() {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val vault=ProviderStore(context)
+    private val shizukuConnection=dev.hoshino.bridge.ShizukuConnection(context.applicationContext)
+    override val shizuku=shizukuConnection.state.map { ShizukuStatus.valueOf(it.name) }.stateIn(scope,SharingStarted.Eagerly,ShizukuStatus.valueOf(shizukuConnection.state.value.name))
+    override suspend fun refreshShizuku(){shizukuConnection.refresh()}
+    override suspend fun requestShizukuPermission()=withContext(Dispatchers.Main){shizukuConnection.requestPermission()}
     val runtime=NativeKernel(context,callbackHandler=::callback)
     private val eventBus=MutableSharedFlow<HarnessEvent>(extraBufferCapacity=1024)
     override val events=eventBus.asSharedFlow()

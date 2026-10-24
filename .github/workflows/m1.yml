@@ -121,6 +121,8 @@ jobs:
         with: { name: hoshino-m1-development, path: artifacts }
       - name: Start local mock model
         run: node tools/mock-llm/server.mjs > mock.log 2>&1 &
+      - name: Fetch pinned official Shizuku manager for installation detection
+        run: python3 tools/prepare-shizuku-fixture.py
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
@@ -132,11 +134,12 @@ jobs:
           script: |
             mkdir -p reports
             adb reverse tcp:8099 tcp:8099
+            adb install -r .research/shizuku-manager/manager.apk
             adb install -r artifacts/build/deliverables/Hoshino-Harness-0.1.0-m1-x86_64-debug.apk
             adb install -r artifacts/app/build/outputs/apk/androidTest/x86/debug/app-x86-debug-androidTest.apk
             adb shell pm grant dev.hoshino.app android.permission.POST_NOTIFICATIONS
-            adb shell am instrument -w -r -e class app.hoshino.harness.M1UiSmokeTest,app.hoshino.harness.M1ConversationSmokeTest dev.hoshino.app.test/androidx.test.runner.AndroidJUnitRunner | tee reports/m1-ui-smoke.txt
-            grep -q 'OK (2 tests)' reports/m1-ui-smoke.txt
+            adb shell am instrument -w -r -e class app.hoshino.harness.M1UiSmokeTest,app.hoshino.harness.M1ConversationSmokeTest,app.hoshino.harness.ShizukuDetectionTest dev.hoshino.app.test/androidx.test.runner.AndroidJUnitRunner | tee reports/m1-ui-smoke.txt
+            grep -q 'OK (3 tests)' reports/m1-ui-smoke.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:

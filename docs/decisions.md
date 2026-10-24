@@ -55,3 +55,12 @@
 - CI 后打包检查固定使用 amd64 辅助容器，目标 ARM Node 交给已注册 binfmt；避免 Docker classic image store 对同一 manifest digest 的多架构覆盖报错。
 
 - 补充复现：对模型 metadata.reasoning=false 传 reasoningEffort=off，原版 session/selectModel 返回 session/model-unavailable（does not support reasoning effort off）。Kotlin 现在仅为已声明推理能力的模型附加 effort；无推理模型省略字段。双协议无推理回归通过。
+
+
+## 2026-10-24 Shizuku 状态检测修复
+
+- 根因：生产 DshHarnessClient 未覆盖 UnavailableHarnessClient 的固定 NotInstalled 值和未实现刷新函数，显示与实际安装状态无关。
+- 使用 Maven Central 的官方 MIT Shizuku API / Provider 13.1.5，依照官方 README、demo manifest 和 sources.jar 的真实 pingBinder/checkSelfPermission/requestPermission/监听接口接入。SDK 不承担 Agent loop 或内核存储。
+- Android 11+ 显式 queries 指定 moe.shizuku.privileged.api；受 INTERACT_ACROSS_USERS_FULL 保护的官方 Provider 接收服务 Binder。仅查询安装不认定为授权。
+- 安装变化、Binder 连接/死亡、授权结果及 Activity.onResume 更新 StateFlow。用户明确点击才请求授权；本次不增加系统命令执行通道，也不自动开启完全访问。
+- 官方 Shizuku 管理器仅作为独立模拟器验收夹具，不打包进主 APK。
