@@ -4,7 +4,7 @@ export function createMockLlm() {
   const requests = [];
   const server = createServer(async (req, res) => {
     const path = new URL(req.url, 'http://127.0.0.1').pathname;
-    if (req.method === 'GET' && path === '/health') { res.writeHead(200, {'Content-Type':'application/json'}).end(JSON.stringify({requests:requests.length,paths:requests.map(r=>r.path)})); return; }
+    if (req.method === 'GET' && path === '/health') { res.writeHead(200, {'Content-Type':'application/json'}).end(JSON.stringify({requests:requests.length,paths:requests.map(r=>r.path),benchmarkRequests:requests.filter(r=>r.benchmark).length,promptClasses:requests.map(r=>r.promptClass)})); return; }
     if (req.method !== 'POST' || !['/v1/messages', '/v1/chat/completions'].includes(path)) { res.writeHead(404).end(); return; }
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); requests.push({ path, body });
@@ -18,8 +18,12 @@ export function createMockLlm() {
     const args = tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'} : {};
     const resultText = hasResult ? (typeof last.content === 'string' ? last.content : last.content.filter(c=>c.type==='tool_result').map(c=>typeof c.content==='string'?c.content:JSON.stringify(c.content)).join(' ')) : '';
     const answer = hasResult ? `工具已完成，返回结果：${resultText}` : '你好，我是 Hoshino。';
-    const benchmark=/benchmark/.test(prompt);
-    const textChunks=benchmark?['你好，',...Array(48).fill('基准测试输出。')]:['你好，',answer];
+    // dsh may append another user-role context message; identify the fixture in the full request.
+    const marker=JSON.stringify(messages).match(/m0-benchmark-[a-f0-9]{8}-[1-5]/ig)?.at(-1);
+    const benchmark=marker!==undefined || /benchmark/i.test(prompt);
+    requests.at(-1).benchmark=benchmark;
+    requests.at(-1).promptClass={selectedTextLength:prompt.length,benchmarkInMessages:/benchmark/i.test(JSON.stringify(messages)),userCount:messages.filter(m=>m.role==='user').length,lastRole:last?.role};
+    const textChunks=benchmark?[`M0:${marker??'benchmark'}`,...Array(60).fill('基准测试输出。')]:['你好，',answer];
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     const event = async (data, name) => { res.write(`${name ? `event: ${name}\n` : ''}data: ${JSON.stringify(data)}\n\n`); await pause(15); };
     if (anthropic) {
@@ -34,7 +38,7 @@ export function createMockLlm() {
         await send('content_block_delta', {index:1, delta:{type:'input_json_delta', partial_json:JSON.stringify(args)}});
       } else {
         await send('content_block_start', {index:1, content_block:{type:'text', text:''}});
-        for (const text of textChunks) {await send('content_block_delta', {index:1, delta:{type:'text_delta', text}});if(benchmark)await pause(350);}
+        for (const text of textChunks) {await send('content_block_delta', {index:1, delta:{type:'text_delta', text}});if(benchmark)await pause(500);}
       }
       await send('content_block_stop', {index:1});
       await send('message_delta', {delta:{stop_reason:tool ? 'tool_use':'end_turn', stop_sequence:null},usage:{output_tokens:20}});
@@ -46,7 +50,7 @@ export function createMockLlm() {
       if (tool) {
         await chunk({tool_calls:[{index:0, id:'call_mock', type:'function', function:{name:tool, arguments:''}}]});
         await chunk({tool_calls:[{index:0, function:{arguments:JSON.stringify(args)}}]});
-      } else for (const content of textChunks) {await chunk({content});if(benchmark)await pause(350);}
+      } else for (const content of textChunks) {await chunk({content});if(benchmark)await pause(500);}
       await chunk({}, tool ? 'tool_calls':'stop');
       res.write('data: [DONE]\n\n');
     }

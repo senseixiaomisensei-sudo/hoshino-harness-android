@@ -48,6 +48,7 @@ class M0StartupBenchmark {
             return result
         }
         val samples=JSONArray();val readyTimes=mutableListOf<Long>();val tokenTimes=mutableListOf<Long>()
+        val runMarker=java.util.UUID.randomUUID().toString().take(8)
         for(iteration in 1..5) {
             shell("am force-stop dev.hoshino.app")
             device.wakeUp();shell("wm dismiss-keyguard")
@@ -65,13 +66,17 @@ class M0StartupBenchmark {
                 requireNotNull(device.wait(Until.findObject(By.text("claude / mock-model")),5000)).click()
                 waitFor("Fixture provider selection failed") {device.hasObject(By.textContains("claude / mock-model"))}
             }
-            requireNotNull(device.findObject(By.res("message-input"))).text="你好 benchmark"
+            val marker="m0-benchmark-$runMarker-$iteration"
+            // TextField's outer test-tag node is not necessarily its editable accessibility node.
+            val input=By.pkg("dev.hoshino.app").clazz("android.widget.EditText")
+            requireNotNull(device.findObject(input)).text=marker
+            waitFor("Fixture input was not applied") {device.findObject(input)?.text?.contains(marker)==true}
             waitFor("Send button did not enable") {device.findObject(By.res("send"))?.isEnabled==true}
             requireNotNull(device.findObject(By.res("send"))).click()
             waitFor("First streamed token timed out") {
                 // AlertDialog has a separate accessibility root from the Scaffold's test-tag setting.
                 device.findObject(By.text("允许本次"))?.click()
-                device.findObject(By.res("assistant-text"))?.text?.isNotEmpty()==true
+                device.hasObject(By.textStartsWith("M0:$marker"))
             }
             val firstTokenAt=SystemClock.elapsedRealtime()
             assertTrue("Memory must be sampled during output",device.hasObject(By.text("✦ 思考中")))
