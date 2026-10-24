@@ -19,6 +19,11 @@ class WorkspaceFiles(private val root:File,private val trash:File) {
         require(!path.startsWith('/') || path=="/root/workspace" || path.startsWith("/root/workspace/") || path=="/workspace" || path.startsWith("/workspace/")){"只允许私有工作区路径"}
         val relative=path.removePrefix("/root/workspace").removePrefix("/workspace").trimStart('/')
         require(!File(relative).isAbsolute) {"只允许私有工作区路径"}
+        val rootPath=root.toPath().toAbsolutePath().normalize()
+        val requested=rootPath.resolve(relative).normalize()
+        require(requested.startsWith(rootPath)){"路径越出工作区"}
+        var ancestor=requested
+        while(ancestor!=rootPath){require(!Files.isSymbolicLink(ancestor)){"工作区文件操作不跟随符号链接"};ancestor=ancestor.parent ?: error("路径越界")}
         val target=File(root,relative).canonicalFile
         require(target.toPath().startsWith(root.canonicalFile.toPath())) {"路径或符号链接越出工作区"}
         return target

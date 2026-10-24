@@ -1,8 +1,8 @@
 {
   "abi": "x86_64",
-  "unpackedBytes": 241914901,
-  "xzBytes": 40546824,
-  "gzipBytes": 68087417,
+  "unpackedBytes": 242000390,
+  "xzBytes": 40562320,
+  "gzipBytes": 68102050,
   "selectedPackages": 268,
   "largestFiles": [
     {
@@ -46,6 +46,6 @@
       "bytes": 1746944
     }
   ],
-  "packSeconds": 77.566,
-  "sha256": "7837260cfda679f93bf4c9eed036c38753f3844366f73c1fe123c1d27ac85647"
+  "packSeconds": 187.0,
+  "sha256": "c03fe5ed57202efb77e117cf5c979371e408f736228af7cbb0d2c7c65c58a2dd"
 }

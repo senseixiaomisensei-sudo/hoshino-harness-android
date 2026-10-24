@@ -26,7 +26,7 @@ class M1UiSmokeTest {
     @get:Rule val ui=createAndroidComposeRule<MainActivity>()
     @Test fun actualKernelSecureScopeClipboardPixelCopyAndLongCapture() {
         val client=Hoshino.client as DshHarnessClient
-        ui.waitUntil(300000){client.runtime.state.value.phase!="启动中"}
+        ui.waitUntil(300000){client.runtime.state.value.phase in setOf("已连接","崩溃")}
         assertEquals(client.runtime.state.value.logs.joinToString(),"已连接",client.runtime.state.value.phase)
         val terminal=runBlocking{client.openTerminal()}
         runBlocking{client.terminalInput(terminal,"printf 'HOSHINO_NATIVE_PTY_OK\\n'")}

@@ -8,10 +8,13 @@
 
 - 开发运行时 CI 整体成功：[40058143620](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40058143620)，提交 `52f9a2ed992082ce365423e4c097b2c38dedb37b`。仅证明该提交的运行时构建、容器 PTY/Sharp 自检、APK 构建及单测；不替后续功能快照背书。
 - 后续原版 dsh 双协议集成本地成功：`.research/m1-delivery-node-test.log`（6 turns，2 次设备回调，真实厂商凭据未配置而跳过）。
+- 后续功能提交 `e7d5920486ba13ce2856032b346adf742ff8e7be` 的开发 CI 整体成功：[40059973214](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/40059973214)。仍然没有仪器验收，不能称 M1 通过。
 - 自述手册生成读取真实 50 个 boot rows、19 个工具、29 个路由：`.research/m1-delivery-node-build.log`。
 - 终端/文件/截图原生源码编译成功：`.research/m1-media-build.log`、`.research/m1-files-build.log`。实际 Android 冒烟及本次 APK 构建结果另行补证；编译不等同交互验收。
 
 测试快照包含真实 DshHarnessClient、原版 PTY 远程接口、私有文件后端与编辑页、图片/文件附件、截图预览、自研 android-ui、hoshino-self 与审批/Diff 通道。部分流程仍在联调。没有手机实测就不填真机耗时、内存或 OEM 兼容结论。自述手册里尚未接通的预设/回滚 UI、UI 覆盖应用和源代码打包需在后续完成，不能将工具后端存在写成完整体验通过。
+
+午间本地首次最终构建中的 7 个 core 用例有 1 个失败：Windows 符号链接未被 canonicalFile 拒绝（`.research/m1-priority-arm64-build.log`、`core-bridge/build/test-results/testDebugUnitTest/TEST-dev.hoshino.bridge.WorkspaceFilesTest.xml`）。发布脚本拒绝了该包；改用额外 NIO 祖先链接检查后重新构建。不得将首次失败删改成通过。
 
 已核对 M0 四项软件门槛，依据见 `m1-decisions.md`。完整 ZIP 的源码、资源和品牌已合并；SessionStore 未修改，原始摘要见 `m1-ui-origin.json`。ZIP 未包含 design/SPEC.md，不能声称读过缺失文件。
 

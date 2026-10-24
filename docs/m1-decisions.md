@@ -14,3 +14,4 @@
 12. **12 点前先交付公开测试 APK，之后继续施工**：按用户最新时间要求，先发布带 0.1.0-m1 版本名的可安装测试包及下载直链；未完成完整 M1AcceptanceTest 前明确标为预发布，不写 M1 验收通过。用户明确要求交付后不停工，继续完成剩余功能和测试。
 13. **自述手册取自真实组合**：build 脚本在无凭据的本地 dsh 实例里读取实际 boot rows 和 ctx.tools.schemas()，结合 ZIP 路由、主题字段、事件源码生成手册。self 写操作和用户插件通过独立 Cordis 插件实施，不修改内核源码或 JSONL 持久化。
 14. **附件复用原生 dsh 入站接口**：图片使用 session/prompt 的原生 image 内容块；普通文件走 /api/session/uploadFileBinary 和 file receipt。Android 保留原图，发送图长边不超过 1568。截图使用 PixelCopy，密钥页和后台调用拒绝；不申请录屏或全盘存储权限。
+15. **路径验证以单测为准，不跳过失败**：午间打包已产出 APK，但 Windows 的 File.canonicalFile 没有按预期解析目录链接，符号链接拒绝用例失败；发布流程因此停止。补上逐祖先的 NIO isSymbolicLink 拒绝，再重跑构建和测试。Linux 开发 CI 全绿不能替代本地失败记录。

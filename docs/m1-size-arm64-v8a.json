@@ -1,8 +1,8 @@
 {
   "abi": "arm64-v8a",
-  "unpackedBytes": 241441246,
-  "xzBytes": 38110068,
-  "gzipBytes": 67647652,
+  "unpackedBytes": 241526735,
+  "xzBytes": 38125044,
+  "gzipBytes": 67672157,
   "selectedPackages": 268,
   "largestFiles": [
     {
@@ -46,6 +46,6 @@
       "bytes": 1837096
     }
   ],
-  "packSeconds": 80.736,
-  "sha256": "9a91f8ed7f3267665054b6d70d1966b9d389867334451474bca6fccfa0ede40e"
+  "packSeconds": 119.656,
+  "sha256": "c97761cd5c48e7625ddbbd858d43333de66b0e79b2dd4d47bac30ae56ceabb01"
 }
