@@ -1,0 +1,80 @@
+package dev.hoshino.benchmark
+
+import android.os.SystemClock
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.*
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+import java.io.File
+
+/** A separate instrumentation process can force-stop Hoshino without killing the measurement driver. */
+class M0StartupBenchmark {
+    @Test fun fiveColdIconLaunchesAndMemory() {
+        val instrumentation=InstrumentationRegistry.getInstrumentation()
+        val context=instrumentation.targetContext
+        val device=UiDevice.getInstance(instrumentation)
+        Configurator.getInstance().setWaitForIdleTimeout(0).setWaitForSelectorTimeout(0)
+        val output=context.getExternalFilesDir(null)!!
+        fun shell(command: String)=device.executeShellCommand(command)
+        val acceptance=JSONObject(shell("cat /sdcard/Android/data/dev.hoshino.app/files/m0-metrics.json"))
+        assertTrue(acceptance.getBoolean("backgroundContinuation"))
+        fun waitFor(message: String, timeout: Long=60000, condition: () -> Boolean) {
+            val deadline=SystemClock.elapsedRealtime()+timeout
+            while(true) {
+                try {if(condition())return} catch(_: StaleObjectException) { }
+                assertTrue(message,SystemClock.elapsedRealtime()<deadline);Thread.sleep(25)
+            }
+        }
+        fun memory(iteration: Int,phase: String): JSONArray {
+            val rows=shell("ps -A -o PID,PPID,NAME").lineSequence().drop(1).map {it.trim().split(Regex("\\s+"))}.filter {it.size>=3 && it[0].toIntOrNull()!=null && it[1].toIntOrNull()!=null}.toList()
+            val app=rows.first {it[2]=="dev.hoshino.app"}[0].toInt()
+            val owned=mutableSetOf(app)
+            do {val count=owned.size;rows.filter {it[1].toInt() in owned}.forEach {owned+=it[0].toInt()}} while(owned.size>count)
+            val result=JSONArray()
+            for(row in rows.filter {it[0].toInt() in owned}) {
+                val pid=row[0].toInt();val raw=shell("dumpsys meminfo $pid")
+                fun number(pattern: String)=Regex(pattern,RegexOption.MULTILINE).find(raw)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+                val pss=number("TOTAL PSS:\\s*(\\d+)").takeIf {it>0} ?: number("^\\s*TOTAL\\s+(\\d+)")
+                assertTrue("Missing PSS for process $pid",pss>0)
+                val name=row[2];val kind=if(pid==app) "java-app" else if(name.contains("proot")) "proot" else if(name=="node") "node-native" else "native-child"
+                val file="m0-memory/$iteration-$phase-$kind-$pid.txt"
+                File(output,file).apply {parentFile!!.mkdirs();writeText(raw)}
+                result.put(JSONObject().put("pid",pid).put("kind",kind).put("pssKb",pss).put("javaHeapPssKb",number("^\\s*Java Heap:\\s*(\\d+)")).put("nativeHeapPssKb",number("^\\s*Native Heap:\\s*(\\d+)")).put("dump",file))
+            }
+            val kinds=(0 until result.length()).map {result.getJSONObject(it).getString("kind")}
+            assertTrue("proot and Node must be observed",kinds.contains("proot") && kinds.contains("node-native"))
+            return result
+        }
+        val samples=JSONArray();val readyTimes=mutableListOf<Long>();val tokenTimes=mutableListOf<Long>()
+        for(iteration in 1..5) {
+            shell("am force-stop dev.hoshino.app")
+            device.pressHome();Thread.sleep(350)
+            device.swipe(device.displayWidth/2,device.displayHeight-100,device.displayWidth/2,device.displayHeight/3,20)
+            var icon=device.wait(Until.findObject(By.text("Hoshino Harness")),5000)
+            if(icon==null) {UiScrollable(UiSelector().scrollable(true)).scrollTextIntoView("Hoshino Harness");icon=device.findObject(By.text("Hoshino Harness"))}
+            assertNotNull("Launcher icon unavailable",icon)
+            val clickedAt=SystemClock.elapsedRealtime()
+            icon!!.click()
+            waitFor("Kernel readiness timed out",300000) {device.findObject(By.res("kernel-status"))?.text?.contains("已连接")==true}
+            val readyAt=SystemClock.elapsedRealtime()
+            requireNotNull(device.findObject(By.res("message-input"))).text="你好 benchmark"
+            requireNotNull(device.findObject(By.res("send"))).click()
+            waitFor("First streamed token timed out") {
+                device.findObject(By.res("approve"))?.click()
+                device.findObject(By.res("assistant-text"))?.text?.isNotEmpty()==true
+            }
+            val firstTokenAt=SystemClock.elapsedRealtime()
+            assertTrue("Memory must be sampled during output",device.hasObject(By.text("✦ 思考中")))
+            val streaming=memory(iteration,"streaming")
+            waitFor("Streaming did not finish") {!device.hasObject(By.text("✦ 思考中"))}
+            val idle=memory(iteration,"idle")
+            readyTimes+=readyAt-clickedAt;tokenTimes+=firstTokenAt-clickedAt
+            samples.put(JSONObject().put("iteration",iteration).put("iconToReadyMs",readyAt-clickedAt).put("iconToFirstTokenMs",firstTokenAt-clickedAt).put("streaming",streaming).put("idle",idle))
+        }
+        acceptance.put("startup",JSONObject().put("mode","process-cold, runtime already installed").put("samples",samples).put("iterations",5).put("iconToReadyMedianMs",readyTimes.sorted()[2]).put("iconToFirstTokenMedianMs",tokenTimes.sorted()[2]).put("includesApprovalAndInput",true))
+        acceptance.put("measurementAbi",android.os.Build.SUPPORTED_ABIS[0]).put("measurementApi",android.os.Build.VERSION.SDK_INT)
+        File(output,"m0-metrics.json").writeText(acceptance.toString(2))
+    }
+}

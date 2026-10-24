@@ -1,0 +1,51 @@
+{
+  "abi": "x86_64",
+  "unpackedBytes": 195096088,
+  "xzBytes": 27378756,
+  "gzipBytes": 49477968,
+  "selectedPackages": 245,
+  "largestFiles": [
+    {
+      "path": "usr/bin/node",
+      "bytes": 55086400
+    },
+    {
+      "path": "usr/lib/libcrypto.so.3",
+      "bytes": 4993808
+    },
+    {
+      "path": "usr/share/icu/76.1/icudt76l.dat",
+      "bytes": 3008672
+    },
+    {
+      "path": "usr/lib/libicui18n.so.76.1",
+      "bytes": 2955520
+    },
+    {
+      "path": "usr/lib/libstdc++.so.6.0.34",
+      "bytes": 2804104
+    },
+    {
+      "path": "usr/lib/libicuuc.so.76.1",
+      "bytes": 1746944
+    },
+    {
+      "path": "usr/lib/libsqlite3.so.3.53.4",
+      "bytes": 1640464
+    },
+    {
+      "path": "opt/hoshino/node-host/node_modules/@google/genai/dist/node/index.cjs",
+      "bytes": 1062531
+    },
+    {
+      "path": "opt/hoshino/node-host/node_modules/@google/genai/dist/node/index.mjs",
+      "bytes": 1058047
+    },
+    {
+      "path": "opt/hoshino/node-host/node_modules/@google/genai/dist/index.cjs",
+      "bytes": 1040204
+    }
+  ],
+  "packSeconds": 62.187,
+  "sha256": "f92cbcdfa49fa65d53ca315125b0003ad651aaf7d282611e4940557e364cc1fa"
+}

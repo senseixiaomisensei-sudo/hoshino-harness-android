@@ -3,8 +3,6 @@ package dev.hoshino.bridge
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.json.JSONObject
 import java.io.File
 
@@ -24,46 +22,13 @@ class ProotKernelLauncher : KernelLauncher {
         if (!marker.isFile || marker.readText() != fingerprint) {
             onDiagnostic("host: extracting rootfs")
             val staging = File(context.filesDir, "alpine-$abi.installing")
-            fun removeIncomplete(directory: File) {
-                require(directory.parentFile!!.canonicalFile == context.filesDir.canonicalFile)
-                fun remove(entry: File) {
-                    val mode=try { android.system.Os.lstat(entry.path).st_mode }
-                    catch (failure: android.system.ErrnoException) { if(failure.errno==android.system.OsConstants.ENOENT) return else throw failure }
-                    if(android.system.OsConstants.S_ISDIR(mode)) {
-                        // proot creates mode-000 placeholders for its virtual /dev, /proc and /sys binds.
-                        android.system.Os.chmod(entry.path, (mode and 511) or 0x1c0)
-                        val children=entry.listFiles() ?: error("Cannot enumerate incomplete runtime")
-                        children.forEach { remove(it) }
-                    }
-                    check(entry.delete()) { "Cannot remove incomplete runtime" }
-                }
-                remove(directory)
-            }
             val stagedMarker=File(staging, marker.name)
             if(!stagedMarker.isFile || stagedMarker.readText()!=fingerprint) {
-            removeIncomplete(staging)
-            staging.mkdirs()
-            context.assets.open("kernel/$abi.tgz").use { input ->
-                TarArchiveInputStream(GzipCompressorInputStream(input)).use { tar ->
-                    val links = mutableListOf<Pair<File, String>>()
-                    while (true) {
-                        val entry = tar.nextEntry ?: break
-                        val dest = File(staging, entry.name).canonicalFile
-                        require(dest.toPath().startsWith(staging.canonicalFile.toPath())) { "Unsafe rootfs path" }
-                        when {
-                            entry.isDirectory -> dest.mkdirs()
-                            entry.isSymbolicLink -> links += dest to entry.linkName
-                            entry.isFile -> { dest.parentFile?.mkdirs(); dest.outputStream().use { tar.copyTo(it) }; android.system.Os.chmod(dest.path, entry.mode and 511) }
-                            entry.isLink -> throw IllegalStateException("Rootfs must contain no hard links")
-                        }
-                    }
-                    // Create links only after all regular files; the archive cannot redirect extraction.
-                    links.forEach { (dest, target) -> dest.parentFile?.mkdirs(); android.system.Os.symlink(target, dest.path) }
-                }
-            }
+            RuntimeArchive.removeGenerated(staging,context.filesDir)
+            context.assets.open("kernel/$abi.txz").use { RuntimeArchive.extract(it,"xz",staging) }
             File(staging, marker.name).writeText(fingerprint)
             }
-            removeIncomplete(root)
+            RuntimeArchive.removeGenerated(root,context.filesDir)
             java.nio.file.Files.move(staging.toPath(), root.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
             onDiagnostic("host: rootfs extracted")
         }
@@ -104,6 +69,9 @@ fun classifyDiagnostic(line: String): String {
         return "dsh plugin $id: " + if(code != null) "callback HTTP $code" else "activation failed"
     }
     return when {
+    line.contains("ptrace",ignoreCase=true) && line.contains("Operation not permitted",ignoreCase=true) -> "proot: ptrace EPERM"
+    line.contains("ptrace",ignoreCase=true) && line.contains("Permission denied",ignoreCase=true) -> "proot: ptrace EACCES"
+    line.contains("ptrace",ignoreCase=true) && (line.contains("failed",ignoreCase=true) || line.contains("error",ignoreCase=true)) -> "proot: ptrace failed"
     line.contains("proot warning: signal 11 received") -> "proot: tracer SIGSEGV"
     line.contains("proot warning: signal 31 received") -> "proot: tracer SIGSYS"
     line.contains("did not activate") -> "dsh: plugin activation failed"

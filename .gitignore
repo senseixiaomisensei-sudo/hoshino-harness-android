@@ -1,6 +1,7 @@
 .research/
 .gradle/
 .kotlin/
+**/__pycache__/
 **/build/
 **/node_modules/
 local.properties

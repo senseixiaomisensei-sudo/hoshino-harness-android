@@ -65,7 +65,9 @@ jobs:
             app/src/main/assets/kernel
             app/src/main/assets/licenses
             app/src/main/jniLibs
-          key: kernel-v4-${{ runner.os }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
+            .research/runtime/*.tgz
+            docs/m0-size-*.json
+          key: kernel-v5-${{ runner.os }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/pack.py', 'rootfs/runtime-seeds.json', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
       - name: Prepare embedded runtimes for both ABIs
         if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: python3 rootfs/prepare.py --rootfs-only
@@ -78,6 +80,8 @@ jobs:
             app/src/main/assets/kernel
             app/src/main/assets/licenses
             app/src/main/jniLibs
+            .research/runtime/*.tgz
+            docs/m0-size-*.json
           key: ${{ steps.kernel-cache.outputs.cache-primary-key }}
       - name: Refresh compiled host and plugins in cached runtimes
         if: steps.kernel-cache.outputs.cache-hit == 'true'
@@ -86,6 +90,7 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug test --console=plain
+          python3 tools/check-apks.py
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -103,21 +108,31 @@ jobs:
           script: |
             node tools/mock-llm/server.mjs > /tmp/mock.log 2>&1 &
             adb reverse tcp:8099 tcp:8099
-            ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --console=plain
-            adb shell cat /sdcard/Android/data/dev.hoshino.app/files/m0-metrics.json > docs/m0-metrics.json
+            ./gradlew :app:connectedX86DebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --console=plain
+            adb shell cat /sdcard/Android/data/dev.hoshino.app/files/m0-metrics.json > docs/m0-acceptance-metrics.json
             adb shell cat /sdcard/Android/data/dev.hoshino.app/files/m0-memory.txt > docs/m0-memory.txt
+            ./gradlew :benchmark-driver:connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --console=plain
+            adb shell cat /sdcard/Android/data/dev.hoshino.benchmark/files/m0-metrics.json > docs/m0-metrics.json
+            adb pull /sdcard/Android/data/dev.hoshino.benchmark/files/m0-memory docs/m0-memory
       - name: Upload APK and verification reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: hoshino-m0
           path: |
-            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/arm64/debug/*.apk
+            app/build/outputs/apk/x86/debug/*.apk
             app/build/reports/androidTests
             app/build/outputs/androidTest-results
+            benchmark-driver/build/reports/androidTests
+            benchmark-driver/build/outputs/androidTest-results
             core-bridge/build/reports/tests
             docs/m0-metrics.json
+            docs/m0-acceptance-metrics.json
             docs/m0-memory.txt
+            docs/m0-memory
+            docs/m0-size-*.json
+            docs/m0-apk-sizes.json
   release:
     if: startsWith(github.ref, 'refs/tags/')
     needs: m0
@@ -127,4 +142,4 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: hoshino-m0, path: artifact }
       - env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
-        run: gh release create "${GITHUB_REF_NAME}" artifact/app/build/outputs/apk/debug/*.apk --generate-notes
+        run: gh release create "${GITHUB_REF_NAME}" artifact/app/build/outputs/apk/arm64/debug/*.apk artifact/app/build/outputs/apk/x86/debug/*.apk --generate-notes

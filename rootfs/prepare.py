@@ -3,6 +3,7 @@ Run --lock once to pin the signed-repository package file hashes; subsequent run
 No runtime downloads, npm execution, or package installation happens on the phone.
 """
 import argparse, gzip, hashlib, io, json, pathlib, subprocess, sys, tarfile
+from pack import pack
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / '.research' / 'runtime'
@@ -71,46 +72,32 @@ def rootfs(abi):
     tag = 'hoshino-m0-'+platform
     subprocess.run(['docker','build','--platform','linux/'+platform,'--build-arg','NODE_ARCH='+node_arch,'-f','rootfs/Dockerfile','-t',tag,'.'],cwd=ROOT,check=True)
     cid = subprocess.check_output(['docker','create','--platform','linux/'+platform,tag]).decode().strip()
-    target = ROOT/'app/src/main/assets/kernel'/f'{abi}.tgz';target.parent.mkdir(parents=True,exist_ok=True)
+    target = ROOT/'app/src/main/assets/kernel'/f'{abi}.txz';target.parent.mkdir(parents=True,exist_ok=True)
     exported = CACHE/f'{abi}-export.tar'
     try:
         subprocess.run(['docker','export','-o',str(exported),cid],check=True)
-        with tarfile.open(exported) as src, tarfile.open(target,'w:gz',dereference=True) as dst:
-            for entry in src:
-                if entry.name.split('/')[0] in ['dev','proc','sys']: continue
-                if entry.islnk():
-                    data = src.extractfile(entry);entry.type=tarfile.REGTYPE;entry.linkname='';entry.size=len(data.read());data.seek(0);dst.addfile(entry,data)
-                elif entry.isfile(): dst.addfile(entry,src.extractfile(entry))
-                else: dst.addfile(entry)
-        print(json.dumps({'abi':abi,'compressedBytes':target.stat().st_size,'sha256':hashlib.sha256(target.read_bytes()).hexdigest()}))
+        pack(exported,abi,target,CACHE/f'{abi}.tgz')
     finally: subprocess.run(['docker','rm',cid],check=True)
 
 def refresh_host(abi):
     """Replace only our compiled host/plugins; keep locked upstream dependencies."""
-    target=ROOT/'app/src/main/assets/kernel'/f'{abi}.tgz'
-    temporary=target.with_suffix('.refreshing')
-    prefix='opt/hoshino/node-host/dist/'
-    with tarfile.open(target,'r:gz') as src,tarfile.open(temporary,'w:gz',compresslevel=6) as dst:
-        for entry in src:
-            if entry.name==prefix.rstrip('/') or entry.name.startswith(prefix): continue
-            dst.addfile(entry,src.extractfile(entry) if entry.isfile() else None)
-        for path in sorted((ROOT/'node-host/dist').rglob('*')):
-            if path.is_file(): dst.add(path,arcname=prefix+path.relative_to(ROOT/'node-host/dist').as_posix(),recursive=False)
-    temporary.replace(target)
+    target=ROOT/'app/src/main/assets/kernel'/f'{abi}.txz'
+    pack(target,abi,target,CACHE/f'{abi}.tgz',refresh=True)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--lock',action='store_true');parser.add_argument('--abi',choices=ABIS,action='append');parser.add_argument('--proot-only',action='store_true');parser.add_argument('--rootfs-only',action='store_true');parser.add_argument('--refresh-host',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--lock',action='store_true');parser.add_argument('--abi',choices=ABIS,action='append');parser.add_argument('--proot-only',action='store_true');parser.add_argument('--rootfs-only',action='store_true');parser.add_argument('--refresh-host',action='store_true');parser.add_argument('--repack-local',action='store_true');args=parser.parse_args()
     if args.refresh_host and (args.lock or args.proot_only or args.rootfs_only): parser.error('--refresh-host cannot update runtime dependencies')
     if args.rootfs_only and (args.lock or args.proot_only): parser.error('--rootfs-only cannot update proot')
     CACHE.mkdir(parents=True,exist_ok=True)
     lock_file=ROOT/'rootfs/termux-lock.json';locks=json.loads(lock_file.read_text()) if lock_file.exists() else {}
     for abi in args.abi or ABIS:
-        if args.refresh_host: refresh_host(abi)
+        if args.repack_local: pack(ROOT/'app/src/main/assets/kernel'/f'{abi}.tgz',abi,ROOT/'app/src/main/assets/kernel'/f'{abi}.txz',CACHE/f'{abi}.tgz',refresh=True)
+        elif args.refresh_host: refresh_host(abi)
         else:
             if args.lock: termux(abi,locks,True)
             if not args.rootfs_only: subprocess.run([sys.executable,str(ROOT/'rootfs/build-proot.py'),'--abi',abi],check=True)
             if not args.proot_only: rootfs(abi)
     if not args.proot_only:
         assets=ROOT/'app/src/main/assets/kernel'
-        manifest={abi:hashlib.sha256((assets/f'{abi}.tgz').read_bytes()).hexdigest() for abi in ABIS if (assets/f'{abi}.tgz').exists()}
+        manifest={abi:hashlib.sha256((assets/f'{abi}.txz').read_bytes()).hexdigest() for abi in ABIS if (assets/f'{abi}.txz').exists()}
         (assets/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')

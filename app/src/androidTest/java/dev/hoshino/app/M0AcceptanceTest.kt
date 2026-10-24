@@ -9,6 +9,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import dev.hoshino.bridge.Provider
 import dev.hoshino.bridge.ProviderStore
+import dev.hoshino.bridge.RuntimeArchive
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
@@ -80,8 +81,23 @@ class M0AcceptanceTest {
             File(context.applicationInfo.dataDir).walkTopDown().filter { it.isFile }.forEach { assertFalse("Plaintext credential in app storage: ${it.name}",contains(it)) }
             val logcat=instrumentation.uiAutomation.executeShellCommand("logcat -d --pid=${android.os.Process.myPid()}")
             android.os.ParcelFileDescriptor.AutoCloseInputStream(logcat).use { assertFalse(it.readBytes().toString(Charsets.UTF_8).contains(canary)) }
+            val abi=android.os.Build.SUPPORTED_ABIS.first {it=="arm64-v8a" || it=="x86_64"}
+            val compression=JSONObject();val digests=mutableListOf<String>()
+            for(format in listOf("gzip","xz")) {
+                val directory=File(context.cacheDir,"m0-unpack-$format")
+                RuntimeArchive.removeGenerated(directory,context.cacheDir)
+                val assets=if(format=="gzip") instrumentation.context.assets else context.assets
+                val path=if(format=="gzip") "baseline.tgz" else "kernel/$abi.txz"
+                compression.put(format+"Bytes",assets.openFd(path).use {it.length})
+                val start=android.os.SystemClock.elapsedRealtimeNanos()
+                digests+=assets.open(path).use {RuntimeArchive.extract(it,format,directory)}
+                compression.put(format+"UnpackMs",(android.os.SystemClock.elapsedRealtimeNanos()-start)/1000000.0)
+                RuntimeArchive.removeGenerated(directory,context.cacheDir)
+            }
+            assertEquals("Compression comparison must use identical tar content",digests[0],digests[1])
+            compression.put("tarSha256",digests[0]).put("sameTar",true)
             val memory=Debug.MemoryInfo();Debug.getMemoryInfo(memory)
-            val metrics=JSONObject().put("coldStartMs",KernelRuntime.connectedAt-KernelRuntime.startedAt).put("appPssKb",memory.totalPss).put("sessionPreserved",true).put("backgroundSeconds",300).put("standardsPassed",8)
+            val metrics=JSONObject().put("serviceStartToReadyMs",KernelRuntime.connectedAt-KernelRuntime.startedAt).put("appPssKb",memory.totalPss).put("sessionPreserved",true).put("backgroundContinuation",true).put("backgroundSeconds",300).put("standardsPassed",8).put("compression",compression)
             fun shell(command: String): String = android.os.ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes().toString(Charsets.UTF_8) }
             // Capture before instrumentation exits; its app and guest processes can then be stopped by Android.
             val processRows=shell("ps -A -o PID,PPID,NAME").lineSequence().drop(1).map { it.trim().split(Regex("\\s+")) }.filter { it.size>=3 && it[0].toIntOrNull()!=null && it[1].toIntOrNull()!=null }.toList()

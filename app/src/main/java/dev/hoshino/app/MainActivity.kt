@@ -13,8 +13,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +24,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
     var draft by remember { mutableStateOf("") }
     val scroll=rememberLazyListState()
     LaunchedEffect(state.messages.size,state.messages.lastOrNull()?.text) { if(state.messages.isNotEmpty()) scroll.animateScrollToItem(state.messages.lastIndex) }
-    Scaffold(modifier=Modifier.fillMaxSize().imePadding(), topBar={
+    Scaffold(modifier=Modifier.fillMaxSize().imePadding().semantics { testTagsAsResourceId=BuildConfig.DEBUG }, topBar={
         Column(Modifier.statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
                 Text("✦",color=Color(0xfff49ab8),fontSize=26.sp,modifier=Modifier.padding(8.dp))
@@ -64,7 +64,7 @@ class MainActivity : ComponentActivity() {
                     Text("Hoshino Harness",fontSize=16.sp)
                     Text("● ${state.status}",fontSize=11.sp,color=if(state.status=="已连接") Color(0xff269b58) else Color(0xff997329),modifier=Modifier.testTag("kernel-status").clickable { showLogs=true })
                 }
-                IconButton(onClick={settings=true},modifier=Modifier.testTag("settings")) { Icon(Icons.Default.Settings,"模型设置") }
+                IconButton(onClick={settings=true},modifier=Modifier.testTag("settings")) { Text("设置",fontSize=12.sp) }
             }
             Box(Modifier.align(Alignment.CenterHorizontally)) {
                 TextButton(onClick={showModels=true},modifier=Modifier.testTag("model-picker")) { Text(if(state.provider.isEmpty()) "选择模型 ▾" else "${state.provider} / ${state.model} ▾",fontSize=12.sp) }

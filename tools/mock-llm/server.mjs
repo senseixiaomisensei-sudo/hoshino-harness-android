@@ -18,6 +18,8 @@ export function createMockLlm() {
     const args = tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'} : {};
     const resultText = hasResult ? (typeof last.content === 'string' ? last.content : last.content.filter(c=>c.type==='tool_result').map(c=>typeof c.content==='string'?c.content:JSON.stringify(c.content)).join(' ')) : '';
     const answer = hasResult ? `工具已完成，返回结果：${resultText}` : '你好，我是 Hoshino。';
+    const benchmark=/benchmark/.test(prompt);
+    const textChunks=benchmark?['你好，',...Array(32).fill('基准测试输出。')]:['你好，',answer];
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     const event = async (data, name) => { res.write(`${name ? `event: ${name}\n` : ''}data: ${JSON.stringify(data)}\n\n`); await pause(15); };
     if (anthropic) {
@@ -32,7 +34,7 @@ export function createMockLlm() {
         await send('content_block_delta', {index:1, delta:{type:'input_json_delta', partial_json:JSON.stringify(args)}});
       } else {
         await send('content_block_start', {index:1, content_block:{type:'text', text:''}});
-        for (const text of ['你好，',answer]) await send('content_block_delta', {index:1, delta:{type:'text_delta', text}});
+        for (const text of textChunks) {await send('content_block_delta', {index:1, delta:{type:'text_delta', text}});if(benchmark)await pause(350);}
       }
       await send('content_block_stop', {index:1});
       await send('message_delta', {delta:{stop_reason:tool ? 'tool_use':'end_turn', stop_sequence:null},usage:{output_tokens:20}});
@@ -44,7 +46,7 @@ export function createMockLlm() {
       if (tool) {
         await chunk({tool_calls:[{index:0, id:'call_mock', type:'function', function:{name:tool, arguments:''}}]});
         await chunk({tool_calls:[{index:0, function:{arguments:JSON.stringify(args)}}]});
-      } else for (const content of ['你好，',answer]) await chunk({content});
+      } else for (const content of textChunks) {await chunk({content});if(benchmark)await pause(350);}
       await chunk({}, tool ? 'tool_calls':'stop');
       res.write('data: [DONE]\n\n');
     }
