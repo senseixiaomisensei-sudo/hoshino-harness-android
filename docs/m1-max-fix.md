@@ -23,3 +23,7 @@ dsh 保持未修改的 `0.2.1-rc.2`，Agent loop、JSONL、SessionStore 与 Kern
 本地 Docker Linux 引擎未运行，缓存缺少新启用的纯 JavaScript token-meter。构建通过锁文件中的原始 npm tarball 补齐它，校验 SHA512 和精确版本、拒绝原生文件，保留各 ABI 的原有 Node/原生依赖字节；实现见 `rootfs/hydrate-locked-js.py`。常规 CI 从原 Dockerfile 构建完整运行时，不需要该缓存补齐步骤。
 
 本包是修复测试版本，完整 M1 验收仍在继续。未有完整全绿记录时不记 CI 通过。
+
+## 收尾复验
+
+同一 APK 在修正测试定位和可重复写入夹具后，本地现有 8 项仪器回归全部通过，226.002 秒、`OK (8 tests)`。远端运行 `40077416444` 仍为两项失败，未改记全绿。公开复验记录及停止开发交接见 [阶段性交付报告](delivery-report-2026-10-24.md)。

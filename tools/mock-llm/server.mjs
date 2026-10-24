@@ -20,7 +20,7 @@ export function createMockLlm() {
     const last = messages.at(-1);
     const hasResult = last?.role === 'tool' || last?.content?.some?.(c => c.type === 'tool_result');
     const tool = !hasResult && /system command|系统命令|shizuku.*id/i.test(prompt) ? 'system_shell' : !hasResult && /设备|device/.test(prompt) ? 'get_device_info' : !hasResult && /hello\.txt/.test(prompt) ? 'write' : undefined;
-    const writeMarker=prompt.match(/m1-write-fixture-[a-z]+/)?.[0];
+    const writeMarker=prompt.match(/m1-write-fixture-[a-z]+(?:-[a-f0-9]+)?/)?.[0];
     const args = tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'+(writeMarker?writeMarker+'\n':'')} : tool==='system_shell' ? {command:'id -u; getprop ro.build.version.release',timeout_ms:5000} : {};
     const resultText = hasResult ? (typeof last.content === 'string' ? last.content : last.content.filter(c=>c.type==='tool_result').map(c=>typeof c.content==='string'?c.content:JSON.stringify(c.content)).join(' ')) : '';
     const answer = hasResult ? `工具已完成，返回结果：${resultText}` : '你好，我是 Hoshino。';

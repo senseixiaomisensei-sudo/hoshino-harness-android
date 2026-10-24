@@ -1,9 +1,15 @@
 # Hoshino Harness · Android
 
 原生 Compose Android 宿主，原版 DeepSeek Harness 0.2.1-rc.2 + Cordis。
-当前在开发 M1，合入用户提供的原生 UI，持续接入终端、文件、截图、附件与 self 插件。完整 M1 尚未验收；进度和证据见 [M1 报告](docs/m1-report.md)，历史基线见 [M0 报告](docs/m0-report.md)。
+当前交付为 **M1 preview.5 测试版**，使用原生 Kotlin / Compose / Material 3 界面；模型、工具和手机能力通过原版 dsh / Cordis 接入。本轮已按用户要求发布源码并收尾，完整 M1 里程碑仍有未完成项。
 
-**暂缓使用 preview.1：** 已确认其打包过程漏掉 YAML 运行代码，模拟器内核启动失败。Release 保留复现用产物并标记警告；修复版本正在重新安装验证。不要把开发 CI 全绿当作完整 M1 通过。
+- [手机 APK（arm64-v8a）](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.1.0-m1-preview.5/Hoshino-Harness-0.1.0-m1-arm64-v8a-debug.apk)
+- [全部 APK、SHA256 与验证记录](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.1.0-m1-preview.5)
+- [本轮交付报告](docs/delivery-report-2026-10-24.md) · [M1 过程记录](docs/m1-report.md) · [M0 历史基线](docs/m0-report.md)
+
+测试版包含双协议流式聊天与思考、工具审批、工作区读写、终端、Shizuku 系统命令、历史正文搜索、声明式 UI 覆盖和配置快照回滚。preview.5 修正 max 的真实请求与预算，思考全文可折叠，终端默认折叠，上下文展示原版 token-meter 数据。
+
+同一发布 APK 的本地现有 8 项仪器回归通过（226.002 秒），原版 dsh 11 轮集成通过。交付时远端 CI 未全绿，后续状态以 [Actions](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions) 为准。完整 M1AcceptanceTest、真机量化与部分高级功能尚未完成，具体边界见交付报告。旧 preview.1 保留为历史故障复现，安装请使用 preview.5。
 
 ## 构建
 
@@ -37,11 +43,11 @@ M1 冒烟覆盖 APK 自带内核、真实 PTY、密钥保护、复制、截图�
 
 ## 使用
 
-首次启动解压 rootfs，前台服务启动内核。设置里添加 provider、协议、base URL、模型和自己的 key。Anthropic 默认 `https://api.anthropic.com`，OpenAI 兼容的 `/v1` 根地址依服务约定填写。等待“已连接”后聊天；模型网络请求与 Agent 写操作默认审批。M1 终端/文件/self 仍在联调，未接通的扩展以报告为准。
+首次启动解压 rootfs，前台服务启动内核。设置里添加 provider、协议、base URL、模型和自己的 key。Anthropic 默认 `https://api.anthropic.com`，OpenAI 兼容的 `/v1` 根地址依服务约定填写。等待“已连接”后聊天；模型网络请求与 Agent 写操作默认审批。终端、文件和 self 的能力边界以交付报告为准。
 
 不要将服务、密钥、用户 workspace 或 `.research` 缓存提交到仓库。JSON 中的 `apiKey` 是 Keystore 凭据引用。无遥测插件、无 Google Play Services、无远程业务后端。
 
-[架构决定](docs/decisions.md) · [插件 DIY](docs/plugins.md) · [第三方许可](docs/third-party.md)
+[架构决定](docs/decisions.md) · [插件 DIY](docs/plugins.md) · [第三方许可](THIRD_PARTY.md)
 
 ## ABI 包与量化验收
 

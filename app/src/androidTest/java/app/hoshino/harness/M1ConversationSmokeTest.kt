@@ -83,10 +83,11 @@ class M1ConversationSmokeTest {
                 assertTrue(device.filterIsInstance<HarnessEvent.ToolCallStarted>().any{it.name=="get_device_info"})
                 assertTrue(device.filterIsInstance<HarnessEvent.ToolCallOutput>().any{it.delta.contains(Build.MODEL)})
                 assertTrue(device.filterIsInstance<HarnessEvent.AssistantDelta>().joinToString(""){it.delta}.contains(Build.MODEL))
-                val write=turn("写入 hello.txt m1-write-fixture-$provider")
+                val writeMarker="m1-write-fixture-$provider-"+java.util.UUID.randomUUID().toString().replace("-","").take(8)
+                val write=turn("写入 hello.txt $writeMarker")
                 assertTrue(write.filterIsInstance<HarnessEvent.ToolCallStarted>().any{it.name=="write"})
                 assertTrue(write.any{it is HarnessEvent.FileDiff})
-                assertEquals("Hello from dsh\nm1-write-fixture-$provider\n",client.files.resolve("hello.txt").readText())
+                assertEquals("Hello from dsh\n$writeMarker\n",client.files.resolve("hello.txt").readText())
             }
             turn("m1-error-fixture",true)
             fun hasCanary(file:File):Boolean {
