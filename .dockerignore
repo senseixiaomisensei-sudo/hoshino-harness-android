@@ -6,3 +6,5 @@
 !node-host/dist/**
 !rootfs
 !rootfs/android-compat.c
+!rootfs/node-apk
+!rootfs/node-apk/node-*.apk

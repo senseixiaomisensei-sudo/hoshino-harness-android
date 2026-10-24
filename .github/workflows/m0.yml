@@ -67,7 +67,7 @@ jobs:
             app/src/main/jniLibs
             .research/runtime/*.tgz
             docs/m0-size-*.json
-          key: kernel-v5-${{ runner.os }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/pack.py', 'rootfs/runtime-seeds.json', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
+          key: kernel-v5-${{ runner.os }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/pack.py', 'rootfs/runtime-seeds.json', 'rootfs/node-apk-lock.json', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
       - name: Prepare embedded runtimes for both ABIs
         if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: python3 rootfs/prepare.py --rootfs-only

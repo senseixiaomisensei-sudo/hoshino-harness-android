@@ -69,6 +69,11 @@ def termux(abi, locks, update):
 
 def rootfs(abi):
     _, platform, node_arch = ABIS[abi]
+    locked=json.loads((ROOT/'rootfs/node-apk-lock.json').read_text())[abi]
+    node_apk=ROOT/'rootfs/node-apk'/f'node-{node_arch}.apk'
+    if not node_apk.exists() or hashlib.sha256(node_apk.read_bytes()).hexdigest()!=locked['sha256']:
+        payload=download(locked['url'],node_apk)
+        assert hashlib.sha256(payload).hexdigest()==locked['sha256'],'Locked Node APK checksum mismatch'
     tag = 'hoshino-m0-'+platform
     subprocess.run(['docker','build','--platform','linux/'+platform,'--build-arg','NODE_ARCH='+node_arch,'-f','rootfs/Dockerfile','-t',tag,'.'],cwd=ROOT,check=True)
     cid = subprocess.check_output(['docker','create','--platform','linux/'+platform,tag]).decode().strip()

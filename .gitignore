@@ -11,6 +11,7 @@ local.properties
 node-host/.runtime/
 node-host/dist/
 rootfs/staging/
+rootfs/node-apk/
 app/src/main/assets/kernel/
 app/src/main/jniLibs/
 app/src/main/assets/licenses/

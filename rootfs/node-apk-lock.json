@@ -1,0 +1,14 @@
+{
+  "arm64-v8a": {
+    "version": "24.18.1-r0",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/nodejs-24.18.1-r0.apk",
+    "sha256": "c8d2a5fe776d0f5f3d8fd0ea41312317a0dc1d56ecd00c59ffadfc2d6c486f90",
+    "bytes": 19196521
+  },
+  "x86_64": {
+    "version": "24.18.1-r0",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/nodejs-24.18.1-r0.apk",
+    "sha256": "3c78c9bc8a1d52cc18e79f94120d69ae7705dab1d77054dfa040a064bf344b87",
+    "bytes": 19753406
+  }
+}
