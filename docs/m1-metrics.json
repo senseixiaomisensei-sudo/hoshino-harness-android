@@ -1,0 +1,16 @@
+{
+  "milestone": "M1",
+  "status": "incomplete-baseline",
+  "recordedAt": "2026-10-27",
+  "source": "docs/delivery-report-2026-10-24.md",
+  "apkBytes": { "arm64-v8a": 109620802, "x86_64": 114512420 },
+  "coldStartToInputMs": null,
+  "kernelReadyMs": null,
+  "idleMemoryBytes": null,
+  "runningMemoryBytes": null,
+  "backgroundSurvivalRate": null,
+  "arm64DeviceVerified": false,
+  "oemDeviceVerified": false,
+  "lastCompletedRemoteCi": { "runId": 40079336750, "conclusion": "failure" },
+  "note": "Missing M1 device measurements are deliberately null; M0 and emulator measurements are not substituted."
+}
