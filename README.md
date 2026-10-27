@@ -1,5 +1,21 @@
 # Hoshino Harness · Android
 
+## M2（2026-10-27）
+
+M2 版本为 **0.2.0-m2**，包名 `dev.hoshino.app`，保持原证书。APK 由 GitHub Actions 构建。保留旧 M1 记录供追溯；M2 的实现、未完成项和验证以 [M2 报告](docs/m2-report.md) 为准，不把原型页面或 boot 成功算作全量验收。
+
+- [M2 手机 APK（arm64-v8a）](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.0-m2/Hoshino-Harness-0.2.0-m2-arm64-v8a-debug.apk)
+- [M2 全部产物与 SHA256](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.0-m2)
+- [插件兼容记录](docs/m2-plugin-compat.md) · [资源/体积](docs/m2-slim.md) · [设备清单](docs/m2-device-checklist.md) · [指标](m2-metrics.json)
+
+安装：下载匹配 ABI 的 APK 覆盖安装，无需卸载旧版。设置 → M2 提供审批、模式、系统提示词、UI DSL、搜索、插件、配置同步和源码构建。模型使用用户自己的供应商；免费联网搜索无需额外 Key。
+
+自身源码构建：填写自己的 GitHub token 和仓库，将原签名密钥放入仓库 Secret `HOSHINO_DEBUG_KEYSTORE`；使用 `m2.yml` 工作流。Token 加密保存在 Android Keystore。`self_build` 提交新分支，`self_update` 跟进同一提交的已通过构建并核验下载产物。签名不符的包会被拒绝。
+
+开发：`npm --prefix node-host ci --ignore-scripts`、`npm --prefix node-host run build`、`npm --prefix node-host test`；Android 构建见 `.github/workflows/m2.yml`。dsh 固定原版 `0.2.1-rc.2`，主 UI 保留 Compose ZIP 的组件和 Token；不 fork 内核。
+
+以下为 M1 历史交付说明。
+
 原生 Compose Android 宿主，原版 DeepSeek Harness 0.2.1-rc.2 + Cordis。
 当前交付为 **M1 preview.5 测试版**，使用原生 Kotlin / Compose / Material 3 界面；模型、工具和手机能力通过原版 dsh / Cordis 接入。本轮已按用户要求发布源码并收尾，完整 M1 里程碑仍有未完成项。
 
