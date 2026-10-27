@@ -55,7 +55,7 @@ class ProotKernelLauncher : KernelLauncher {
         val network = context.getSystemService(android.net.ConnectivityManager::class.java)
         val dns = network.getLinkProperties(network.activeNetwork)?.dnsServers.orEmpty()
         val resolv = File(context.filesDir, "resolv.conf").apply { writeText(dns.joinToString("\n") { "nameserver ${it.hostAddress}" } + "\n") }
-        val args = listOf("$lib/libproot.so", "--link2symlink", "-r", root.path,
+        val args = listOf("$lib/libproot.so", "-0", "--link2symlink", "-r", root.path,
             "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "${workspace.path}:/workspace", "-b", "${workspace.path}:/root/workspace", "-b", "${home.path}:/home/hoshino", "-b", "${hoshino.path}:/root/.hoshino",
             "-b", "${resolv.path}:/etc/resolv.conf",
             "-w", "/root/workspace", "/usr/bin/env", "HOME=/root", "PATH=/root/.hoshino/tools/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "DSH_TELEMETRY_DISABLED=1",

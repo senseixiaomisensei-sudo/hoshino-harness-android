@@ -236,6 +236,11 @@ jobs:
           metrics.update(status='implementation-preview-not-full-M2-acceptance',sourceCommit='${{ github.sha }}',buildRun='${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',nativeVerification='${{ needs.native-smoke.result }}')
           metrics['apkBytes']={r['abi']:r['bytes'] for r in records}
           metrics['apkSha256']={r['abi']:r['sha256'] for r in records}
+          native=pathlib.Path('native-results/reports/m2-native-metrics.json')
+          if native.exists():
+            try:
+              sample=json.loads(native.read_text());metrics.update(uiDslReloadMs=sample.get('uiDslReloadMs'),kernelReadyMs=sample.get('firstBootKernelReadyMs'),deviceEnvironment=sample.get('environment'));metrics['nativeSample']=sample
+            except ValueError: pass
           for record in records:
             apk=pathlib.Path('artifacts/build/deliverables')/record['apk']
             assert apk.stat().st_size==record['bytes']
