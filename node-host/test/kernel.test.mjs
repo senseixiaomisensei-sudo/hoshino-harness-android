@@ -14,7 +14,7 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   const workspace = join(root,'workspace'); await mkdir(workspace);
   const mock = createMockLlm(); const mockPort = await listen(mock.server);
   const canary = `sk-m0-${crypto.randomUUID()}`;
-  let ready, deviceCalls = 0, systemCalls=0, systemAuthorized=false, denySystem=false; const approvals = [];
+  let ready, deviceCalls = 0, systemCalls=0, systemAuthorized=false, denySystem=false; const approvals = [];const githubSteps=[];
   const kernelReady = new Promise(r => ready = r);
   const callback = createServer(async (req,res) => {
     if (req.headers.authorization !== 'Bearer test-callback-secret') { res.writeHead(401).end(); return; }
@@ -29,6 +29,18 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
     if (req.url === '/system-access') result={authorized:systemAuthorized};
     if (req.url === '/system-shell') { systemCalls++;result={uid:2000,cwd:'/data/local/tmp',exitCode:0,stdout:'2000\nfixture Android\n',stderr:'',timedOut:false}; }
     if (req.url === '/ready') ready(body);
+    if(req.url==='/bridge-v1' && body.action==='github.request'){
+      const {path,method='GET',body:payload}=body.request;githubSteps.push({path,method});
+      if(path==='/repos/fixture/harness')result={default_branch:'main'};
+      else if(path.includes('/git/ref/heads/'))result={object:{sha:'base-sha'}};
+      else if(path.includes('/git/commits/base-sha'))result={tree:{sha:'base-tree'}};
+      else if(path.endsWith('/git/trees')){assert.ok(payload.tree.some(f=>f.path==='Main.kt'&&f.content.includes('battery')));result={sha:'new-tree'};}
+      else if(path.endsWith('/git/commits'))result={sha:'new-commit'};
+      else if(path.includes('/actions/runs?'))result={workflow_runs:[{id:22,head_sha:'new-commit',status:'completed',conclusion:'success',html_url:'https://github.com/fixture/harness/actions/runs/22'}]};
+      else if(path.endsWith('/actions/runs/22/artifacts'))result={artifacts:[{id:33,name:'hoshino-m2-development',expired:false}]};
+      else result={status:204};
+    }
+    if(req.url==='/bridge-v1' && body.action==='update.artifact'){assert.equal(body.request.artifactId,33);result={verified:true,installation:'mock-native-installer'};}
     res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(result));
   });
   const callbackPort=await listen(callback);
@@ -102,6 +114,17 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
   }
   const withUsage=(await rpc('session/list',{})).items.find(row=>row.sessionId===sessionId).projections.values;
   assert.ok(withUsage.contextPressure.pressureTokens>0);assert.ok(withUsage.contextBreakdown.toolsTokens>0);
+  const mobile=async(operation,request={})=>{const response=await fetch(`${base}/mobile/control`,{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({action:'m2',request:{operation,...request}})});assert.equal(response.status,200,await response.clone().text());return response.json();};
+  const inspect=await mobile('state');assert.ok(inspect.modes.length>=9);
+  await mkdir(join(root,'home/hoshino/source'),{recursive:true});await writeFixture();
+  async function writeFixture(){const {writeFile}=await import('node:fs/promises');await writeFile(join(root,'home/hoshino/source/Main.kt'),'// battery component\nfun battery() = 42\n');}
+  await mobile('config',{name:'build.json',value:{repository:'fixture/harness',workflow:'m2.yml',branch:'hoshino/self-update'}});
+  const build=await mobile('build');assert.equal(build.sha,'new-commit');
+  const update=await mobile('update');assert.equal(update.verified,true);assert.ok(githubSteps.some(s=>s.path.includes('/dispatches')));
+  for(const [prompt,tool]of [['m2-desktop-todo','todo_write'],['m2-desktop-read','read'],...(process.platform==='win32'?[]:[['m2-desktop-bash','bash']])]){
+    const before=frames.length;await rpc('session/prompt',{sessionId,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text:prompt}]});await wait(()=>frames.slice(before).some(f=>f.value?.event?.type==='turn/end'));turns++;
+    assert.ok(frames.slice(before).some(f=>f.value?.event?.type==='tool/call'&&f.value.event.data.name===tool));const results=frames.slice(before).filter(f=>f.value?.event?.type==='tool/result');assert.ok(results.length>0);assert.equal(results.at(-1).value.event.data.message.isError,false,JSON.stringify(results));
+  }
   assert.ok(!logs.includes(canary));assert.ok(!logs.includes(info.token));
   let durableLog='';
   async function scan(dir){for(const e of await readdir(dir,{withFileTypes:true})){const p=join(dir,e.name);if(e.isDirectory())await scan(p);else {const bytes=await readFile(p);assert.ok(!bytes.includes(Buffer.from(canary)),p);if(e.name.endsWith('.jsonl'))durableLog+=bytes.toString('utf8');}}}

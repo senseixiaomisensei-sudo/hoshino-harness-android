@@ -34,6 +34,20 @@ export async function apply(ctx:Context){
  };
  ctx.effect(()=>()=>{ctx.androidBridge.call=originalCall;});
  const modeFor=(sid:string)=>{const o=ctx.mobilePolicy.options.get(sid) as Data|undefined;return (config.get('modes.json').modes??modes).find((m:Data)=>m.id===o?.mode)??modes[1]!;};
+ const fallbackRoutes=new Map<string,Data>();const failedRoutes=new Map<string,Set<string>>();
+ ctx.on('agent/request',async(payload,next)=>{
+  const id=payload.agent.id;const mode=modeFor(id);if(typeof mode.maxSteps==='number'&&payload.step>=mode.maxSteps)throw Error('Configured maximum Agent steps reached');
+  const call={...await next()};const override=fallbackRoutes.get(id)??mode.model;
+  if(override?.providerId&&override?.modelId){call.provider=String(override.providerId);call.model=String(override.modelId);delete call.reasoningEffort;}
+  if(typeof mode.temperature==='number')call.temperature=Math.min(2,Math.max(0,mode.temperature));
+  if(typeof mode.maxOutputTokens==='number')call.maxTokens=Math.max(1,Math.floor(mode.maxOutputTokens));
+  return call;
+ });
+ ctx.on('agent/request-error',async(payload,next)=>{
+  if(payload.signal.aborted)return next();const key=payload.agent.id+':'+payload.turn;const tried=failedRoutes.get(key)??new Set<string>();tried.add(payload.provider);failedRoutes.set(key,tried);
+  const route=(config.get('routing.json').fallback??[]).find((r:Data)=>r.providerId&&r.modelId&&!tried.has(r.providerId));
+  if(!route)return next();fallbackRoutes.set(payload.agent.id,route);return {kind:'retry'};
+ });
  const promptLayers=async(sid:string)=>{
   const p=config.get('prompts.json');const mode=modeFor(sid);const layers:Data[]=[{source:'global',...(p.global??{})}];
   for(const name of ['AGENTS.md','HOSHINO.md'])try{layers.push({source:name,operation:'append',text:await readFile(await workspacePath(workspace,name),'utf8')});}catch{}
@@ -57,9 +71,9 @@ export async function apply(ctx:Context){
  ctx.effect(()=>()=>clearInterval(timer));
  ctx.on('schedule/changed',()=>{void ctx.schedule.catalog().then(entries=>bridge('scheduler.sync',{entries})).catch(()=>{});});
  ctx.on('tools/execute',async(exec,next)=>{const start=Date.now();try{return await next();}finally{await mkdir(join(root,'audit'),{recursive:true});await appendFile(join(root,'audit','actions.jsonl'),JSON.stringify({at:new Date().toISOString(),sessionId:exec.agent?.id,tool:exec.name,durationMs:Date.now()-start})+'\n');}});
- async function sourceFiles(dir:string,prefix=''):Promise<Array<{path:string;content:string;mode:string;type:string}>>{
-  const out:Array<{path:string;content:string;mode:string;type:string}>=[];
-  for(const e of await readdir(dir,{withFileTypes:true})){if(['.git','node_modules','build','.gradle','.research','local.properties'].includes(e.name)||/\.keystore$/.test(e.name))continue;const path=join(dir,e.name);const s=await lstat(path);if(s.isSymbolicLink())continue;const rel=prefix+e.name;if(e.isDirectory())out.push(...await sourceFiles(path,rel+'/'));else if(s.isFile()){if(s.size>1024*1024)continue;const bytes=await readFile(path);if(bytes.includes(0))continue;out.push({path:rel,content:bytes.toString('utf8'),mode:e.name==='gradlew'?'100755':'100644',type:'blob'});}}
+ async function sourceFiles(dir:string,prefix=''):Promise<Data[]>{
+  const out:Data[]=[];
+  for(const e of await readdir(dir,{withFileTypes:true})){if(['.git','node_modules','build','.gradle','.research','local.properties'].includes(e.name)||/\.(keystore|jks)$/.test(e.name))continue;const path=join(dir,e.name);const s=await lstat(path);if(s.isSymbolicLink())continue;const rel=prefix+e.name;if(e.isDirectory())out.push(...await sourceFiles(path,rel+'/'));else if(s.isFile()){if(s.size>4*1024*1024)throw Error('Source file exceeds 4 MiB; split it before remote build: '+rel);const bytes=await readFile(path);out.push({path:rel,...(bytes.includes(0)?{binary:bytes.toString('base64')}:{content:bytes.toString('utf8')}),mode:e.name==='gradlew'?'100755':'100644',type:'blob'});}}
   if(out.length>3000)throw Error('Source tree too large');return out;
  }
  const github=(path:string,method='GET',body?:Data)=>bridge<Data>('github.request',{path,method,...(body?{body}:{})});
@@ -67,6 +81,7 @@ export async function apply(ctx:Context){
   const cfg=config.get('build.json');if(!/^[\w.-]+\/[\w.-]+$/.test(cfg.repository))throw Error('Set your GitHub repository in credentials/build settings');
   const repo='/repos/'+cfg.repository;const info=await github(repo);const base=String(args.base??info.default_branch);const ref=await github(repo+'/git/ref/heads/'+encodeURIComponent(base));const commit=await github(repo+'/git/commits/'+ref.object.sha);
   const files=await sourceFiles(join(root,'source'));if(!files.length)throw Error('Harness source working copy is not installed');
+  for(const file of files)if(file.binary){const blob=await github(repo+'/git/blobs','POST',{content:file.binary,encoding:'base64'});file.sha=blob.sha;delete file.binary;}
   const snap=await checkpoint(root,workspace);const tree=await github(repo+'/git/trees','POST',{base_tree:commit.tree.sha,tree:files});const next=await github(repo+'/git/commits','POST',{message:String(args.message??'feat: self update Hoshino Harness'),tree:tree.sha,parents:[ref.object.sha]});
   const branch=String(cfg.branch??'hoshino/self-update')+'-'+Date.now();await github(repo+'/git/refs','POST',{ref:'refs/heads/'+branch,sha:next.sha});await github(repo+'/actions/workflows/'+encodeURIComponent(cfg.workflow??'m2.yml')+'/dispatches','POST',{ref:branch});
   await atomic(join(root,'config','last-build.json'),{repository:cfg.repository,branch,sha:next.sha,snapshot:snap});return {repository:cfg.repository,branch,sha:next.sha,snapshot:snap,url:`https://github.com/${cfg.repository}/actions`,status:'queued'};

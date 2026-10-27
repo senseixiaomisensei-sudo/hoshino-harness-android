@@ -37,8 +37,10 @@ export async function gitOperation(workspace:string,action:string,args:Data){
  return command('git',argv,workspace);
 }
 export async function ensureTools(group:string,root:string){
- const packages:Record<string,string[]>={media:['ffmpeg','p7zip','imagemagick'],documents:['pandoc','python3','py3-pillow','py3-openpyxl','py3-docx','py3-reportlab','poppler-utils'],speech:['espeak-ng'],git:['git','openssh-client'], 'native-build':['python3','make','g++','linux-headers','pkgconf']};
- if(!packages[group])throw Error('Choose media, documents, speech, git or native-build');return command('apk',['add','--no-cache',...packages[group]],root,600000);
+ const packages:Record<string,string[]>={media:['ffmpeg','7zip','imagemagick'],documents:['python3','py3-pip','py3-lxml','py3-pillow','py3-openpyxl','py3-reportlab','poppler-utils'],speech:['espeak-ng'],git:['git','openssh-client'],pandoc:['pandoc'], 'native-build':['python3','make','g++','linux-headers','pkgconf']};
+ if(!packages[group])throw Error('Choose media, documents, speech, git, pandoc or native-build');const result=await command('apk',['add','--no-cache',...packages[group]],root,600000);if(result.code||group!=='documents')return result;
+ const home=process.env.HOME??'/root';const venv=join(home,'.hoshino/tools/python');const setup=await command('python3',['-m','venv','--system-site-packages',venv],root,120000);if(setup.code)return setup;
+ return command(join(venv,'bin/python'),['-m','pip','install','--disable-pip-version-check','python-docx==1.2.0','python-pptx==1.0.2'],root,600000);
 }
 export async function exportBackup(root:string,workspace:string,home?:string){
  const path=join(workspace,'Hoshino-backup-'+Date.now()+'.zip');const output=createWriteStream(path);let error:unknown;output.on('error',e=>{error=e;});

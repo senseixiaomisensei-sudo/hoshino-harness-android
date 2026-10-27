@@ -27,6 +27,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         startForegroundService(Intent(this,KernelService::class.java))
         setContent { HoshinoApp() }
+        var inputRecorded=false
+        val observer=object:android.view.ViewTreeObserver.OnDrawListener{override fun onDraw(){if(inputRecorded)return;inputRecorded=true;window.decorView.post{runCatching{java.io.File(filesDir,"m2-input-ready.json").writeText(org.json.JSONObject().put("coldStartToInputMs",android.os.SystemClock.elapsedRealtime()-app.hoshino.harness.core.M2SafeMode.processStartedAt).put("definition","Application.onCreate to first native Compose draw").toString())};window.decorView.viewTreeObserver.removeOnDrawListener(this)}}}
+        window.decorView.viewTreeObserver.addOnDrawListener(observer)
         lifecycleScope.launch{runCatching{app.hoshino.harness.core.M2Intents.receive(this@MainActivity,intent)}}
     }
 }

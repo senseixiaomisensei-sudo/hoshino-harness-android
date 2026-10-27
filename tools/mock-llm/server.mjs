@@ -12,16 +12,16 @@ export function createMockLlm() {
     const messages = body.messages;
     const userTexts = messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : m.content?.filter?.(c => c.type === 'text').map(c => c.text).join(' ') ?? '');
     // dsh appends runtime context and the skill catalog after the real user message.
-    const prompt = [...userTexts].reverse().find(text => /system command|系统命令|shizuku.*id|读取设备|\bdevice\b|hello\.txt|m1-error-fixture|message-needle-|m0-benchmark-|你好/i.test(text)) ?? userTexts.at(-1) ?? '';
+    const prompt = [...userTexts].reverse().find(text => /m2-desktop-|system command|系统命令|shizuku.*id|读取设备|\bdevice\b|hello\.txt|m1-error-fixture|message-needle-|m0-benchmark-|你好/i.test(text)) ?? userTexts.at(-1) ?? '';
     if (prompt.includes('m1-error-fixture')) {
       res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:{type:'invalid_request_error',message:'fixture request rejected'}}));
       return;
     }
     const last = messages.at(-1);
     const hasResult = last?.role === 'tool' || last?.content?.some?.(c => c.type === 'tool_result');
-    const tool = !hasResult && /system command|系统命令|shizuku.*id/i.test(prompt) ? 'system_shell' : !hasResult && /设备|device/.test(prompt) ? 'get_device_info' : !hasResult && /hello\.txt/.test(prompt) ? 'write' : undefined;
+    const tool = !hasResult && /m2-desktop-todo/.test(prompt)?'todo_write':!hasResult && /m2-desktop-read/.test(prompt)?'read':!hasResult && /m2-desktop-bash/.test(prompt)?'bash':!hasResult && /system command|系统命令|shizuku.*id/i.test(prompt) ? 'system_shell' : !hasResult && /设备|device/.test(prompt) ? 'get_device_info' : !hasResult && /hello\.txt/.test(prompt) ? 'write' : undefined;
     const writeMarker=prompt.match(/m1-write-fixture-[a-z]+(?:-[a-f0-9]+)?/)?.[0];
-    const args = tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'+(writeMarker?writeMarker+'\n':'')} : tool==='system_shell' ? {command:'id -u; getprop ro.build.version.release',timeout_ms:5000} : {};
+    const args = tool==='todo_write'?{todos:[{content:'Verify desktop plugin execution',status:'completed'}]}:tool==='read'?{file_path:'hello.txt'}:tool==='bash'?{command:'printf m2-desktop-plugin',description:'Verify the original desktop shell tool'}:tool === 'write' ? {file_path:'hello.txt', content:'Hello from dsh\n'+(writeMarker?writeMarker+'\n':'')} : tool==='system_shell' ? {command:'id -u; getprop ro.build.version.release',timeout_ms:5000} : {};
     const resultText = hasResult ? (typeof last.content === 'string' ? last.content : last.content.filter(c=>c.type==='tool_result').map(c=>typeof c.content==='string'?c.content:JSON.stringify(c.content)).join(' ')) : '';
     const answer = hasResult ? `工具已完成，返回结果：${resultText}` : '你好，我是 Hoshino。';
     // dsh may append another user-role context message; identify the fixture in the full request.

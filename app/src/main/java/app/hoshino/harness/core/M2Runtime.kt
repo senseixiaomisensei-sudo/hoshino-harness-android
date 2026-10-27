@@ -119,9 +119,7 @@ class M2Runtime(private val context:Context,private val silentInstall:suspend(Fi
         check(existing==signatures){"更新包签名不匹配，已阻止安装"}
         File(context.applicationInfo.sourceDir).copyTo(File(dir,"previous-${installed.longVersionCode}.apk"),true)
         dir.listFiles{f->f.name.startsWith("previous-")&&f.extension=="apk"}?.sortedByDescending{it.lastModified()}?.drop(3)?.forEach{it.delete()}
-        if(runCatching{rikka.shizuku.Shizuku.pingBinder()&&rikka.shizuku.Shizuku.checkSelfPermission()==PackageManager.PERMISSION_GRANTED}.getOrDefault(false)){
-            val result=silentInstall(apk);if(result.optBoolean("installed"))return@withContext result
-        }
+        val silent=runCatching{silentInstall(apk)}.getOrNull();if(silent?.optBoolean("installed")==true)return@withContext silent
         val installer=context.packageManager.packageInstaller;val params=PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply{setAppPackageName(context.packageName)}
         val sessionId=installer.createSession(params)
         installer.openSession(sessionId).use{session->session.openWrite("base.apk",0,apk.length()).use{out->apk.inputStream().use{it.copyTo(out,65536)};session.fsync(out)};val result=PendingIntent.getBroadcast(context,sessionId,Intent(context,M2InstallReceiver::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE);session.commit(result.intentSender)}

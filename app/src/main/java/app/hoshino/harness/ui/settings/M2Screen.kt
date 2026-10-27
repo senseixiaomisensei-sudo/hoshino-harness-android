@@ -16,12 +16,32 @@ import org.json.JSONObject
 fun M2Screen(onBack:()->Unit){
     val context=LocalContext.current;val scope=rememberCoroutineScope();val client=Hoshino.client as? DshHarnessClient
     var section by remember{mutableStateOf("审批")};var content by remember{mutableStateOf("{}")};var status by remember{mutableStateOf("")};var busy by remember{mutableStateOf(false)};var token by remember{mutableStateOf("")}
+    var pluginSpec by remember{mutableStateOf("")}
+    val export=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")){uri->uri?.let{context.contentResolver.openOutputStream(it)?.use{out->out.write(content.toByteArray())}}}
+    val importConfig=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()){uri->uri?.let{scope.launch{runCatching{context.contentResolver.openInputStream(it)!!.use{input->val out=java.io.ByteArrayOutputStream();val b=ByteArray(65536);while(true){val n=input.read(b);if(n<0)break;check(out.size()+n<=2*1024*1024){"配置文件超过 2 MiB"};out.write(b,0,n)};out.toString("UTF-8")}}.onSuccess{value->content=value}.onFailure{failure->status=failure.message.orEmpty()}}}}
     val files=mapOf("审批" to "approval.json","模式" to "modes.json","提示词" to "prompts.json","搜索" to "search.json","模型路由" to "routing.json","源码构建" to "build.json","折叠" to "preferences.json")
     fun load(){scope.launch{busy=true;runCatching{if(section=="UI DSL")client?.control("config-read",JSONObject().put("path","ui/overrides.json"))?.getString("content")?:"{}" else if(section in files)client?.m2Control("config",JSONObject().put("name",files[section]))?.toString(2)?:"{}"else client?.m2Control("doctor")?.toString(2)?:"{}"}.onSuccess{content=it;status=""}.onFailure{status=client?.describeFailure(it)?:"内核未连接"};busy=false}}
     LaunchedEffect(section){load()}
     PageScaffold("M2 · 自由配置",onBack,subtitle=if(M2SafeMode.enabled(context))"安全模式 · 用户插件与覆盖已禁用"else"普通文件配置 · 保存后热重载"){
         Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-            listOf(listOf("审批","模式","提示词"),listOf("UI DSL","搜索","模型路由"),listOf("源码构建","折叠","诊断与备份")).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){row.forEach{label->HButton(label,{section=label},compact=true)}}}
+            listOf(listOf("审批","模式","提示词"),listOf("UI DSL","搜索","模型路由"),listOf("源码构建","折叠","诊断与备份"),listOf("插件","导入同步","Git")).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){row.forEach{label->HButton(label,{section=label},compact=true)}}}
+            if(section=="插件"){
+                HTextField(pluginSpec,{pluginSpec=it},placeholder="npm 包名、git 地址、本地目录或 .tgz")
+                HButton("安装并启用",{scope.launch{busy=true;client?.installPluginFromGit(pluginSpec)?.onSuccess{status="已启用 ${it.id}"}?.onFailure{status=client?.describeFailure(it).orEmpty()};busy=false}},enabled=!busy)
+                HButton("搜索 npm 插件",{scope.launch{runCatching{client?.m2Control("plugin-search",JSONObject().put("query",pluginSpec.ifBlank{"dsh plugin"}))}.onSuccess{content=it?.toString(2).orEmpty()}.onFailure{status=client?.describeFailure(it).orEmpty()}}})
+            }
+            if(section=="导入同步"){
+                Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){HButton("选择文件",{importConfig.launch(arrayOf("application/json","text/*","application/yaml"))},compact=true);HButton("导出文件",{export.launch("Hoshino-config.json")},compact=true)}
+                HButton("导入编辑器内容",{scope.launch{runCatching{client?.m2Control("import-config",JSONObject().put("content",content));client?.refreshControl()}.onSuccess{status="已导入可用配置；插件兼容结果见返回记录"}.onFailure{status=client?.describeFailure(it).orEmpty()}}})
+                HButton("读取可导出配置",{scope.launch{runCatching{client?.m2Control("export-config")}.onSuccess{content=it?.toString(2).orEmpty()}}})
+                Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){HButton("同步到 GitHub",{scope.launch{runCatching{client?.m2Control("sync-push")}.onSuccess{status="已同步公共配置"}.onFailure{status=client?.describeFailure(it).orEmpty()}}},compact=true);HButton("从 GitHub 同步",{scope.launch{runCatching{client?.m2Control("sync-pull");client?.refreshControl()}.onSuccess{status="已拉取并应用"}.onFailure{status=client?.describeFailure(it).orEmpty()}}},compact=true)}
+            }
+            if(section=="提示词")HButton("预览生效提示词",{scope.launch{runCatching{client?.m2Control("prompt-preview")}.onSuccess{status=it?.toString(2).orEmpty()}.onFailure{status=client?.describeFailure(it).orEmpty()}}})
+            if(section=="Git"){
+                Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf("status" to "状态","diff" to "Diff","branches" to "分支").forEach{(op,label)->HButton(label,{scope.launch{runCatching{client?.m2Control("git",JSONObject().put("operation",op))}.onSuccess{status=it?.optString("output").orEmpty()}.onFailure{status=client?.describeFailure(it).orEmpty()}}},compact=true)}}
+                Text("提交/推送参数：在下方 JSON 中填写 operation、paths、message 或 name。",style=HoshinoTheme.type.caption,color=HoshinoTheme.colors.text2)
+                HButton("执行 Git 操作",{scope.launch{runCatching{client?.m2Control("git",JSONObject(content))}.onSuccess{status=it?.toString(2).orEmpty()}.onFailure{status=client?.describeFailure(it).orEmpty()}}})
+            }
             if(section=="审批"){
                 Text("支持全局、工作区、会话、模式覆盖；规则按顺序匹配。模型失败/超时默认询问。",style=HoshinoTheme.type.caption,color=HoshinoTheme.colors.text2)
                 Row(horizontalArrangement=Arrangement.spacedBy(4.dp)){listOf("manual" to "手动","rules" to "规则","model" to "模型","auto" to "全自动").forEach{(id,label)->HButton(label,{val json=runCatching{JSONObject(content)}.getOrDefault(JSONObject());json.put("mode",id);content=json.toString(2)},compact=true)}}
@@ -53,3 +73,4 @@ fun M2Screen(onBack:()->Unit){
         }
     }
 }
+

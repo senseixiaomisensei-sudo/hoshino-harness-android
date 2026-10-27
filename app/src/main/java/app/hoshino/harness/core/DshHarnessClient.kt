@@ -143,7 +143,10 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private suspend fun accept(sid: String,frame: JSONObject) {
         when(frame.optString("type")) {
             "snapshot" -> {
-                frame.getJSONArray("records").rows().forEach { record -> durable(sid,record.getJSONObject("event")) }
+                val pending=metadata.getBoolean("pending:$sid",false)
+                val records=frame.getJSONArray("records").rows()
+                records.forEach { record -> durable(sid,record.getJSONObject("event"),true) }
+                if(pending){val last=records.map{it.getJSONObject("event")}.lastOrNull{it.optString("type") in setOf("turn/start","turn/end")};if(last?.optString("type")=="turn/end"&&last.optJSONObject("data")?.optJSONObject("reason")?.optString("kind")=="completed")metadata.edit().remove("pending:$sid").apply()}
                 frame.optJSONObject("projections")?.optJSONObject("values")?.let{publishContext(sid,it)}
             }
             "event" -> durable(sid,frame.getJSONObject("event"))
@@ -163,13 +166,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             }
         }
     }
-    private suspend fun durable(sid: String,event: JSONObject) {
+    private suspend fun durable(sid: String,event: JSONObject,replay:Boolean=false) {
         val seq=event.getInt("seq");if(!seen.getOrPut(sid) { mutableSetOf() }.add(seq))return
         val id="e:$seq";val data=event.optJSONObject("data") ?: return
         when(event.getString("type")) {
             "turn/start" -> {tokenTurns[sid]=TurnTokens(event.optLong("time",System.currentTimeMillis()));publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
             "turn/end" -> {
-                metadata.edit().remove("pending:$sid").apply()
+                if(!replay)metadata.edit().remove("pending:$sid").apply()
                 tokenTurns.remove(sid)?.takeIf{it.reported}?.let{u->publish(HarnessEvent.UsageReported(sid,id,Usage(u.input,u.output,u.cache,u.reasoning,(event.optLong("time",System.currentTimeMillis())-u.start).coerceAtLeast(0))))}
                 live.remove(sid)?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) }
                 val reason=data.optJSONObject("reason")
@@ -291,7 +294,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         try{client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",content))}catch(failure:Exception){metadata.edit().remove("pending:$sessionId").apply();throw failure}
     }
     override suspend fun steer(sessionId: String,text: String) { api().rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","steer").put("content",JSONArray().put(JSONObject().put("type","text").put("text",text)))) }
-    private suspend fun resumeInterrupted(){if(M2SafeMode.enabled(context))return;for(row in sessions.value){if(metadata.getBoolean("pending:${row.id}",false)&&!row.running){api().rpc("session/prompt",JSONObject().put("sessionId",row.id).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",JSONArray().put(JSONObject().put("type","text").put("text","Resume the interrupted user task from the persisted session log and last completed step. Inspect actual files before repeating any side effect. Do not duplicate completed actions."))))}}}
+    private suspend fun resumeInterrupted(){if(M2SafeMode.enabled(context))return;val live=api().rpc("session/list",JSONObject()).getJSONArray("items").rows().associateBy{it.getString("sessionId")};for(row in sessions.value){if(metadata.getBoolean("pending:${row.id}",false)&&live[row.id]?.optBoolean("running")!=true){api().rpc("session/prompt",JSONObject().put("sessionId",row.id).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",JSONArray().put(JSONObject().put("type","text").put("text","Resume the interrupted user task from the persisted session log and last completed step. Inspect actual files before repeating any side effect. Do not duplicate completed actions."))))}}}
     override suspend fun stop(sessionId: String) { api().rpc("session/cancel",JSONObject().put("sessionId",sessionId)) }
     private fun readProviders(): List<Provider> = vault.list().map { p ->
         val m=p.metadata;val configured=m.optJSONArray("models")?.rows()?.associateBy { it.getString("id") }.orEmpty()
@@ -309,7 +312,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     override suspend fun deleteProvider(providerId: String) { vault.delete(providerId);providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)api().reloadProviders() }
     override suspend fun setProviderEnabled(providerId: String,enabled: Boolean) { upsertProvider(providerRows.value.first { it.id==providerId }.copy(enabled=enabled)) }
-    override suspend fun setRouting(routing: ModelRouting) { routingRow.value=routing }
+    override suspend fun setRouting(routing: ModelRouting) { routingRow.value=routing;fun ref(value:ModelRef?)=value?.let{JSONObject().put("providerId",it.providerId).put("modelId",it.modelId)}?:JSONObject.NULL;m2Control("config",JSONObject().put("name","routing.json").put("value",JSONObject().put("main",ref(routing.main)).put("compact",ref(routing.compact)).put("approval",ref(routing.approval)).put("vision",ref(routing.vision)).put("fallback",JSONArray()))) }
     suspend fun control(action:String,request:JSONObject=JSONObject()):JSONObject=api().mobile("control",JSONObject().put("action",action).put("request",request))
     suspend fun m2Control(operation:String,request:JSONObject=JSONObject()):JSONObject=control("m2",request.put("operation",operation).apply{if(!has("sessionId"))put("sessionId",activeSession)})
     override suspend fun setSessionPreset(sessionId:String,presetId:String){metadata.edit().putString("preset:$sessionId",presetId).apply();sessionRows.update{rows->rows.map{if(it.id==sessionId)it.copy(presetId=presetId)else it}}}
@@ -343,6 +346,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun rollbackConfiguration(snapshotId:String) {control("rollback",JSONObject().put("id",snapshotId));refreshControl()}
     override suspend fun setPluginEnabled(pluginId:String,enabled:Boolean) {require(plugins.value.none{it.id==pluginId && it.source==PluginSource.BuiltIn}){"内置依赖请通过源码组合替换"};control("enable-plugin",JSONObject().put("id",pluginId).put("enabled",enabled));refreshControl()}
     override suspend fun removePlugin(pluginId:String) {require(plugins.value.none{it.id==pluginId && it.source==PluginSource.BuiltIn});control("remove-plugin",JSONObject().put("id",pluginId));refreshControl()}
+    override suspend fun installPluginFromGit(spec:String):Result<Plugin> = runCatching{val result=m2Control("install-plugin",JSONObject().put("spec",spec));check(result.optBoolean("ok")){result.optString("error","插件安装失败")+"\n"+result.optString("detail")};val id=result.getString("id");control("reload",JSONObject().put("plugin",id));refreshControl();plugins.value.first{it.id==id}}
+    override suspend fun linkLocalPlugin(path:String):Result<Plugin> = installPluginFromGit(path)
     override suspend fun readPluginConfig(pluginId:String)=control("config-read",JSONObject().put("path","plugins/$pluginId/config.json")).getString("content")
     override suspend fun writePluginConfig(pluginId:String,content:String) {control("config-write",JSONObject().put("path","plugins/$pluginId/config.json").put("content",content));control("reload",JSONObject().put("plugin",pluginId));refreshControl()}
     override suspend fun createSkill(name:String,description:String,content:String) {control("create-skill",JSONObject().put("name",name).put("description",description).put("content",content));refreshControl()}

@@ -24,7 +24,9 @@ class M2ActionReceiver:BroadcastReceiver(){override fun onReceive(context:Contex
 }finally{pending.finish()}}}}
 
 object M2SafeMode {
+    var processStartedAt:Long=android.os.SystemClock.elapsedRealtime();private set
     fun initialize(context:Context){
+        processStartedAt=android.os.SystemClock.elapsedRealtime()
         val p=context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE)
         if(p.getBoolean("starting",false))p.edit().putInt("failures",p.getInt("failures",0)+1).commit()
         if(p.getInt("failures",0)>=3)p.edit().putBoolean("safe",true).commit()
