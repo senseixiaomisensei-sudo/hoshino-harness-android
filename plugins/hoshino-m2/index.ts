@@ -67,24 +67,28 @@ export async function apply(ctx:Context){
  });
  ctx.on('tools/pre-execute',async(exec,next)=>{const mode=modeFor(exec.agent?.id??'');if(Array.isArray(mode.tools)&&!mode.tools.includes(exec.name))return {kind:'deny',reason:'Tool excluded by Agent mode'};if(mode.readOnly&&!['read','read_image','get_device_info','self_read','self_inspect','self_doctor','self_diff','skill','self_config_read'].includes(exec.name))return {kind:'deny',reason:'Read-only mode'};return next();});
  let stamp=await treeStamp(root);let checking=false;
- const timer=setInterval(()=>{if(checking)return;checking=true;void(async()=>{const current=await treeStamp(root);if(current!==stamp){stamp=current;await refresh();await originalCall('self-changed',{});}})().catch(()=>{}).finally(()=>{checking=false;});},1500).unref();
+ const timer=setInterval(()=>{if(checking)return;checking=true;void(async()=>{const current=await treeStamp(root);if(current!==stamp){const previous=stamp;stamp=current;await refresh();if(!safe){const control=ctx.get('hoshinoControl');if(control){await control.invoke('reload',{plugin:'skills'});const disabled=JSON.parse(await readFile(join(root,'config/disabled-plugins.json'),'utf8').catch(()=>'[]'));for(const entry of await readdir(join(root,'plugins'),{withFileTypes:true}).catch(()=>[])){if(!entry.isDirectory()||disabled.includes(entry.name))continue;const prefix=join(root,'plugins',entry.name);if(current.split('\n').filter(s=>s.startsWith(prefix)).join('\n')!==previous.split('\n').filter(s=>s.startsWith(prefix)).join('\n'))await control.invoke('reload',{plugin:entry.name}).catch(()=>{});}}}await originalCall('self-changed',{});}})().catch(()=>{}).finally(()=>{checking=false;});},1500).unref();
  ctx.effect(()=>()=>clearInterval(timer));
  ctx.on('schedule/changed',()=>{void ctx.schedule.catalog().then(entries=>bridge('scheduler.sync',{entries})).catch(()=>{});});
  ctx.on('tools/execute',async(exec,next)=>{const start=Date.now();try{return await next();}finally{await mkdir(join(root,'audit'),{recursive:true});await appendFile(join(root,'audit','actions.jsonl'),JSON.stringify({at:new Date().toISOString(),sessionId:exec.agent?.id,tool:exec.name,durationMs:Date.now()-start})+'\n');}});
  async function sourceFiles(dir:string,prefix=''):Promise<Data[]>{
   const out:Data[]=[];
-  for(const e of await readdir(dir,{withFileTypes:true})){if(['.git','node_modules','build','.gradle','.research','local.properties'].includes(e.name)||/\.(keystore|jks)$/.test(e.name))continue;const path=join(dir,e.name);const s=await lstat(path);if(s.isSymbolicLink())continue;const rel=prefix+e.name;if(e.isDirectory())out.push(...await sourceFiles(path,rel+'/'));else if(s.isFile()){if(s.size>4*1024*1024)throw Error('Source file exceeds 4 MiB; split it before remote build: '+rel);const bytes=await readFile(path);out.push({path:rel,...(bytes.includes(0)?{binary:bytes.toString('base64')}:{content:bytes.toString('utf8')}),mode:e.name==='gradlew'?'100755':'100644',type:'blob'});}}
+  for(const e of await readdir(dir,{withFileTypes:true})){if(['.git','node_modules','build','.gradle','.research','local.properties','.hoshino-source-manifest.json'].includes(e.name)||/\.(keystore|jks)$/.test(e.name))continue;const path=join(dir,e.name);const s=await lstat(path);if(s.isSymbolicLink())continue;const rel=prefix+e.name;if(e.isDirectory())out.push(...await sourceFiles(path,rel+'/'));else if(s.isFile()){if(s.size>4*1024*1024)throw Error('Source file exceeds 4 MiB; split it before remote build: '+rel);const bytes=await readFile(path);out.push({path:rel,...(bytes.includes(0)?{binary:bytes.toString('base64')}:{content:bytes.toString('utf8')}),mode:e.name==='gradlew'?'100755':'100644',type:'blob'});}}
   if(out.length>3000)throw Error('Source tree too large');return out;
  }
  const github=(path:string,method='GET',body?:Data)=>bridge<Data>('github.request',{path,method,...(body?{body}:{})});
  async function remoteBuild(args:Data){
   const cfg=config.get('build.json');if(!/^[\w.-]+\/[\w.-]+$/.test(cfg.repository))throw Error('Set your GitHub repository in credentials/build settings');
   const repo='/repos/'+cfg.repository;const info=await github(repo);const base=String(args.base??info.default_branch);const ref=await github(repo+'/git/ref/heads/'+encodeURIComponent(base));const commit=await github(repo+'/git/commits/'+ref.object.sha);
+  const selfSnap=await selfSnapshot(root);
+  const gradle=join(root,'source/app/build.gradle.kts');const previous=await readFile(gradle,'utf8').catch(()=>'');
+  if(previous){const code=Number(previous.match(/versionCode\s*=\s*(\d+)/)?.[1]??200);const caps=await bridge('capabilities');await writeFile(gradle,previous.replace(/versionCode\s*=\s*\d+/,`versionCode = ${Math.max(code,Number(caps.versionCode??0))+1}`));}
   const files=await sourceFiles(join(root,'source'));if(!files.length)throw Error('Harness source working copy is not installed');
+  const original=JSON.parse(await readFile(join(root,'source/.hoshino-source-manifest.json'),'utf8').catch(()=>'[]')) as string[];const present=new Set(files.map(f=>f.path));for(const path of original)if(!present.has(path))files.push({path,mode:'100644',type:'blob',sha:null});
   for(const file of files)if(file.binary){const blob=await github(repo+'/git/blobs','POST',{content:file.binary,encoding:'base64'});file.sha=blob.sha;delete file.binary;}
   const snap=await checkpoint(root,workspace);const tree=await github(repo+'/git/trees','POST',{base_tree:commit.tree.sha,tree:files});const next=await github(repo+'/git/commits','POST',{message:String(args.message??'feat: self update Hoshino Harness'),tree:tree.sha,parents:[ref.object.sha]});
   const branch=String(cfg.branch??'hoshino/self-update')+'-'+Date.now();await github(repo+'/git/refs','POST',{ref:'refs/heads/'+branch,sha:next.sha});await github(repo+'/actions/workflows/'+encodeURIComponent(cfg.workflow??'m2.yml')+'/dispatches','POST',{ref:branch});
-  await atomic(join(root,'config','last-build.json'),{repository:cfg.repository,branch,sha:next.sha,snapshot:snap});return {repository:cfg.repository,branch,sha:next.sha,snapshot:snap,url:`https://github.com/${cfg.repository}/actions`,status:'queued'};
+  await atomic(join(root,'config','last-build.json'),{repository:cfg.repository,branch,sha:next.sha,snapshot:snap,selfSnapshot:selfSnap});return {repository:cfg.repository,branch,sha:next.sha,snapshot:snap,selfSnapshot:selfSnap,url:`https://github.com/${cfg.repository}/actions`,status:'queued'};
  }
  const invoke=async(action:string,args:Data):Promise<any>=>{
   switch(action){
@@ -99,13 +103,14 @@ export async function apply(ctx:Context){
    case 'diff':{const current=await readFile(await safePublicPath(root,String(args.path)),'utf8').catch(()=>'');return {path:args.path,before:current,after:String(args.content??''),changed:current!==String(args.content??'')};}
    case 'reload':await refresh();await originalCall('self-changed',{});return {reloaded:true,errors:Object.fromEntries(config.errors)};
    case 'snapshot':return {id:await selfSnapshot(root),workspaceCheckpoint:await checkpoint(root,workspace)};
-   case 'rollback-workspace':return restoreCheckpoint(root,workspace,String(args.id));
+   case 'rollback-workspace':{try{await lstat(join(root,'checkpoints',String(args.id)));return restoreCheckpoint(root,workspace,String(args.id));}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;return ctx.hoshinoControl.invoke('rollback',{id:args.id});}}
    case 'doctor':return {kernel:'ready',dsh:'0.2.1-rc.2',node:process.version,configErrors:Object.fromEntries(config.errors),bridge:await bridge('capabilities'),safeMode:ctx.androidBridge.bootstrap.safeMode??false};
    case 'config':{const name=String(args.name);if(args.value!==undefined){await config.write(name,args.value);await originalCall('self-changed',{});}return config.get(name);}
    case 'prompt-preview':{const sid=String(args.sessionId??'');const assembly=await ctx.systemPrompt.assemble({hoshinoSessionId:sid} as any);return {layers:await promptLayers(sid),sections:assembly.sections,contexts:assembly.contexts,tools:assembly.tools.map(t=>t.name),variables:assembly.variables,tokenEstimate:Math.ceil(JSON.stringify(assembly.sections).length/4),tokenCountKind:'estimate'};}
    case 'search':return search(String(args.query),config.get('search.json'));
    case 'fetch':return fetchPage(String(args.url),config.get('search.json'));
    case 'render':webUrl(String(args.url));return bridge('web.render',args);
+   case 'question':return originalCall('question',args);
    case 'deliver':{const path=await workspacePath(workspace,String(args.path));const s=await lstat(path);if(!s.isFile())throw Error('Deliver a regular workspace file');return bridge('file.deliver',{sessionId:args.sessionId,path,name:args.name??path.split('/').at(-1),bytes:s.size});}
    case 'ensure-tools':return ensureTools(String(args.group),workspace);
    case 'install-plugin':return installPlugin(ctx,config,String(args.spec));
@@ -160,10 +165,13 @@ export async function apply(ctx:Context){
   ['web_search','Search free sources with automatic fallback; returns source URLs.',{query:{type:'string',required:true}},'search'],
   ['web_fetch','Fetch a page as text/Markdown without a service key.',{url:{type:'string',required:true}},'fetch'],
   ['web_render','Render a remote page using Android WebView; optionally click/input/scroll under approval.',{url:{type:'string',required:true},script:{type:'string'}},'render'],
+  ['ask_user','Ask the user a question with optional choices; the card and notification remain outside process folding.',{question:{type:'string',required:true},options:{type:'array',items:{type:'string'}}},'question'],
   ['deliver_file','Deliver a generated workspace file as a native file card.',{path:{type:'string',required:true},name:{type:'string'}},'deliver'],
   ['ensure_tools','Install optional free local media/document/speech/git/native-build tools on demand.',{group:{type:'string',required:true}},'ensure-tools'],
   ['plugin_install','Install an original Cordis/dsh plugin from npm, git, local directory or tgz.',{spec:{type:'string',required:true}},'install-plugin'],
  ];
  for(const [tool,description,parameters,action]of tools)ctx.tools.register(defineTool({name:tool,description,parameters:parameters as any,output:{schema:{type:'string'},render:(_,value)=>[{type:'text',text:value}]},async execute(args,exec){return JSON.stringify(await invoke(action,{...args,sessionId:exec.agent?.id}));}}));
 }
+
+
 

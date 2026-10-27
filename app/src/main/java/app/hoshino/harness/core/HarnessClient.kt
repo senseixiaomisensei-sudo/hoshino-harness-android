@@ -19,6 +19,7 @@ interface HarnessClient {
     fun describeFailure(failure: Throwable): String = if(failure is UnsupportedOperationException) failure.message ?: "即将支持" else "操作未完成"
     /** Select the UI's active session without starting an Agent turn. */
     fun activateSession(sessionId: String) {}
+    val preferredSessionId:String? get()=null
     val uiCustomization: StateFlow<UiCustomization> get() = DefaultUiCustomization.value
     val uiCustomizationError: StateFlow<String?> get() = DefaultUiCustomization.error
     val configurationRollbackSupported:Boolean get() = false

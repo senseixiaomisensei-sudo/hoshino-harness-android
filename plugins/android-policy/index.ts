@@ -20,7 +20,7 @@ export function apply(ctx: Context): void {
   const changes=new Map<string,Change>();
   const guards=new Map<ToolExecutionToken,{path: string;target: FsTarget;before: string|null;info: FsInfo|undefined}>();
   const remembered=new Set<string>();
-  const reads=new Set(['get_device_info','read','read_image','skill','self_inspect','self_config_read','self_read','self_diff','self_doctor']);
+  const reads=new Set(['get_device_info','read','read_image','skill','self_inspect','self_config_read','self_read','self_diff','self_doctor','ask_user']);
   ctx.provide('mobilePolicy',{ options,async resolveDiff(sessionId,id,accept) {
     const change=changes.get(id);if(!change || change.sessionId!==sessionId)throw new Error('Diff is no longer available');
     if(!accept) {
@@ -118,4 +118,5 @@ export function apply(ctx: Context): void {
     return next();
   });
 }
+
 

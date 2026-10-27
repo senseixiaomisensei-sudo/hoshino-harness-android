@@ -36,6 +36,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val routing=routingRow.asStateFlow()
     override val catalog=listOf(CatalogProvider("anthropic","Anthropic",ProviderProtocol.Anthropic,"https://api.anthropic.com"),CatalogProvider("openai","OpenAI",ProviderProtocol.OpenAICompatible,"https://api.openai.com/v1"),CatalogProvider("deepseek","DeepSeek",ProviderProtocol.OpenAICompatible,"https://api.deepseek.com/v1"),CatalogProvider("ollama","Ollama",ProviderProtocol.OpenAICompatible,"http://127.0.0.1:11434/v1"),CatalogProvider("custom","自定义供应商",ProviderProtocol.OpenAICompatible,""))
     private val approvals=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<ApprovalDecision>>()
+    private val questions=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<String>>()
     private val seen=mutableMapOf<String,MutableSet<Int>>()
     private data class Live(val id: String,val started: Long=android.os.SystemClock.elapsedRealtime(),var text: String="",var thinking: String="")
     private val live=mutableMapOf<String,Live>()
@@ -63,7 +64,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     val files=dev.hoshino.bridge.WorkspaceFiles(java.io.File(context.filesDir,"workspace"),java.io.File(context.filesDir,"hoshino-trash"))
     private val metadata=context.getSharedPreferences("m1-session-metadata",Context.MODE_PRIVATE)
     private val restartAfter=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    override fun activateSession(sessionId:String) { activeSession=sessionId }
+    override val preferredSessionId:String? get()=metadata.getString("last-active-session",null)
+    override fun activateSession(sessionId:String) { activeSession=sessionId;metadata.edit().putString("last-active-session",sessionId).apply() }
 
     init {
         scope.launch { runtime.frames.collect { (stream,frame) ->
@@ -116,6 +118,12 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             "self-status" -> return JSONObject().put("currentModel",routing.value.main?.modelId ?: "").put("provider",routing.value.main?.providerId ?: "").put("logs",JSONArray(runtime.state.value.logs))
             "self-changed" -> {scope.launch {runCatching {refreshControl()}};return JSONObject()}
             "bridge-v1" -> return m2.handle(body)
+            "question" -> {
+                val sid=body.getString("sessionId");val id=UUID.randomUUID().toString();val answer=CompletableDeferred<String>();questions[id]=answer
+                val options=body.optJSONArray("options")?:JSONArray()
+                publish(HarnessEvent.QuestionAsked(sid,id,"需要你的输入",body.getString("question"),(0 until options.length()).map{QuestionOption(it.toString(),options.getString(it))},true));M2Notifications.question(context,sid,id,body.getString("question"))
+                return try{val value=withTimeout(290000){answer.await()};publish(HarnessEvent.QuestionAnswered(sid,id,value));JSONObject().put("answer",value)}finally{questions.remove(id);M2Notifications.dismiss(context,id)}
+            }
             "restart-after-turn" -> {restartAfter.add(body.getString("sessionId"));return JSONObject()}
             "file-diff" -> {
                 val before=body.optString("before","");val after=body.getString("after")
@@ -138,6 +146,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         } finally { approvals.remove(id);M2Notifications.dismiss(context,id) }
     }
     override suspend fun respondApproval(sessionId: String,approvalId: String,decision: ApprovalDecision) { approvals[approvalId]?.complete(decision) }
+    override suspend fun answerQuestion(sessionId:String,questionId:String,answer:String){questions[questionId]?.complete(answer.take(32000))}
     private fun JSONArray.rows()=(0 until length()).map { getJSONObject(it) }
     private fun content(array: JSONArray?,type: String)=array?.rows()?.filter { it.optString("type")==type }?.joinToString("") { it.optString("text") }.orEmpty()
     private suspend fun accept(sid: String,frame: JSONObject) {
@@ -170,7 +179,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val seq=event.getInt("seq");if(!seen.getOrPut(sid) { mutableSetOf() }.add(seq))return
         val id="e:$seq";val data=event.optJSONObject("data") ?: return
         when(event.getString("type")) {
-            "turn/start" -> {tokenTurns[sid]=TurnTokens(event.optLong("time",System.currentTimeMillis()));publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
+            "turn/start" -> {if(!replay)M2SafeMode.recordRunningMemory(context);tokenTurns[sid]=TurnTokens(event.optLong("time",System.currentTimeMillis()));publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
             "turn/end" -> {
                 if(!replay)metadata.edit().remove("pending:$sid").apply()
                 tokenTurns.remove(sid)?.takeIf{it.reported}?.let{u->publish(HarnessEvent.UsageReported(sid,id,Usage(u.input,u.output,u.cache,u.reasoning,(event.optLong("time",System.currentTimeMillis())-u.start).coerceAtLeast(0))))}
@@ -312,7 +321,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     override suspend fun deleteProvider(providerId: String) { vault.delete(providerId);providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)api().reloadProviders() }
     override suspend fun setProviderEnabled(providerId: String,enabled: Boolean) { upsertProvider(providerRows.value.first { it.id==providerId }.copy(enabled=enabled)) }
-    override suspend fun setRouting(routing: ModelRouting) { routingRow.value=routing;fun ref(value:ModelRef?)=value?.let{JSONObject().put("providerId",it.providerId).put("modelId",it.modelId)}?:JSONObject.NULL;m2Control("config",JSONObject().put("name","routing.json").put("value",JSONObject().put("main",ref(routing.main)).put("compact",ref(routing.compact)).put("approval",ref(routing.approval)).put("vision",ref(routing.vision)).put("fallback",JSONArray()))) }
+    override suspend fun setRouting(routing: ModelRouting) {
+        routingRow.value=routing
+        fun ref(value:ModelRef?):Any = value?.let{JSONObject().put("providerId",it.providerId).put("modelId",it.modelId)}?:JSONObject.NULL
+        val saved=m2Control("config",JSONObject().put("name","routing.json"))
+        saved.put("main",ref(routing.main)).put("compact",ref(routing.compact)).put("approval",ref(routing.approval)).put("vision",ref(routing.vision))
+        m2Control("config",JSONObject().put("name","routing.json").put("value",saved))
+    }
     suspend fun control(action:String,request:JSONObject=JSONObject()):JSONObject=api().mobile("control",JSONObject().put("action",action).put("request",request))
     suspend fun m2Control(operation:String,request:JSONObject=JSONObject()):JSONObject=control("m2",request.put("operation",operation).apply{if(!has("sessionId"))put("sessionId",activeSession)})
     override suspend fun setSessionPreset(sessionId:String,presetId:String){metadata.edit().putString("preset:$sessionId",presetId).apply();sessionRows.update{rows->rows.map{if(it.id==sessionId)it.copy(presetId=presetId)else it}}}
@@ -407,3 +422,4 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         Result.success("连接成功，可获取 ${fetchModels(provider).size} 个模型")
     } catch(cancelled: CancellationException) { throw cancelled } catch(_: Exception) { Result.failure(IllegalStateException("连接失败，请检查协议、地址和凭据")) }
 }
+

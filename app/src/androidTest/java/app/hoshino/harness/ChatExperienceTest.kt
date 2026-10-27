@@ -33,7 +33,7 @@ class ChatExperienceTest {
             assertEquals(client.runtime.state.value.logs.joinToString(),"已连接",client.runtime.state.value.phase)
             val model="deepseek-v4.1-flash-1017"
             runBlocking{client.upsertProvider(Provider("native-max-fixture","Max fixture","custom",ProviderProtocol.OpenAICompatible,"http://127.0.0.1:8099/v1","sk-max-fixture-"+UUID.randomUUID(),emptyList(),true,listOf(ModelInfo(model,"Max fixture",131072,4096,false,false,ReasoningEffort.Off))))}
-            val vm=ChatViewModel();vm.setModel(ModelRef("native-max-fixture",model))
+            val vm=ChatViewModel().also{it.newSession()};vm.setModel(ModelRef("native-max-fixture",model))
             scenario.onActivity{it.setContent{HoshinoTheme{ChatScreen(vm,false,{},{})}}}
             ui.onNodeWithText("Max fixture").performScrollTo().performClick()
             try {ui.waitUntil(10000){ui.onAllNodesWithText("max",substring=false).fetchSemanticsNodes().isNotEmpty()}}
@@ -79,3 +79,4 @@ class ChatExperienceTest {
         }} finally{scope.cancel()}
     }
 }
+

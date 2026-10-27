@@ -49,7 +49,7 @@ class ShizukuExecutionTest {
             }
             ui.waitUntil(10000){client.shizuku.value==ShizukuStatus.Ready}
             runBlocking {client.upsertProvider(Provider("system-fixture","System fixture","custom",ProviderProtocol.OpenAICompatible,"http://127.0.0.1:8099/v1","sk-system-fixture-"+UUID.randomUUID(),emptyList(),true,listOf(ModelInfo("mock-model","System fixture",128000,4096,false,false,ReasoningEffort.Off))))}
-            val vm=ChatViewModel();vm.setModel(ModelRef("system-fixture","mock-model"));vm.setTier(PermissionTier.FullAccess)
+            val vm=ChatViewModel().also{it.newSession()};vm.setModel(ModelRef("system-fixture","mock-model"));vm.setTier(PermissionTier.FullAccess)
             assertEquals(PermissionTier.FullAccess,vm.composer.value.tier)
             scenario.onActivity { activity -> activity.setContent{HoshinoTheme{ChatScreen(vm,false,{},{})}} }
             fun outputs()=java.io.File(context.filesDir,"workspace").listFiles().orEmpty().count{it.name.startsWith("system-shell-")}
@@ -98,3 +98,4 @@ class ShizukuExecutionTest {
         }} finally {scope.cancel()}
     }
 }
+

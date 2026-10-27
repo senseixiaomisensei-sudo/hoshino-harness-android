@@ -34,7 +34,7 @@ class M1ConversationSmokeTest {
                 client.upsertProvider(Provider("claude","Mock Claude","custom",ProviderProtocol.Anthropic,"http://127.0.0.1:8099/v1/messages","••••••••Bearer $canary",emptyList(),true,listOf(ModelInfo("mock-model","M1 Claude",128000,4096,true,false,ReasoningEffort.Off))))
                 client.upsertProvider(Provider("compatible","Mock Compatible","custom",ProviderProtocol.OpenAICompatible,"http://127.0.0.1:8099/v1/chat/completions",canary,emptyList(),true,listOf(ModelInfo("mock-model","M1 Compatible",128000,4096,true,false,ReasoningEffort.Off))))
             }
-            val vm=ChatViewModel()
+            val vm=ChatViewModel().also{it.newSession()}
             vm.setModel(ModelRef("claude","mock-model"))
             scenario.onActivity{activity->activity.setContent{HoshinoTheme{ChatScreen(vm,false,{},{})}}}
             ui.waitUntil(10000){vm.composer.value.model?.providerId=="claude"}
@@ -101,3 +101,4 @@ class M1ConversationSmokeTest {
         collector.cancel()
     }
 }
+

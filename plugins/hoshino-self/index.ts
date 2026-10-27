@@ -47,7 +47,8 @@ export async function apply(ctx: Context): Promise<void> {
     if(!(await lstat(path)).isFile())throw new Error('Plugin entry must be a regular file');
     try {
       const module=await import(pathToFileURL(path).href+'?generation='+randomUUID());
-      const fiber=ctx.plugin(module,await readJson(join(root,'plugins',id,'config.json'),{}));await fiber;
+      const fiber=ctx.plugin(module,await readJson(join(root,'plugins',id,'config.json'),{}));
+      try{await Promise.race([fiber,new Promise((_,reject)=>setTimeout(()=>reject(Error('Plugin activation timed out; check declared inject services')),10000).unref())]);}catch(e){await fiber.dispose();throw e;}
       fibers.set(id,fiber);
     } catch {invalid.add(id);throw new Error('Plugin could not load; use rollback or safe mode');}
   }

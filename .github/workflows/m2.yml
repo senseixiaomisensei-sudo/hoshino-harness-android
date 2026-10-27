@@ -173,7 +173,7 @@ jobs:
             adb shell am instrument -w -r -e class app.hoshino.harness.M1UiSmokeTest,app.hoshino.harness.M1ConversationSmokeTest,app.hoshino.harness.ShizukuDetectionTest,app.hoshino.harness.PermissionCapabilityTest,app.hoshino.harness.ShizukuExecutionTest,app.hoshino.harness.HistorySearchTest,app.hoshino.harness.UiCustomizationTest,app.hoshino.harness.ChatExperienceTest,app.hoshino.harness.M2AcceptanceTest dev.hoshino.app.test/androidx.test.runner.AndroidJUnitRunner | tee reports/m1-ui-smoke.txt
             adb shell run-as dev.hoshino.app cat files/m2-native-metrics.json > reports/m2-native-metrics.json
             adb logcat -b crash -d -v brief | sed -E 's/sk-[A-Za-z0-9_-]+/[redacted]/g;s/Bearer [A-Za-z0-9._=-]+/Bearer [redacted]/g' > reports/m1-crash.txt
-            grep -q 'OK (9 tests)' reports/m1-ui-smoke.txt
+            grep -q 'OK (10 tests)' reports/m1-ui-smoke.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:

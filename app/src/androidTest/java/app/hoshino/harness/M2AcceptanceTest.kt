@@ -45,4 +45,25 @@ class M2AcceptanceTest {
             }finally{runBlocking{client.control("ui-override",JSONObject().put("content",baseline));client.refreshControl()}}
         }
     }
+    @Test fun onDemandToolsGenerateTenSecondMediaDocxAndZip(){
+        val context=InstrumentationRegistry.getInstrumentation().targetContext;val client=Hoshino.client as DshHarnessClient
+        ActivityScenario.launch(MainActivity::class.java).use{
+            ui.waitUntil(300000){client.runtime.state.value.phase in setOf("已连接","崩溃")};assertEquals("已连接",client.runtime.state.value.phase)
+            runBlocking{for(group in listOf("media","documents")){val result=client.m2Control("ensure-tools",JSONObject().put("group",group));assertEquals(result.optString("output"),0,result.getInt("code"))}}
+            val terminal=runBlocking{client.openTerminal()}
+            try{
+                val command="ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=blue:s=64x64:r=5 -t 10 -c:v libx264 -pix_fmt yuv420p /root/workspace/m2-video.mp4 && ffmpeg -hide_banner -loglevel error -y -f lavfi -i sine=frequency=440:sample_rate=22050 -t 10 -c:a libmp3lame /root/workspace/m2-audio.mp3 && python3 -c \"from docx import Document; d=Document(); d.add_paragraph('Hoshino M2 document fixture'); d.save('/root/workspace/m2-document.docx')\" && python3 -c \"import zipfile; z=zipfile.ZipFile('/root/workspace/m2-files.zip','w'); [z.write('/root/workspace/'+n,n) for n in ['m2-video.mp4','m2-audio.mp3','m2-document.docx']]; z.close()\"\n"
+                runBlocking{client.terminalInput(terminal,command)}
+                val archive=File(context.filesDir,"workspace/m2-files.zip")
+                ui.waitUntil(180000){archive.isFile&&runCatching{java.util.zip.ZipFile(archive).use{z->z.size()==3}}.getOrDefault(false)}
+                for(name in listOf("m2-video.mp4","m2-audio.mp3","m2-document.docx","m2-files.zip")){
+                    val file=File(context.filesDir,"workspace/$name");assertTrue(file.length()>0)
+                    val delivered=runBlocking{client.m2Control("deliver",JSONObject().put("sessionId","m2-media-fixture").put("path","/root/workspace/$name"))};assertTrue(delivered.getBoolean("delivered"))
+                    val saved=runBlocking{client.m2.save(file,name)};assertTrue(saved.getString("uri").startsWith("content://"))
+                }
+                for(name in listOf("m2-video.mp4","m2-audio.mp3")){val media=android.media.MediaMetadataRetriever();try{media.setDataSource(File(context.filesDir,"workspace/$name").path);val duration=media.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong();assertTrue("Expected ten-second media: $duration",duration in 9900..11000)}finally{media.release()}}
+                java.util.zip.ZipFile(File(context.filesDir,"workspace/m2-document.docx")).use{assertNotNull(it.getEntry("word/document.xml"))}
+            }finally{runBlocking{client.closeTerminal(terminal)}}
+        }
+    }
 }

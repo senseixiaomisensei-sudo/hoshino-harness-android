@@ -39,7 +39,7 @@ class M2Runtime(private val context:Context,private val silentInstall:suspend(Fi
         require(body.getInt("version")==1){"不支持的原生桥版本"}
         val args=body.optJSONObject("request")?:JSONObject()
         return when(body.getString("action")) {
-            "capabilities" -> JSONObject().put("version",1).put("actions",JSONArray(listOf("device.battery","file.deliver","file.save","file.share","notification.post","shortcut.add","intent.open","github.request","update.install","web.render")))
+            "capabilities" -> JSONObject().put("version",1).put("versionCode",context.packageManager.getPackageInfo(context.packageName,0).longVersionCode).put("actions",JSONArray(listOf("device.battery","file.deliver","file.save","file.share","notification.post","shortcut.add","intent.open","github.request","update.install","web.render")))
             "device.battery" -> JSONObject().put("percent",context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
             "scheduler.sync" -> {M2Scheduler.sync(context,args.optJSONArray("entries")?:JSONArray());JSONObject().put("scheduled",true)}
             "file.deliver" -> {
@@ -134,3 +134,4 @@ class M2InstallReceiver:android.content.BroadcastReceiver(){override fun onRecei
         else->M2Notifications.post(context,"更新未完成","旧版本与数据仍保留，可重新安装")
     }
 }}
+

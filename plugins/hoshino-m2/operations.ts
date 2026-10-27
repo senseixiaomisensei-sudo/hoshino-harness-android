@@ -15,7 +15,7 @@ export async function command(program:string,args:string[],cwd:string,timeoutMs=
 export async function checkpoint(root:string,workspace:string):Promise<string>{
  const id=Date.now()+'-'+randomUUID().slice(0,8);const target=join(root,'checkpoints',id);await mkdir(target,{recursive:true});const items:Data[]=[];let bytes=0;
  async function visit(dir:string){for(const e of await readdir(dir,{withFileTypes:true})){if(['.git','node_modules','.gradle','build','.hoshino'].includes(e.name))continue;const path=join(dir,e.name);const s=await lstat(path);if(s.isSymbolicLink())continue;if(e.isDirectory())await visit(path);else if(s.isFile()){if(bytes+s.size>512*1024*1024)throw Error('Checkpoint exceeds 512 MiB; narrow the workspace before making changes');bytes+=s.size;const rel=relative(workspace,path);await mkdir(dirname(join(target,'files',rel)),{recursive:true});await cp(path,join(target,'files',rel),{preserveTimestamps:true});items.push({path:rel,bytes:s.size});}}}
- await visit(workspace);await atomic(join(target,'manifest.json'),{id,workspace,items,bytes});return id;
+ await visit(workspace);await atomic(join(target,'manifest.json'),{id,workspace,items,bytes});await pruneHistory(root,'checkpoints',id);return id;
 }
 export async function restoreCheckpoint(root:string,workspace:string,id:string){if(!/^\d+-[a-f0-9]{8}$/.test(id))throw Error('Invalid checkpoint');const target=await workspacePath(join(root,'checkpoints'),id);const manifest=JSON.parse(await readFile(join(target,'manifest.json'),'utf8'));if(manifest.workspace!==workspace)throw Error('Checkpoint belongs to another workspace');const safety=await checkpoint(root,workspace);for(const item of manifest.items){const source=await workspacePath(join(target,'files'),item.path);const dest=await workspacePath(workspace,item.path);await mkdir(dirname(dest),{recursive:true});await cp(source,dest);}return {restored:id,safetySnapshot:safety,note:'Files created after the checkpoint remain; no unrelated files are deleted.'};}
 export async function installPlugin(ctx:Context,config:Configuration,spec:string){
@@ -62,5 +62,13 @@ export async function restoreBackup(root:string,workspace:string,home:string,pat
  for(const part of ['sessions','storages'])try{await cp(join(staging,'home',part),join(home,part),{recursive:true,force:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
  await rm(staging,{recursive:true,force:true});return {restored:true,safetyBackup:safety.path,restartRequired:true};
 }
-export async function selfSnapshot(root:string){const id=Date.now()+'-'+randomUUID().slice(0,8);for(const part of ['config','plugins','skills','ui','source','prompts','modes']){const dir=join(root,part);await mkdir(dir,{recursive:true});await cp(dir,join(root,'snapshots',id,part),{recursive:true,dereference:false,filter:s=>!['node_modules','.git'].includes(s.split(/[\\/]/).at(-1)!)});}return id;}
+export async function selfSnapshot(root:string){const id=Date.now()+'-'+randomUUID().slice(0,8);for(const part of ['config','plugins','skills','ui','source','prompts','modes']){const dir=join(root,part);await mkdir(dir,{recursive:true});await cp(dir,join(root,'snapshots',id,part),{recursive:true,dereference:false,filter:s=>!['node_modules','.git'].includes(s.split(/[\\/]/).at(-1)!)});}await pruneHistory(root,'snapshots',id);return id;}
+async function pruneHistory(root:string,folder:string,current:string){
+ const base=join(root,folder);let kept=0,total=0;
+ async function bytes(path:string):Promise<number>{const s=await lstat(path);if(s.isSymbolicLink())return 0;if(s.isFile())return s.size;let n=0;for(const e of await readdir(path))n+=await bytes(join(path,e));return n;}
+ for(const id of (await readdir(base)).filter(x=>/^\d+-[a-f0-9]{8}$/.test(x)).sort().reverse()){
+  const path=await workspacePath(base,id);const size=await bytes(path);
+  if(id!==current&&(kept>=20||kept>0&&total+size>512*1024*1024))await rm(path,{recursive:true,force:true});else{kept++;total+=size;}
+ }
+}
 export async function safePublicPath(root:string,path:string){if(!/^(config|ui|skills|plugins|source|prompts|modes)\//.test(path))throw Error('Public self paths must start with config/, ui/, skills/, plugins/, source/, prompts/ or modes/');return workspacePath(root,path);}

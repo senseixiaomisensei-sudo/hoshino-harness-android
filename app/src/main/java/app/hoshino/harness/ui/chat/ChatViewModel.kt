@@ -88,8 +88,10 @@ class ChatViewModel : ViewModel() {
     private val errors=CoroutineExceptionHandler { _, failure ->
         _messages.tryEmit(client.describeFailure(failure))
     }
+    private var startupRestored=false
 
     init {
+        viewModelScope.launch(errors){client.sessions.collect{rows->if(!startupRestored&&rows.isNotEmpty()){startupRestored=true;client.preferredSessionId?.takeIf{id->rows.any{it.id==id}}?.let{openSession(it)}}}}
         // 本轮结束后自动发送排队消息
         viewModelScope.launch(errors) {
             client.events.filterIsInstance<HarnessEvent.TurnFinished>().collect { e ->
@@ -129,6 +131,7 @@ class ChatViewModel : ViewModel() {
     // ---------- 会话 ----------
 
     fun newSession() {
+        startupRestored=true
         _currentId.value = null
         _composer.update { it.copy(attachments = emptyList(), planMode = false) }
     }

@@ -8,6 +8,7 @@ import {Configuration,resolveApproval,scopePolicy,interpolate} from '../dist/plu
 import {validateOverrides} from '../dist/plugins/hoshino-self/overrides.js';
 import {search} from '../dist/plugins/hoshino-m2/web.js';
 import {exportBackup,checkpoint,restoreCheckpoint,selfSnapshot} from '../dist/plugins/hoshino-m2/operations.js';
+import {approval} from '../dist/plugins/hoshino-m2/approval.js';
 
 test('UI schema accepts slot/page/token DSL and points at a malformed nested node',()=>{
  const dsl={version:1,sidebarColumns:2,process:{display:'collapsed'},tokens:{colors:{accent:'#445566'}},slots:{topbar:{type:'row',children:[{type:'battery'}]}},pages:[{route:'diy/about',title:'My page',root:{type:'text',text:'Hi'}}]};
@@ -43,4 +44,14 @@ test('free search falls back after a blocked provider without a key',async()=>{
  const original=globalThis.fetch;const requests=[];
  globalThis.fetch=async url=>{requests.push(String(url));return String(url).includes('duckduckgo')?new Response('challenge',{status:503}):new Response('<html><title>Results</title><body>'+('A useful result with a source link. '.repeat(8))+'<a href="https://example.com/paper">Primary source</a></body></html>',{headers:{'Content-Type':'text/html'}});};
  try{const result=await search('m2-fixture',{sources:['duckduckgo','bing'],timeoutMs:1000});assert.equal(result.source,'bing');assert.equal(result.failedSources.length,1);assert.match(result.results,/https:\/\/example.com\/paper/);assert.equal(requests.some(u=>u.includes('api_key')),false);}finally{globalThis.fetch=original;}
+});
+test('approval model timeout falls back to a person and audit excludes credentials',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'hh-m2-approval-'));const old=globalThis.fetch;
+ try{
+  const config=new Configuration(root);await config.reload();await config.write('approval.json',{mode:'model',timeoutMs:1000,failure:'ask',model:{providerId:'fixture',modelId:'fixture'}});
+  globalThis.fetch=async(_url,options)=>new Promise((_,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
+  const ctx={mobilePolicy:{options:new Map()},androidBridge:{bootstrap:{workspace:'/work'},call:async method=>method==='providers'?[{id:'fixture',type:'openai-compatible',baseURL:'https://example.com/v1',apiKey:'KEY_FIXTURE',models:['fixture']}]:{value:'CREDENTIAL_CANARY'}}};
+  let asked=0;const result=await approval(ctx,config,{sessionId:'s',tool:'write'},async()=>{asked++;return {approved:false};});assert.equal(asked,1);assert.equal(result.approved,false);
+  const audit=await readFile(join(root,'audit/approvals.jsonl'),'utf8');assert.match(audit,/timed out or failed/);assert.equal(audit.includes('CREDENTIAL_CANARY'),false);
+ }finally{globalThis.fetch=old;await rm(root,{recursive:true,force:true});}
 });
