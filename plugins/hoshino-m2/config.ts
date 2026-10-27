@@ -32,8 +32,9 @@ export class Configuration {
   }
  }
  get(name:string):Data{return this.values.get(name) ?? structuredClone(defaults[name] ?? {});}
- async write(name:string,value:Data){if(!(name in defaults))throw Error('Unknown configuration');await atomic(join(this.root,'config',name),value);this.values.set(name,value);}
+ async write(name:string,value:Data){if(!(name in defaults))throw Error('Unknown configuration');assertPublic(value);await atomic(join(this.root,'config',name),value);this.values.set(name,value);}
 }
+export function assertPublic(value:unknown){if(Array.isArray(value)){value.forEach(assertPublic);return;}if(value&&typeof value==='object')for(const [k,v]of Object.entries(value)){if(/^(api[_-]?key|authorization|access[_-]?token|password)$/i.test(k)&&typeof v==='string'&&!/^(KEY_|HEADER_|\$\{)/.test(v))throw Error('Import credentials through Android Keystore, not public configuration');assertPublic(v);}}
 export async function atomic(path:string,value:unknown){await mkdir(dirname(path),{recursive:true});const tmp=path+'.tmp';await writeFile(tmp,JSON.stringify(value,null,2));await rename(tmp,path);}
 export function interpolate(text:string,variables:Record<string,unknown>){return text.replace(/\{\{([\w.-]+)\}\}/g,(_,name:string)=>String(variables[name] ?? ''));}
 export function scopePolicy(base:Data,session:string,workspace:string,mode:string):Data{return {...base,...base.scopes?.modes?.[mode],...base.scopes?.workspaces?.[workspace],...base.scopes?.sessions?.[session]};}

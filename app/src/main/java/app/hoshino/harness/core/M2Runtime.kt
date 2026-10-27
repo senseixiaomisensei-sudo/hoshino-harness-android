@@ -41,6 +41,7 @@ class M2Runtime(private val context:Context) {
         return when(body.getString("action")) {
             "capabilities" -> JSONObject().put("version",1).put("actions",JSONArray(listOf("device.battery","file.deliver","file.save","file.share","notification.post","shortcut.add","intent.open","github.request","update.install","web.render")))
             "device.battery" -> JSONObject().put("percent",context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
+            "scheduler.sync" -> {M2Scheduler.sync(context,args.optJSONArray("entries")?:JSONArray());JSONObject().put("scheduled",true)}
             "file.deliver" -> {
                 val file=workspaceFile(args.getString("path"));val row=DeliveredFile(UUID.randomUUID().toString(),args.optString("sessionId"),args.getString("path"),args.optString("name",file.name).take(180),file.length())
                 deliveries.update {(it+row).takeLast(500)}

@@ -13,6 +13,7 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
+      "fflate": ["node_modules/fflate/esm/index.d.mts"],
       "@deepseek-ai/*": [
         "node_modules/@deepseek-ai/*/lib/types/index.d.ts"
       ]

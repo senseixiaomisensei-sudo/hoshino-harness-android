@@ -73,7 +73,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             }
             catch(failure: Exception) { runtime.diagnostic("mapping: ${failure.javaClass.simpleName}") }
         } }
-        scope.launch { runtime.state.map { it.phase }.distinctUntilChanged().collect { if(it=="已连接")runCatching { refreshSessions();refreshControl() }.onFailure { runtime.diagnostic("sessions: ${it.javaClass.simpleName}") } } }
+        scope.launch { runtime.state.map { it.phase }.distinctUntilChanged().collect { if(it=="已连接")runCatching { refreshSessions();refreshControl();resumeInterrupted() }.onFailure { runtime.diagnostic("sessions: ${it.javaClass.simpleName}") } } }
     }
     fun startKernel()=runtime.start()
     fun stopKernel() { approvals.values.forEach { it.complete(ApprovalDecision.Deny) };systemShell.close();runtime.stop() }
@@ -169,6 +169,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         when(event.getString("type")) {
             "turn/start" -> {tokenTurns[sid]=TurnTokens(event.optLong("time",System.currentTimeMillis()));publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
             "turn/end" -> {
+                metadata.edit().remove("pending:$sid").apply()
                 tokenTurns.remove(sid)?.takeIf{it.reported}?.let{u->publish(HarnessEvent.UsageReported(sid,id,Usage(u.input,u.output,u.cache,u.reasoning,(event.optLong("time",System.currentTimeMillis())-u.start).coerceAtLeast(0))))}
                 live.remove(sid)?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) }
                 val reason=data.optJSONObject("reason")
@@ -285,9 +286,12 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             if(attachment.kind==AttachmentKind.Image || attachment.kind==AttachmentKind.Camera)content.put(media.imageBlock(file,attachment.name))
             else content.put(JSONObject().put("type","file").put("receiptId",client.uploadFile(sessionId,file,attachment.name)))
         }
-        client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",content))
+        val checkpoint=m2Control("snapshot",JSONObject().put("sessionId",sessionId))
+        metadata.edit().putString("checkpoint:$sessionId",checkpoint.optString("workspaceCheckpoint")).putBoolean("pending:$sessionId",true).commit()
+        try{client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",content))}catch(failure:Exception){metadata.edit().remove("pending:$sessionId").apply();throw failure}
     }
     override suspend fun steer(sessionId: String,text: String) { api().rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","steer").put("content",JSONArray().put(JSONObject().put("type","text").put("text",text)))) }
+    private suspend fun resumeInterrupted(){if(M2SafeMode.enabled(context))return;for(row in sessions.value){if(metadata.getBoolean("pending:${row.id}",false)&&!row.running){api().rpc("session/prompt",JSONObject().put("sessionId",row.id).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",JSONArray().put(JSONObject().put("type","text").put("text","Resume the interrupted user task from the persisted session log and last completed step. Inspect actual files before repeating any side effect. Do not duplicate completed actions."))))}}}
     override suspend fun stop(sessionId: String) { api().rpc("session/cancel",JSONObject().put("sessionId",sessionId)) }
     private fun readProviders(): List<Provider> = vault.list().map { p ->
         val m=p.metadata;val configured=m.optJSONArray("models")?.rows()?.associateBy { it.getString("id") }.orEmpty()
@@ -307,7 +311,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun setProviderEnabled(providerId: String,enabled: Boolean) { upsertProvider(providerRows.value.first { it.id==providerId }.copy(enabled=enabled)) }
     override suspend fun setRouting(routing: ModelRouting) { routingRow.value=routing }
     suspend fun control(action:String,request:JSONObject=JSONObject()):JSONObject=api().mobile("control",JSONObject().put("action",action).put("request",request))
-    suspend fun m2Control(operation:String,request:JSONObject=JSONObject()):JSONObject=control("m2",request.put("operation",operation))
+    suspend fun m2Control(operation:String,request:JSONObject=JSONObject()):JSONObject=control("m2",request.put("operation",operation).apply{if(!has("sessionId"))put("sessionId",activeSession)})
     override suspend fun setSessionPreset(sessionId:String,presetId:String){metadata.edit().putString("preset:$sessionId",presetId).apply();sessionRows.update{rows->rows.map{if(it.id==sessionId)it.copy(presetId=presetId)else it}}}
     override suspend fun upsertPreset(preset:AgentPreset){val current=m2Control("config",JSONObject().put("name","modes.json"));val rows=current.optJSONArray("modes")?:JSONArray();val next=JSONArray();for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("id")!=preset.id)next.put(row)};next.put(JSONObject().put("id",preset.id).put("name",preset.name).put("description",preset.description).put("systemPrompt",preset.systemPrompt).put("tools",JSONArray(preset.tools)));m2Control("config",JSONObject().put("name","modes.json").put("value",JSONObject().put("modes",next)));refreshControl()}
     override suspend fun deletePreset(presetId:String){val current=m2Control("config",JSONObject().put("name","modes.json"));val rows=current.optJSONArray("modes")?:JSONArray();val next=JSONArray();for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("id")!=presetId)next.put(row)};m2Control("config",JSONObject().put("name","modes.json").put("value",JSONObject().put("modes",next)));refreshControl()}

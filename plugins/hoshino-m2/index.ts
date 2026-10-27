@@ -5,9 +5,13 @@ import {join,dirname,relative} from 'node:path';
 import {Configuration,modes,defaults,interpolate,treeStamp,atomic,type Data} from './config.js';
 import {approval} from './approval.js';
 import {fetchPage,search,webUrl} from './web.js';
-import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,gitOperation,ensureTools,exportBackup,command} from './operations.js';
+import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,gitOperation,ensureTools,exportBackup,restoreBackup,selfSnapshot,command} from './operations.js';
 import {UI_SCHEMA,validateOverrides} from '../hoshino-self/overrides.js';
 import {workspacePath} from '../android-policy/paths.js';
+import type {} from '@deepseek-ai/dsh-goal';
+import type {} from '@deepseek-ai/dsh-schedule';
+import type {} from '@deepseek-ai/dsh-subagent';
+import {createRequire} from 'node:module';
 export interface MobileM2 {config:Configuration;invoke(action:string,args:Data):Promise<any>;approve(action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>):Promise<{approved:boolean;remember?:boolean}>}
 declare module '@deepseek-ai/cordis'{interface Context{mobileM2:MobileM2}}
 export const name='hoshino-m2';
@@ -39,7 +43,7 @@ export async function apply(ctx:Context){
  async function refresh(){if(safe){for(const [k,v]of Object.entries(defaults))config.values.set(k,structuredClone(v));workspacePrompts.clear();}else{await config.reload();for(const file of ['AGENTS.md','HOSHINO.md'])workspacePrompts.set(file,await readFile(join(workspace,file),'utf8').catch(()=>''));}}
  await refresh();
  ctx.on('system-prompt/assemble',async(assembly,context,next)=>{
-  const sid=ctx.agents.currentInitiator()?.id??'';const p=config.get('prompts.json');const mode=modeFor(sid);
+  const sid=ctx.agents.currentInitiator()?.id??(context as Data).hoshinoSessionId??'';const p=config.get('prompts.json');const mode=modeFor(sid);
   const variables={date:new Date().toISOString().slice(0,10),time:new Date().toISOString(),workspace,mode:mode.id,model:String((ctx.mobilePolicy.options.get(sid) as Data)?.model??''),device:'Android',language:'zh-CN',memory:'',...p.variables};
   const layers=[{source:'base-custom',...(p.base??{})},{source:'global',...(p.global??{})},...Array.from(workspacePrompts,([source,text])=>({source,operation:'append',text})),{source:'mode:'+mode.id,operation:mode.promptOperation??'append',text:mode.systemPrompt??''},{source:'session',...(p.sessions?.[sid]??{})}];
   for(const layer of layers){if(layer.operation==='replace')assembly.sections=[];if(layer.text)assembly.sections.push({name:'hoshino-'+layer.source,text:interpolate(String(layer.text),variables),interpolate:false});}
@@ -51,6 +55,8 @@ export async function apply(ctx:Context){
  let stamp=await treeStamp(root);let checking=false;
  const timer=setInterval(()=>{if(checking)return;checking=true;void(async()=>{const current=await treeStamp(root);if(current!==stamp){stamp=current;await refresh();await originalCall('self-changed',{});}})().catch(()=>{}).finally(()=>{checking=false;});},1500).unref();
  ctx.effect(()=>()=>clearInterval(timer));
+ ctx.on('schedule/changed',()=>{void ctx.schedule.catalog().then(entries=>bridge('scheduler.sync',{entries})).catch(()=>{});});
+ ctx.on('tools/execute',async(exec,next)=>{const start=Date.now();try{return await next();}finally{await mkdir(join(root,'audit'),{recursive:true});await appendFile(join(root,'audit','actions.jsonl'),JSON.stringify({at:new Date().toISOString(),sessionId:exec.agent?.id,tool:exec.name,durationMs:Date.now()-start})+'\n');}});
  async function sourceFiles(dir:string,prefix=''):Promise<Array<{path:string;content:string;mode:string;type:string}>>{
   const out:Array<{path:string;content:string;mode:string;type:string}>=[];
   for(const e of await readdir(dir,{withFileTypes:true})){if(['.git','node_modules','build','.gradle','.research','local.properties'].includes(e.name)||/\.keystore$/.test(e.name))continue;const path=join(dir,e.name);const s=await lstat(path);if(s.isSymbolicLink())continue;const rel=prefix+e.name;if(e.isDirectory())out.push(...await sourceFiles(path,rel+'/'));else if(s.isFile()){if(s.size>1024*1024)continue;const bytes=await readFile(path);if(bytes.includes(0))continue;out.push({path:rel,content:bytes.toString('utf8'),mode:e.name==='gradlew'?'100755':'100644',type:'blob'});}}
@@ -73,15 +79,15 @@ export async function apply(ctx:Context){
     const path=await safePublicPath(root,String(args.path));const content=String(args.content??'');if(Buffer.byteLength(content)>2*1024*1024)throw Error('Public text edit exceeds 2 MiB');
     if(/(?:api[_-]?key|authorization|access[_-]?token|password)\s*["']?\s*:/i.test(content))throw Error('Store credentials in Android Keystore');
     if(String(args.path).endsWith('.json')){const parsed=JSON.parse(content);if(args.path==='ui/overrides.json')validateOverrides(parsed);}
-    const id=await checkpoint(root,workspace);const before=await readFile(path,'utf8').catch(()=>null);await mkdir(dirname(path),{recursive:true});await writeFile(path,content);await refresh();await originalCall('self-changed',{});return {written:args.path,checkpoint:id,before,after:content};
+    const id=await selfSnapshot(root);const before=await readFile(path,'utf8').catch(()=>null);await mkdir(dirname(path),{recursive:true});await writeFile(path,content);await refresh();await originalCall('self-changed',{});return {written:args.path,snapshot:id,before,after:content};
    }
    case 'diff':{const current=await readFile(await safePublicPath(root,String(args.path)),'utf8').catch(()=>'');return {path:args.path,before:current,after:String(args.content??''),changed:current!==String(args.content??'')};}
    case 'reload':await refresh();await originalCall('self-changed',{});return {reloaded:true,errors:Object.fromEntries(config.errors)};
-   case 'snapshot':return {id:await checkpoint(root,workspace)};
+   case 'snapshot':return {id:await selfSnapshot(root),workspaceCheckpoint:await checkpoint(root,workspace)};
    case 'rollback-workspace':return restoreCheckpoint(root,workspace,String(args.id));
    case 'doctor':return {kernel:'ready',dsh:'0.2.1-rc.2',node:process.version,configErrors:Object.fromEntries(config.errors),bridge:await bridge('capabilities'),safeMode:ctx.androidBridge.bootstrap.safeMode??false};
    case 'config':{const name=String(args.name);if(args.value!==undefined){await config.write(name,args.value);await originalCall('self-changed',{});}return config.get(name);}
-   case 'prompt-preview':{const sid=String(args.sessionId??'');const assembly=await ctx.systemPrompt.assemble();return {layers:await promptLayers(sid),sections:assembly.sections,contexts:assembly.contexts,tools:assembly.tools.map(t=>t.name),variables:assembly.variables,tokenEstimate:Math.ceil(JSON.stringify(assembly.sections).length/4),tokenCountKind:'estimate'};}
+   case 'prompt-preview':{const sid=String(args.sessionId??'');const assembly=await ctx.systemPrompt.assemble({hoshinoSessionId:sid} as any);return {layers:await promptLayers(sid),sections:assembly.sections,contexts:assembly.contexts,tools:assembly.tools.map(t=>t.name),variables:assembly.variables,tokenEstimate:Math.ceil(JSON.stringify(assembly.sections).length/4),tokenCountKind:'estimate'};}
    case 'search':return search(String(args.query),config.get('search.json'));
    case 'fetch':return fetchPage(String(args.url),config.get('search.json'));
    case 'render':webUrl(String(args.url));return bridge('web.render',args);
@@ -93,7 +99,25 @@ export async function apply(ctx:Context){
    case 'build':return remoteBuild(args);
    case 'build-status':{const cfg=config.get('build.json');return github('/repos/'+cfg.repository+'/actions/runs?branch='+encodeURIComponent(String(args.branch??cfg.branch))+'&per_page=5');}
    case 'update':return bridge('update.install',args);
-   case 'backup':return exportBackup(root,workspace);
+   case 'backup':return exportBackup(root,workspace,ctx.androidBridge.bootstrap.home);
+   case 'restore-backup':return restoreBackup(root,workspace,ctx.androidBridge.bootstrap.home,String(args.path));
+   case 'schedules':return {items:await ctx.schedule.catalog()};
+   case 'schedule-create':return ctx.schedule.create(String(args.sessionId) as any,args.request as any);
+   case 'schedule-delete':return ctx.schedule.delete({sessionId:String(args.sessionId),id:String(args.id)} as any);
+   case 'undo-turn':return restoreCheckpoint(root,workspace,String(args.id));
+   case 'import-config':{
+    const text=String(args.content);let data:unknown;try{data=JSON.parse(text);}catch{const require=createRequire(import.meta.url);data=(require('yaml') as {parse(s:string):unknown}).parse(text);}
+    if(Array.isArray(data)){
+     const loaded:Data[]=[];
+     for(const row of data as Data[]){if(typeof row.name!=='string')throw Error('Cordis rows require a package name');try{const require=createRequire(import.meta.url);const entry=require.resolve(row.name);const module=await import('file://'+entry);const fiber=ctx.plugin(module,row.config??{});await fiber;loaded.push({id:row.id??row.name,status:'loaded'});}catch(e){loaded.push({id:row.id??row.name,status:'incompatible',reason:e instanceof Error?e.message:'Plugin activation failed'});}}
+     await atomic(join(root,'config','desktop.cordis.json'),data);return {items:loaded};
+    }
+    if(data&&typeof data==='object'){for(const [key,value]of Object.entries(data))if(key in defaults)await config.write(key,value as Data);return {imported:true};}
+    throw Error('Import an original Cordis row array or exported Hoshino configuration object');
+   }
+   case 'export-config':return Object.fromEntries(config.values);
+   case 'sync-push':{const cfg=config.get('build.json');const path='/repos/'+cfg.repository+'/contents/hoshino-config.json';let sha:string|undefined;try{sha=(await github(path)).sha;}catch{}return github(path,'PUT',{message:'chore: sync public Hoshino configuration',content:Buffer.from(JSON.stringify(Object.fromEntries(config.values),null,2)).toString('base64'),...(sha?{sha}:{})});}
+   case 'sync-pull':{const cfg=config.get('build.json');const result=await github('/repos/'+cfg.repository+'/contents/hoshino-config.json');return invoke('import-config',{content:Buffer.from(result.content,'base64').toString('utf8')});}
    case 'bridge':return bridge(String(args.action),args.request??{});
    default:throw Error('Unknown M2 operation');
   }

@@ -52,6 +52,13 @@ row('terminal-bash', 'terminal-bash', { shellPath: '/bin/bash', timeoutMs: 12000
 row('skills', 'skill');
 rows.push({ id:'skill-filesystem',name:resolve(plugins,'android-skills','index.js'),config:{includeDefaultRoots:false,customSkillDirs:[resolve(selfHome,'skills')],watch:false} });
 row('tool-skill');
+row('tool-todo','tool-todo',{allowParallelInProgress:true});
+row('subagent');row('subagent-spawn-in-process');row('subagent-fork-in-process');
+row('tool-subagent','tool-subagent',{provider:'spawn',toolName:'subagent',maxDepth:3});
+row('tool-subagent-fork','tool-subagent',{provider:'fork',toolName:'fork_agent',maxDepth:3});
+row('tool-subagent-control');
+row('goal');row('goal-round-driver');row('tool-goal');
+row('schedule');row('tool-schedule');
 row('typert', 'typert-registry'); row('remote-access', 'api-remote-access');
 row('webserver', 'host-webserver', { host: '127.0.0.1', port: 0 });
 row('connection', 'client-connection', {}, ['webServer']);

@@ -46,7 +46,7 @@ internal fun ProcessTimeline(items:List<ChatItem>,actions:MessageActions,display
     val action=when(current){is ChatItem.Tool->current.name;is ChatItem.Terminal->current.command.lineSequence().firstOrNull().orEmpty().take(60);is ChatItem.Thinking->"思考中";else->"处理任务"}
     val status=if(running)"运行中"else if(failed)"失败"else "已完成"
     val title=if(running)"$action · $tools 步 · ${formatDuration(duration)} · $status" else "已运行 $tools 步 · ${formatDuration(duration)}${if(files>0)" · 改了 $files 个文件"else""} · $status"
-    Column(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp).hairlineCard()){
+    Column(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp).hairlineCard(c.surface,c.line)){
         Row(Modifier.fillMaxWidth().clickable{expanded=!expanded}.padding(12.dp)){
             Text(if(expanded)"▾ 过程"else"▸ 过程",style=HoshinoTheme.type.bodyMedium,color=c.text,modifier=Modifier.width(64.dp))
             Text(title,style=HoshinoTheme.type.caption,color=if(failed)c.danger else c.text2)
@@ -68,7 +68,7 @@ internal fun ProcessTimeline(items:List<ChatItem>,actions:MessageActions,display
                         }else ChatItemView(item,actions)
                     }
                 }
-                if(full)HSheet("查看全部",{full=false}){
+                if(full)HSheet(onDismiss={full=false},title="查看全部"){
                     HButton("复制全文",{copyToClipboard(context,item.plainText())})
                     SelectionContainer{Text(item.plainText(),style=HoshinoTheme.type.code,color=c.text,modifier=Modifier.heightIn(max=640.dp).verticalScroll(rememberScrollState()).padding(12.dp))}
                 }

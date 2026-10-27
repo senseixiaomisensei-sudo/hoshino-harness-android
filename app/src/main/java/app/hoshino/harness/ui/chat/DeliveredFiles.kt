@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
     val files by client.m2.deliveries.collectAsStateWithLifecycle();val context=LocalContext.current;val scope=rememberCoroutineScope()
     files.filter{it.sessionId==sessionId}.takeLast(12).forEach{row->
         var preview by remember(row.id){mutableStateOf(false)}
-        Column(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=4.dp).hairlineCard().padding(12.dp)){
+        Column(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=4.dp).hairlineCard(HoshinoTheme.colors.surface,HoshinoTheme.colors.line).padding(12.dp)){
             Text(row.name,style=HoshinoTheme.type.bodyMedium,color=HoshinoTheme.colors.text)
             Text("${row.bytes/1024} KB · ${row.name.substringAfterLast('.',"文件").uppercase()}",style=HoshinoTheme.type.caption,color=HoshinoTheme.colors.text3)
             Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
                 HButton("分享/打开",{runCatching{AppMedia(context).shareFile(client.m2.workspaceFile(row.path))}.onFailure{toast(context,it.message?:"文件失效")}},compact=true)
             }
         }
-        if(preview)HSheet(row.name,{preview=false}){
+        if(preview)HSheet(onDismiss={preview=false},title=row.name){
             val file=runCatching{client.m2.workspaceFile(row.path)}.getOrNull()
             if(file==null)Text("文件已移走")else when(file.extension.lowercase()){
                 "png","jpg","jpeg","webp","gif"->{val options=android.graphics.BitmapFactory.Options().apply{inSampleSize=2};val bitmap=remember(file.path){android.graphics.BitmapFactory.decodeFile(file.path,options)};if(bitmap!=null)androidx.compose.foundation.Image(bitmap.asImageBitmap(),row.name,Modifier.fillMaxWidth().heightIn(max=500.dp))}
