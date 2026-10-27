@@ -1,0 +1,63 @@
+name: M2 verify existing signed APK
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: Existing signed development artifact run
+        required: true
+        default: '40502104001'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - uses: actions/download-artifact@v4
+        with:
+          name: hoshino-m2-development
+          path: artifacts
+          run-id: ${{ inputs.artifact_run }}
+          github-token: ${{ github.token }}
+      - name: Start local mock model
+        run: node tools/mock-llm/server.mjs > mock.log 2>&1 &
+      - name: Fetch pinned official Shizuku manager for installation detection
+        run: python3 tools/prepare-shizuku-fixture.py
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          if test -e /dev/kvm; then sudo chmod a+rw /dev/kvm; ls -l /dev/kvm; fi
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: default
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -memory 3072
+          script: |
+            mkdir -p reports
+            adb reverse tcp:8099 tcp:8099
+            adb install --no-streaming -r .research/shizuku-manager/manager.apk
+            adb install --no-streaming -r artifacts/build/deliverables/Hoshino-Harness-0.2.0-m2-x86_64-debug.apk
+            adb install --no-streaming -r artifacts/app/build/outputs/apk/androidTest/x86/debug/app-x86-debug-androidTest.apk
+            adb shell pm grant dev.hoshino.app android.permission.POST_NOTIFICATIONS
+            python3 tools/start-shizuku-fixture.py --serial emulator-5554
+            adb shell am instrument -w -r -e class app.hoshino.harness.M1UiSmokeTest,app.hoshino.harness.M1ConversationSmokeTest,app.hoshino.harness.ShizukuDetectionTest,app.hoshino.harness.PermissionCapabilityTest,app.hoshino.harness.ShizukuExecutionTest,app.hoshino.harness.HistorySearchTest,app.hoshino.harness.UiCustomizationTest,app.hoshino.harness.ChatExperienceTest,app.hoshino.harness.M2AcceptanceTest dev.hoshino.app.test/androidx.test.runner.AndroidJUnitRunner | tee reports/m1-ui-smoke.txt
+            adb shell run-as dev.hoshino.app cat files/m2-native-metrics.json > reports/m2-native-metrics.json
+            adb logcat -b crash -d -v brief | sed -E 's/sk-[A-Za-z0-9_-]+/[redacted]/g;s/Bearer [A-Za-z0-9._=-]+/Bearer [redacted]/g' > reports/m1-crash.txt
+            grep -q 'OK (10 tests)' reports/m1-ui-smoke.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m2-native-verification
+          path: |
+            reports
+            mock.log
