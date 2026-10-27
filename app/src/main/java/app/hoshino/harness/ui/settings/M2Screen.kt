@@ -37,6 +37,7 @@ fun M2Screen(onBack:()->Unit){
                 }
                 HButton("推送源码并构建",{scope.launch{busy=true;runCatching{client?.m2Control("build")}.onSuccess{status=it?.toString(2).orEmpty()}.onFailure{status=client?.describeFailure(it).orEmpty()};busy=false}},enabled=!busy)
                 HButton("查询构建",{scope.launch{runCatching{client?.m2Control("build-status")}.onSuccess{status=it?.toString(2).orEmpty()}.onFailure{status=client?.describeFailure(it).orEmpty()}}})
+                HButton("跟进构建并安装",{scope.launch{busy=true;try{repeat(180){val result=client?.m2Control("update")?:error("内核未连接");status=result.toString(2);if(result.optString("status")!="waiting")return@launch;kotlinx.coroutines.delay(30000)}}catch(e:Exception){status=client?.describeFailure(e).orEmpty()}finally{busy=false}}},enabled=!busy)
             }
             if(section=="诊断与备份"){
                 HButton("导出完整配置与会话备份",{scope.launch{runCatching{val result=client?.m2Control("backup")?:error("内核未连接");client.m2Control("deliver",JSONObject().put("path",result.getString("path")));status=result.toString(2)}.onFailure{status=client?.describeFailure(it).orEmpty()}}})

@@ -42,6 +42,7 @@ class ProotKernelLauncher : KernelLauncher {
         val workspace = File(context.filesDir, "workspace").apply { mkdirs() }
         val home = File(context.filesDir, "dsh-home").apply { mkdirs() }
         val hoshino = File(context.filesDir,"hoshino").apply { mkdirs() }
+        runCatching{val record=File(hoshino,"runtime-process.json");if(record.isFile){val saved=JSONObject(record.readText());val pid=saved.getInt("pid");require(pid>1);val proc=File("/proc/$pid");if(proc.isDirectory){val command=File(proc,"cmdline").readText();val stat=File(proc,"stat").readText();val ticks=stat.substring(stat.lastIndexOf(')')+2).split(' ')[19];if(ticks==saved.getString("startTicks")&&command.contains("/opt/hoshino/node-host/dist/node-host/src/main.js")){android.os.Process.killProcess(pid);Thread.sleep(300)}}}}
         val source=File(hoshino,"source").apply{mkdirs()}
         if(source.listFiles().isNullOrEmpty())runCatching{
             java.util.zip.ZipInputStream(context.assets.open("harness-source.zip")).use{zip->

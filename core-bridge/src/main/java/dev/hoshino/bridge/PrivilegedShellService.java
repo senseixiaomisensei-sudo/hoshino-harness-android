@@ -98,5 +98,24 @@ public final class PrivilegedShellService extends IShizukuShell.Stub {
         } finally { if(run!=null)runs.remove(id,run);try{stdout.close();}catch(Exception ignored){}try{stderr.close();}catch(Exception ignored){} }
     }
     @Override public void cancel(String id) { owner();if(cancelledIds.size()>128)cancelledIds.clear();cancelledIds.put(id,true);Run run=runs.get(id);if(run!=null)run.stop(); }
+    private String pm(String... args) throws Exception {
+        java.util.List<String> command=new java.util.ArrayList<>();command.add("/system/bin/pm");java.util.Collections.addAll(command,args);
+        Process p=new ProcessBuilder(command).redirectErrorStream(true).start();p.getOutputStream().close();
+        Future<String> output=readers.submit(()->{try(InputStream in=p.getInputStream()){ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1){if(out.size()+n>65536)throw new IOException("pm output too large");out.write(b,0,n);}return out.toString("UTF-8");}});
+        if(!p.waitFor(90,TimeUnit.SECONDS)){p.destroyForcibly();throw new IOException("Package installation timed out");}String text=output.get(5,TimeUnit.SECONDS);if(p.exitValue()!=0)throw new IOException("Package manager rejected request");return text;
+    }
+    @Override public String installApk(ParcelFileDescriptor apk,long bytes){
+        int session=-1;
+        try {owner();if(bytes<1 || bytes>300L*1024*1024)throw new IllegalArgumentException();
+            String created=pm("install-create","-r","-d","--pkg","dev.hoshino.app","-S",Long.toString(bytes));
+            java.util.regex.Matcher match=java.util.regex.Pattern.compile("\\[(\\d+)\\]").matcher(created);if(!match.find())throw new IOException("No install session");session=Integer.parseInt(match.group(1));
+            Process p=new ProcessBuilder("/system/bin/pm","install-write","-S",Long.toString(bytes),Integer.toString(session),"base.apk","-").redirectErrorStream(true).start();
+            Future<String> result=readers.submit(()->{try(InputStream in=p.getInputStream()){ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1){if(out.size()+n>65536)throw new IOException();out.write(b,0,n);}return out.toString("UTF-8");}});
+            try(InputStream in=new ParcelFileDescriptor.AutoCloseInputStream(apk);OutputStream out=p.getOutputStream()){byte[] b=new byte[65536];long copied=0;int n;while((n=in.read(b))!=-1){copied+=n;if(copied>bytes)throw new IOException();out.write(b,0,n);}if(copied!=bytes)throw new IOException();}
+            if(!p.waitFor(90,TimeUnit.SECONDS)){p.destroyForcibly();throw new IOException();}if(p.exitValue()!=0 || !result.get(5,TimeUnit.SECONDS).contains("Success"))throw new IOException();
+            String committed=pm("install-commit",Integer.toString(session));if(!committed.contains("Success"))throw new IOException();return "{\"installed\":true,\"method\":\"shizuku\"}";
+        } catch(Exception failure){if(session>=0)try{pm("install-abandon",Integer.toString(session));}catch(Exception ignored){}return "{\"installed\":false,\"error\":\"Package manager rejected installation\"}";}
+        finally {try{apk.close();}catch(Exception ignored){}}
+    }
     @Override public void destroy() { for(Run run:runs.values())run.stop();readers.shutdownNow();System.exit(0); }
 }

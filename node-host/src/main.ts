@@ -1,6 +1,6 @@
 import { boot, loadLayeredEnv } from '@deepseek-ai/dsh-app-boot';
 import { DSH_LAUNCH_ENVIRONMENT_KEY } from '@deepseek-ai/dsh-launch-environment';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile,readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
@@ -19,6 +19,8 @@ await mkdir(bootstrap.workspace, { recursive: true });
 await mkdir(bootstrap.home, { recursive: true });
 const selfHome = bootstrap.selfHome ?? resolve(bootstrap.home, 'hoshino');
 await mkdir(resolve(selfHome, 'skills'), { recursive: true });
+const proc=await readFile('/proc/self/stat','utf8').catch(()=>'');
+await writeFile(resolve(selfHome,'runtime-process.json'),JSON.stringify({pid:process.pid,startTicks:proc?proc.slice(proc.lastIndexOf(')')+2).split(' ')[19]:'',entry:'/opt/hoshino/node-host/dist/node-host/src/main.js'}));
 process.chdir(bootstrap.workspace);
 process.env.DSH_HOME = bootstrap.home;
 process.env.DSH_TELEMETRY_DISABLED = '1';

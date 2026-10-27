@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import app.hoshino.harness.ui.HoshinoApp
 
 class MainActivity : ComponentActivity() {
+    override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);lifecycleScope.launch{runCatching{app.hoshino.harness.core.M2Intents.receive(this@MainActivity,intent)}}}
     override fun onKeyLongPress(keyCode:Int,event:android.view.KeyEvent?):Boolean {
         if(keyCode==android.view.KeyEvent.KEYCODE_VOLUME_DOWN || keyCode==android.view.KeyEvent.KEYCODE_VOLUME_UP){app.hoshino.harness.core.M2SafeMode.set(this,true);lifecycleScope.launch{app.hoshino.harness.core.Hoshino.client.restartKernel()};return true}
         return super.onKeyLongPress(keyCode,event)
@@ -26,5 +27,6 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         startForegroundService(Intent(this,KernelService::class.java))
         setContent { HoshinoApp() }
+        lifecycleScope.launch{runCatching{app.hoshino.harness.core.M2Intents.receive(this@MainActivity,intent)}}
     }
 }

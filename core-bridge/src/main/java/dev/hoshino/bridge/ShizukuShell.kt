@@ -64,6 +64,7 @@ class ShizukuShell(private val context: Context) {
         } finally { stdout.close();stderr.close();owners.remove(id) }
     }
     suspend fun cancel(id:String,session:String) { if(cancelled.size>128)cancelled.clear();cancelled[id]=session;if(owners[id]==session)withTimeoutOrNull(1000){val remote=connected.await();withContext(Dispatchers.IO){runCatching{remote.cancel(id)}}} }
+    suspend fun installApk(file:File):JSONObject {val remote=service();return withContext(Dispatchers.IO){ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_READ_ONLY).use{fd->JSONObject(remote.installApk(fd,file.length()))}}}
     fun close() {
         if(bound)runCatching{Shizuku.unbindUserService(args,connection,true)}
         bound=false;connected.cancel();connected=CompletableDeferred();owners.clear()

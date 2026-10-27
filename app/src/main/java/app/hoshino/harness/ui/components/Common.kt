@@ -574,9 +574,9 @@ fun PageScaffold(
         Hairline()
         val body = Modifier.fillMaxWidth().weight(1f)
         if (scrollable) {
-            Column(body.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp), content = content)
+            Column(body.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)){app.hoshino.harness.ui.diy.DiySlot("page.$title"){content()}}
         } else {
-            Column(body, content = content)
+            Column(body){app.hoshino.harness.ui.diy.DiySlot("page.$title"){content()}}
         }
     }
 }

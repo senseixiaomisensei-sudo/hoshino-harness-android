@@ -98,7 +98,16 @@ export async function apply(ctx:Context){
    case 'git':return gitOperation(workspace,String(args.operation),args);
    case 'build':return remoteBuild(args);
    case 'build-status':{const cfg=config.get('build.json');return github('/repos/'+cfg.repository+'/actions/runs?branch='+encodeURIComponent(String(args.branch??cfg.branch))+'&per_page=5');}
-   case 'update':return bridge('update.install',args);
+   case 'update':{
+    if(args.url)return bridge('update.install',args);
+    const last=JSON.parse(await readFile(join(root,'config','last-build.json'),'utf8'));const repo='/repos/'+last.repository;
+    const runs=await github(repo+'/actions/runs?branch='+encodeURIComponent(last.branch)+'&per_page=10');const run=runs.workflow_runs?.find((r:Data)=>r.head_sha===last.sha);
+    if(!run)return {status:'waiting',reason:'Workflow has not appeared yet',branch:last.branch};
+    if(run.status!=='completed')return {status:'waiting',runId:run.id,runStatus:run.status,url:run.html_url};
+    if(run.conclusion!=='success')throw Error('Build did not pass; inspect '+run.html_url);
+    const artifacts=await github(repo+'/actions/runs/'+run.id+'/artifacts');const artifact=artifacts.artifacts?.find((a:Data)=>a.name==='hoshino-m2-development'&&!a.expired);if(!artifact)throw Error('Signed APK artifact missing or expired');
+    return bridge('update.artifact',{artifactId:artifact.id,runId:run.id});
+   }
    case 'backup':return exportBackup(root,workspace,ctx.androidBridge.bootstrap.home);
    case 'restore-backup':return restoreBackup(root,workspace,ctx.androidBridge.bootstrap.home,String(args.path));
    case 'schedules':return {items:await ctx.schedule.catalog()};
@@ -132,7 +141,7 @@ export async function apply(ctx:Context){
   ['self_rollback','Restore a workspace checkpoint, preserving a safety snapshot.',{id:{type:'string',required:true}},'rollback-workspace'],
   ['self_doctor','Inspect kernel, schema errors and native bridge capabilities.',{},'doctor'],
   ['self_build','Push the Harness source working copy to your configured GitHub fork and dispatch a signed build.',{message:{type:'string'}},'build'],
-  ['self_update','Verify APK SHA256, application ID and original signature, then request installation.',{url:{type:'string',required:true},sha256:{type:'string',required:true}},'update'],
+  ['self_update','Poll the last self-build and install its matching signed artifact. Or supply a direct HTTPS APK URL and SHA256.',{url:{type:'string'},sha256:{type:'string'}},'update'],
   ['web_search','Search free sources with automatic fallback; returns source URLs.',{query:{type:'string',required:true}},'search'],
   ['web_fetch','Fetch a page as text/Markdown without a service key.',{url:{type:'string',required:true}},'fetch'],
   ['web_render','Render a remote page using Android WebView; optionally click/input/scroll under approval.',{url:{type:'string',required:true},script:{type:'string'}},'render'],

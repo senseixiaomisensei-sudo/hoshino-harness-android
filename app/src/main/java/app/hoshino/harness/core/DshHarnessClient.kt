@@ -58,7 +58,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val uiCustomization=MutableStateFlow(UiCustomization())
     override val uiCustomizationError=MutableStateFlow<String?>(null)
     override val configurationRollbackSupported=true
-    val m2=M2Runtime(context)
+    val m2=M2Runtime(context){systemShell.installApk(it)}
     override val presets=MutableStateFlow(listOf("chat" to "聊天","standard" to "Agent","plan" to "Plan","ask" to "Ask","research" to "Research","review" to "Review","goal" to "Goal","auto" to "Auto","orchestrator" to "Orchestrator").map{(id,name)->AgentPreset(id,name,"",true,"",emptyList(),null,PermissionTier.WorkspaceWrite)})
     val files=dev.hoshino.bridge.WorkspaceFiles(java.io.File(context.filesDir,"workspace"),java.io.File(context.filesDir,"hoshino-trash"))
     private val metadata=context.getSharedPreferences("m1-session-metadata",Context.MODE_PRIVATE)

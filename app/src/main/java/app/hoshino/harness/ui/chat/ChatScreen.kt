@@ -114,6 +114,9 @@ fun ChatScreen(
     val files by vm.fileSuggestions.collectAsStateWithLifecycle()
 
     var input by remember { mutableStateOf(TextFieldValue("")) }
+    val shared by app.hoshino.harness.core.M2Intents.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(shared?.id){shared?.let{task->if(task.newTask)vm.newSession();if(task.text.isNotBlank())input=TextFieldValue(if(input.text.isBlank())task.text else input.text+"\n"+task.text);task.attachment?.let{vm.attach(it)};app.hoshino.harness.core.M2Intents.pending.value=null}}
+    val voice=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()){result->if(result.resultCode==android.app.Activity.RESULT_OK){val text=result.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty();if(text.isNotBlank())input=TextFieldValue(if(input.text.isBlank())text else input.text+" "+text)}}
     var showTier by remember { mutableStateOf(false) }
     var showRisk by remember { mutableStateOf(false) }
     var showShizuku by remember { mutableStateOf(false) }
@@ -213,6 +216,7 @@ fun ChatScreen(
             DiySlot("topbar",onNavigate={navigate(it)},onPrompt={input=TextFieldValue(it)}) { Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconBtn(HIcons.Menu, stringResource(R.string.cd_sidebar), { scope.launch { drawer.open() } })
                 ApprovalQuickSwitch()
+                app.hoshino.harness.ui.components.HButton("语音",{runCatching{voice.launch(android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))}.onFailure{vm.toast("系统没有可用的语音识别应用")}},compact=true)
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(current?.title ?: stringResource(R.string.new_session), style = HoshinoTheme.type.bodyMedium, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -492,7 +496,7 @@ fun MessageList(chatItems: List<app.hoshino.harness.core.ChatItem>, actions: Mes
         }
 
         // 轮次导航刻度（≥3 轮时显示）
-        val userIdx = reversed.mapIndexedNotNull { i, it -> if (it.user!=null) i + 1 else null }
+        val userIdx = reversed.mapIndexedNotNull { i, it -> if (it.user!=null) i + if(sessionId.isBlank())1 else 2 else null }
         if (userIdx.size >= 3) {
             Column(
                 Modifier.align(Alignment.CenterEnd).padding(end = 2.dp),

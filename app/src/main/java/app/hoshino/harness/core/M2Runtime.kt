@@ -23,7 +23,7 @@ import java.util.UUID
 data class DeliveredFile(val id:String,val sessionId:String,val path:String,val name:String,val bytes:Long)
 
 /** Android capabilities only: no Agent loop or model decisions live here. */
-class M2Runtime(private val context:Context) {
+class M2Runtime(private val context:Context,private val silentInstall:suspend(File)->JSONObject) {
     val deliveries=MutableStateFlow<List<DeliveredFile>>(emptyList())
     private val vault=ProviderStore(context)
     private val records=File(context.filesDir,"hoshino-deliveries.json")
@@ -62,6 +62,8 @@ class M2Runtime(private val context:Context) {
             }
             "github.request" -> github(args)
             "update.install" -> install(args)
+            "update.artifact" -> installArtifact(args)
+            "update.previous" -> {val name=args.getString("name");require(name.matches(Regex("previous-\\d+\\.apk")));finishInstall(File(context.filesDir,"hoshino/updates/$name"))}
             "web.render" -> M2WebRenderer.render(context,args)
             else -> error("未知原生桥能力")
         }
@@ -94,6 +96,22 @@ class M2Runtime(private val context:Context) {
         val c=url.openConnection() as HttpURLConnection;c.connectTimeout=20000;c.readTimeout=60000
         try{check(c.responseCode in 200..299);var bytes=0L;c.inputStream.use{input->apk.outputStream().use{out->val buffer=ByteArray(65536);while(true){val n=input.read(buffer);if(n<0)break;bytes+=n;check(bytes<=300L*1024*1024){"更新包超过 300 MiB"};hash.update(buffer,0,n);out.write(buffer,0,n)}}}}finally{c.disconnect()}
         check(hash.digest().joinToString(""){"%02x".format(it)}==expected){"APK SHA256 不匹配，已阻止安装"}
+        finishInstall(apk)
+    }
+    private suspend fun installArtifact(args:JSONObject):JSONObject=withContext(Dispatchers.IO){
+        val cfg=JSONObject(File(context.filesDir,"hoshino/config/build.json").readText());val repo=cfg.getString("repository");require(repo.matches(Regex("[\\w.-]+/[\\w.-]+")))
+        val id=args.getLong("artifactId");require(id>0);val token=vault.resolve("GITHUB_TOKEN")?:error("请先填写 GitHub 凭证")
+        val dir=File(context.filesDir,"hoshino/updates").apply{mkdirs()};val archive=File(dir,"artifact.zip")
+        val first=URL("https://api.github.com/repos/$repo/actions/artifacts/$id/zip").openConnection() as HttpURLConnection;first.instanceFollowRedirects=false;first.setRequestProperty("Authorization","Bearer $token");first.connectTimeout=20000;first.readTimeout=30000
+        val redirect=try{check(first.responseCode in setOf(301,302,303,307));URL(first.getHeaderField("Location")).also{require(it.protocol=="https")}}finally{first.disconnect()}
+        val download=redirect.openConnection() as HttpURLConnection;download.connectTimeout=20000;download.readTimeout=60000
+        try{check(download.responseCode==200);download.inputStream.use{input->archive.outputStream().use{out->val b=ByteArray(65536);var total=0L;while(true){val n=input.read(b);if(n<0)break;total+=n;check(total<=500L*1024*1024);out.write(b,0,n)}}}}finally{download.disconnect()}
+        val abi=if(Build.SUPPORTED_ABIS.contains("arm64-v8a"))"arm64-v8a"else"x86_64";val name="Hoshino-Harness-0.2.0-m2-$abi-debug.apk";val apk=File(dir,"candidate.apk")
+        java.util.zip.ZipFile(archive).use{zip->val entries=zip.entries().asSequence().toList();val entry=entries.singleOrNull{it.name.substringAfterLast('/')==name}?:error("产物中没有本机 ABI 的 APK");require(entry.size in 1..300L*1024*1024);val sums=entries.singleOrNull{it.name.substringAfterLast('/')=="SHA256SUMS-0.2.0-m2.txt"}?:error("产物缺少校验清单");require(sums.size<10000);val expected=zip.getInputStream(sums).bufferedReader().use{it.readLines().firstOrNull{line->line.trim().endsWith(name)}?.substringBefore(' ')?.lowercase()}?:error("缺少 APK 哈希");val digest=MessageDigest.getInstance("SHA-256");zip.getInputStream(entry).use{input->apk.outputStream().use{out->val b=ByteArray(65536);var total=0L;while(true){val n=input.read(b);if(n<0)break;total+=n;check(total<=300L*1024*1024);digest.update(b,0,n);out.write(b,0,n)}}};check(digest.digest().joinToString(""){"%02x".format(it)}==expected){"构建产物哈希不一致"}}
+        finishInstall(apk)
+    }
+    private suspend fun finishInstall(apk:File):JSONObject=withContext(Dispatchers.IO){
+        val dir=File(context.filesDir,"hoshino/updates").apply{mkdirs()}
         val flags=PackageManager.GET_SIGNING_CERTIFICATES;val incoming=context.packageManager.getPackageArchiveInfo(apk.path,flags)?:error("APK 无法解析")
         val installed=context.packageManager.getPackageInfo(context.packageName,flags)
         check(incoming.packageName==context.packageName){"更新包 applicationId 不匹配"}
@@ -101,6 +119,9 @@ class M2Runtime(private val context:Context) {
         check(existing==signatures){"更新包签名不匹配，已阻止安装"}
         File(context.applicationInfo.sourceDir).copyTo(File(dir,"previous-${installed.longVersionCode}.apk"),true)
         dir.listFiles{f->f.name.startsWith("previous-")&&f.extension=="apk"}?.sortedByDescending{it.lastModified()}?.drop(3)?.forEach{it.delete()}
+        if(runCatching{rikka.shizuku.Shizuku.pingBinder()&&rikka.shizuku.Shizuku.checkSelfPermission()==PackageManager.PERMISSION_GRANTED}.getOrDefault(false)){
+            val result=silentInstall(apk);if(result.optBoolean("installed"))return@withContext result
+        }
         val installer=context.packageManager.packageInstaller;val params=PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply{setAppPackageName(context.packageName)}
         val sessionId=installer.createSession(params)
         installer.openSession(sessionId).use{session->session.openWrite("base.apk",0,apk.length()).use{out->apk.inputStream().use{it.copyTo(out,65536)};session.fsync(out)};val result=PendingIntent.getBroadcast(context,sessionId,Intent(context,M2InstallReceiver::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE);session.commit(result.intentSender)}

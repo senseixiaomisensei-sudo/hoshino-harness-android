@@ -38,10 +38,11 @@ private fun validateNode(node:JSONObject,depth:Int=0):JSONObject {
     return node
 }
 @Composable
-fun DiyNode(node:JSONObject,document:JSONObject,onNavigate:(String)->Unit={},onPrompt:(String)->Unit={},depth:Int=0){
+fun DiyNode(node:JSONObject,document:JSONObject,onNavigate:(String)->Unit={},onPrompt:(String)->Unit={},depth:Int=0,sharedState:MutableMap<String,String>?=null){
     if(depth>32)return
     val context=LocalContext.current;val scope=rememberCoroutineScope();val c=HoshinoTheme.colors
-    val state=remember(document.toString()){mutableStateMapOf<String,String>().apply{document.optJSONObject("state")?.let{o->o.keys().forEach{k->put(k,o.opt(k).toString())}}}}
+    val ownState=remember(document.toString()){mutableStateMapOf<String,String>().apply{document.optJSONObject("state")?.let{o->o.keys().forEach{k->put(k,o.opt(k).toString())}}}}
+    val state=sharedState?:ownState
     fun expand(value:String)=Regex("\\{\\{([\\w.-]+)}}").replace(value){state[it.groupValues[1]]?:document.optJSONObject("state")?.opt(it.groupValues[1])?.toString().orEmpty()}
     val condition=node.optString("when");if(condition.isNotEmpty()&&state[condition] !in setOf("true","1"))return
     val style=node.optJSONObject("style")?:JSONObject();val tokens=document.optJSONObject("themes")?.optJSONObject(document.optString("theme"))?:document.optJSONObject("tokens")?:JSONObject()
@@ -49,7 +50,7 @@ fun DiyNode(node:JSONObject,document:JSONObject,onNavigate:(String)->Unit={},onP
     val pad=style.optDouble("padding",0.0).toFloat().coerceIn(0f,96f);val space=style.optDouble("spacing",8.0).toFloat().coerceIn(0f,96f)
     val modifier=Modifier.fillMaxWidth().padding(pad.dp).then(if(node.has("animation"))Modifier.animateContentSize(androidx.compose.animation.core.tween(node.optJSONObject("animation")?.optInt("durationMs",200)?.coerceIn(0,3000)?:200))else Modifier)
     fun fire(){val event=node.optJSONObject("onClick")?:return;val command=event.optString("command");val args=event.optJSONObject("arguments")?:JSONObject();when(command){"navigate"->onNavigate(args.optString("route"));"prompt"->onPrompt(expand(args.optString("text")));"set"->state[args.getString("key")]=args.opt("value").toString();else->scope.launch{runCatching{(Hoshino.client as? DshHarnessClient)?.m2Control(command,args)}.onFailure{toast(context,it.message?:"命令失败")}}}}
-    @Composable fun children(){val a=node.optJSONArray("children")?:JSONArray();for(i in 0 until a.length())DiyNode(a.getJSONObject(i),document,onNavigate,onPrompt,depth+1)}
+    @Composable fun children(){val a=node.optJSONArray("children")?:JSONArray();for(i in 0 until a.length())DiyNode(a.getJSONObject(i),document,onNavigate,onPrompt,depth+1,state)}
     val text=expand(if(node.has("bind"))state[node.optString("bind")]?:node.optString("text")else node.optString("text"))
     when(node.getString("type")){
         "row"->Row(modifier,horizontalArrangement=Arrangement.spacedBy(space.dp)){children()}

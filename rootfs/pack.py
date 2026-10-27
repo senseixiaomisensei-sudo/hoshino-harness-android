@@ -6,7 +6,7 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 PREFIX='opt/hoshino/node-host/'
 DENIED=set() # M1 enables native dsh attachments and therefore restores Sharp/libvips.
 
-def pack(source, abi, target, baseline, refresh=False):
+def pack(source, abi, target, baseline, refresh=False, add_dependencies=False):
     started=time.monotonic();packages={}
     with tarfile.open(source,'r:*') as archive:
         for item in archive:
@@ -14,6 +14,18 @@ def pack(source, abi, target, baseline, refresh=False):
             if name.startswith(PREFIX+'node_modules/') and name.endswith('/package.json') and item.isfile():
                 try:packages[posixpath.dirname(name)]=json.load(archive.extractfile(item))
                 except (ValueError,UnicodeError):pass
+    additions={}
+    if add_dependencies:
+        host=ROOT/'node-host/node_modules'
+        for manifest in host.rglob('package.json'):
+            directory=manifest.parent
+            try:data=json.loads(manifest.read_text(encoding='utf-8'))
+            except (ValueError,UnicodeError):continue
+            # Package roots only, not implementation fixture package.json files.
+            rel=directory.relative_to(host).as_posix()
+            if data.get('name') is None:continue
+            name=PREFIX+'node_modules/'+rel
+            if name not in packages:packages[name]=data;additions[name]=directory
     def locate(name,parent=PREFIX.rstrip('/')):
         current=parent
         while True:
@@ -93,6 +105,16 @@ def pack(source, abi, target, baseline, refresh=False):
                 output.addfile(item,data)
                 if item.isfile():files.append({'path':item.name,'bytes':item.size});unpacked+=item.size
             if refresh:
+                # Reuse the exact musl runtime/native binaries. Add only missing locked JS packages.
+                # This avoids replacing Node just because an Alpine rolling mirror pruned its APK.
+                for name,directory in sorted(additions.items()):
+                    if name not in selected:continue
+                    for path in sorted(directory.rglob('*')):
+                        if not path.is_file() or path.is_symlink():continue
+                        target_name=name+'/'+path.relative_to(directory).as_posix()
+                        if not keep(target_name):continue
+                        if path.suffix in ['.node','.so','.dll','.dylib'] or path.name=='binding.gyp':raise RuntimeError('New native dependency requires a target build: '+target_name)
+                        size=path.stat().st_size;output.add(path,arcname=target_name,recursive=False);files.append({'path':target_name,'bytes':size});unpacked+=size
                 for name,payload in restored.items():
                     item=tarfile.TarInfo(name);item.size=len(payload);item.mode=0o644;output.addfile(item,io.BytesIO(payload));files.append({'path':name,'bytes':len(payload)});unpacked+=len(payload)
                 for path in sorted((ROOT/'node-host/dist').rglob('*')):

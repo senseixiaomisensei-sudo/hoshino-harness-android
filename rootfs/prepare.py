@@ -105,13 +105,14 @@ def refresh_host(abi):
     pack(target,abi,target,CACHE/f'{abi}.tgz',refresh=True)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--lock',action='store_true');parser.add_argument('--abi',choices=ABIS,action='append');parser.add_argument('--proot-only',action='store_true');parser.add_argument('--rootfs-only',action='store_true');parser.add_argument('--refresh-host',action='store_true');parser.add_argument('--repack-local',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--lock',action='store_true');parser.add_argument('--abi',choices=ABIS,action='append');parser.add_argument('--proot-only',action='store_true');parser.add_argument('--rootfs-only',action='store_true');parser.add_argument('--refresh-host',action='store_true');parser.add_argument('--extend-host',action='store_true');parser.add_argument('--repack-local',action='store_true');args=parser.parse_args()
     if args.refresh_host and (args.lock or args.proot_only or args.rootfs_only): parser.error('--refresh-host cannot update runtime dependencies')
     if args.rootfs_only and (args.lock or args.proot_only): parser.error('--rootfs-only cannot update proot')
     CACHE.mkdir(parents=True,exist_ok=True)
     lock_file=ROOT/'rootfs/termux-lock.json';locks=json.loads(lock_file.read_text()) if lock_file.exists() else {}
     for abi in args.abi or ABIS:
-        if args.repack_local: pack(ROOT/'app/src/main/assets/kernel'/f'{abi}.tgz',abi,ROOT/'app/src/main/assets/kernel'/f'{abi}.txz',CACHE/f'{abi}.tgz',refresh=True)
+        if args.extend_host: pack(ROOT/'app/src/main/assets/kernel'/f'{abi}.txz',abi,ROOT/'app/src/main/assets/kernel'/f'{abi}.txz',CACHE/f'{abi}.tgz',refresh=True,add_dependencies=True)
+        elif args.repack_local: pack(ROOT/'app/src/main/assets/kernel'/f'{abi}.tgz',abi,ROOT/'app/src/main/assets/kernel'/f'{abi}.txz',CACHE/f'{abi}.tgz',refresh=True)
         elif args.refresh_host: refresh_host(abi)
         else:
             if args.lock: termux(abi,locks,True)

@@ -44,6 +44,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
       - uses: actions/download-artifact@v4
         with: { name: m2-host, path: node-host/dist }
       - uses: actions/cache/restore@v4
@@ -54,9 +56,16 @@ jobs:
             .research/runtime/${{ matrix.abi }}.tgz
             docs/m1-size-${{ matrix.abi }}.json
           key: m1-kernel-v2-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/pack.py', 'rootfs/runtime-seeds.json', 'rootfs/node-apk-lock.json', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
+          restore-keys: m1-kernel-v2-${{ runner.os }}-${{ matrix.abi }}-
       - name: Build and smoke-test musl PTY and image processing
         if: steps.runtime.outputs.cache-hit != 'true'
-        run: python3 rootfs/prepare.py --rootfs-only --abi ${{ matrix.abi }}
+        run: |
+          if test -f app/src/main/assets/kernel/${{ matrix.abi }}.txz; then
+            npm --prefix node-host ci --ignore-scripts --no-audit --no-fund
+            python3 rootfs/prepare.py --extend-host --abi ${{ matrix.abi }}
+          else
+            python3 rootfs/prepare.py --rootfs-only --abi ${{ matrix.abi }}
+          fi
       - uses: actions/cache/save@v4
         if: steps.runtime.outputs.cache-hit != 'true'
         with:

@@ -30,9 +30,9 @@ object M2SafeMode {
         if(p.getInt("failures",0)>=3)p.edit().putBoolean("safe",true).commit()
         p.edit().putBoolean("starting",true).commit()
         val previous=Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler{t,e->p.edit().putBoolean("starting",true).commit();previous?.uncaughtException(t,e)}
+        Thread.setDefaultUncaughtExceptionHandler{t,e->p.edit().putBoolean("starting",false).putInt("failures",p.getInt("failures",0)+1).commit();previous?.uncaughtException(t,e)}
     }
-    fun ready(context:Context){context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE).edit().putBoolean("starting",false).putInt("failures",0).apply()}
+    fun ready(context:Context){android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE).edit().putBoolean("starting",false).putInt("failures",0).apply()},30000)}
     fun enabled(context:Context)=context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE).getBoolean("safe",false)
     fun set(context:Context,enabled:Boolean){context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE).edit().putBoolean("safe",enabled).commit()}
 }

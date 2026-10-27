@@ -56,7 +56,7 @@ class AppMedia(private val context:Context) {
     suspend fun import(uri:Uri,kind:AttachmentKind):StoredAttachment=withContext(Dispatchers.IO) {
         val name=context.contentResolver.query(uri,arrayOf(OpenableColumns.DISPLAY_NAME),null,null,null)?.use{cursor->if(cursor.moveToFirst())cursor.getString(0) else null} ?: "attachment"
         val file=File(imports,UUID.randomUUID().toString());var size=0L
-        try{context.contentResolver.openInputStream(uri)!!.use{input->file.outputStream().use{out->val buffer=ByteArray(65536);while(true){val n=input.read(buffer);if(n<0)break;size+=n;require(size<=20*1024*1024){"附件不能超过 20 MB"};out.write(buffer,0,n)}}}}
+        try{context.contentResolver.openInputStream(uri)!!.use{input->file.outputStream().use{out->val buffer=ByteArray(65536);while(true){val n=input.read(buffer);if(n<0)break;size+=n;require(size<=1024L*1024*1024){"单个附件不能超过 1 GiB"};out.write(buffer,0,n)}}}}
         catch(error:Exception){file.delete();throw error}
         StoredAttachment(Attachment(file.name,vault.redact(name).take(180),kind,"${size/1024} KB"),file)
     }
