@@ -94,9 +94,9 @@ export function apply(ctx: Context): void {
     return guard?.info ? {version:guard.info.version} : next();
   });
   ctx.on('tools/execute',async(exec,next)=> {
-    const guard=guards.get(exec.token);
     try {
       const result=await next();
+      const guard=guards.get(exec.token);
       if(guard && !result.isError) {
         const info=await ctx.fs.stat(guard.target);
         if(info) {

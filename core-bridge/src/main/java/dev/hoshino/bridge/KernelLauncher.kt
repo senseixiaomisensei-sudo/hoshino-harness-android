@@ -58,7 +58,7 @@ class ProotKernelLauncher : KernelLauncher {
         val args = listOf("$lib/libproot.so", "--link2symlink", "-r", root.path,
             "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "${workspace.path}:/workspace", "-b", "${workspace.path}:/root/workspace", "-b", "${home.path}:/home/hoshino", "-b", "${hoshino.path}:/root/.hoshino",
             "-b", "${resolv.path}:/etc/resolv.conf",
-            "-w", "/root/workspace", "/usr/bin/env", "HOME=/root", "PATH=/root/.hoshino/tools/python/bin:/usr/bin:/bin", "DSH_TELEMETRY_DISABLED=1",
+            "-w", "/root/workspace", "/usr/bin/env", "HOME=/root", "PATH=/root/.hoshino/tools/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "DSH_TELEMETRY_DISABLED=1",
             "LD_PRELOAD=/opt/hoshino/libandroid-compat.so",
             "/usr/bin/node", "/opt/hoshino/node-host/dist/node-host/src/main.js")
         val builder = ProcessBuilder(args).directory(context.filesDir).redirectErrorStream(true)

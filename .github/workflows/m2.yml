@@ -153,7 +153,8 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          test -r /dev/kvm && test -w /dev/kvm
+          sudo udevadm settle
+          if test -e /dev/kvm; then sudo chmod a+rw /dev/kvm; fi
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
@@ -210,3 +211,48 @@ jobs:
         if: always()
         with: { name: m2-background-metrics, path: reports }
 
+  publish-preview:
+    needs: [development, native-smoke]
+    if: always() && needs.development.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: hoshino-m2-development, path: artifacts }
+      - uses: actions/download-artifact@v4
+        with: { name: m1-native-smoke, path: native-results }
+      - name: Publish signed dual ABI implementation preview and honest evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_RESULT: ${{ needs.native-smoke.result }}
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,hashlib,zipfile
+          records=json.loads(pathlib.Path('artifacts/docs/m2-apk-sizes.json').read_text())
+          metrics=json.loads(pathlib.Path('m2-metrics.json').read_text())
+          metrics.update(status='implementation-preview-not-full-M2-acceptance',sourceCommit='${{ github.sha }}',buildRun='${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',nativeVerification='${{ needs.native-smoke.result }}')
+          metrics['apkBytes']={r['abi']:r['bytes'] for r in records}
+          metrics['apkSha256']={r['abi']:r['sha256'] for r in records}
+          for record in records:
+            apk=pathlib.Path('artifacts/build/deliverables')/record['apk']
+            assert apk.stat().st_size==record['bytes']
+            assert hashlib.sha256(apk.read_bytes()).hexdigest()==record['sha256']
+            with zipfile.ZipFile(apk) as z: assert {n.split('/')[1] for n in z.namelist() if n.startswith('lib/')}=={record['abi']}
+          pathlib.Path('m2-metrics.json').write_text(json.dumps(metrics,ensure_ascii=False,indent=2)+'\n')
+          PY
+          cat > release-notes.md <<'NOTES'
+          0.2.0-m2 implementation preview. Same application ID dev.hoshino.app, versionCode 200, original signing certificate e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1.
+
+          Main Android phones: download arm64-v8a. x86_64 is for compatible devices/emulators. Keep the installed app and use overwrite installation; do not uninstall to update.
+
+          This is not full acceptance of Hoshino_Harness_M2.md. The attached m2-report.md lists implemented functions and explicit remaining gaps. No OEM/arm64 physical phone was connected. No fabricated performance data; unavailable measurements are null.
+
+          Source: ${{ github.sha }}
+          Build and signature gate: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Native regression result: ${{ needs.native-smoke.result }}. Raw native reports are attached as m2-native-reports.zip.
+          NOTES
+          zip -qr m2-native-reports.zip native-results
+          gh release create v0.2.0-m2 --target '${{ github.sha }}' --title 'Hoshino Harness 0.2.0-m2 · 实现预览' --prerelease --notes-file release-notes.md artifacts/build/deliverables/* docs/m2-report.md docs/m2-decisions.md docs/m2-plugin-compat.md docs/m2-device-checklist.md docs/m2-slim.md docs/m2-security-review.md artifacts/docs/m2-apk-sizes.json m2-metrics.json m2-native-reports.zip README.md

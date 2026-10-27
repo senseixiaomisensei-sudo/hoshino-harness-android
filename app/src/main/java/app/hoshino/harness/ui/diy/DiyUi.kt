@@ -43,7 +43,7 @@ fun DiyNode(node:JSONObject,document:JSONObject,onNavigate:(String)->Unit={},onP
     val context=LocalContext.current;val scope=rememberCoroutineScope();val c=HoshinoTheme.colors
     val ownState=remember(document.toString()){mutableStateMapOf<String,String>().apply{document.optJSONObject("state")?.let{o->o.keys().forEach{k->put(k,o.opt(k).toString())}}}}
     val state=sharedState?:ownState
-    fun expand(value:String)=Regex("\\{\\{([\\w.-]+)}}").replace(value){state[it.groupValues[1]]?:document.optJSONObject("state")?.opt(it.groupValues[1])?.toString().orEmpty()}
+    fun expand(value:String)=Regex("\\{\\{([\\w.-]+)\\}\\}").replace(value){state[it.groupValues[1]]?:document.optJSONObject("state")?.opt(it.groupValues[1])?.toString().orEmpty()}
     val condition=node.optString("when");if(condition.isNotEmpty()&&state[condition] !in setOf("true","1"))return
     val style=node.optJSONObject("style")?:JSONObject();val tokens=document.optJSONObject("themes")?.optJSONObject(document.optString("theme"))?:document.optJSONObject("tokens")?:JSONObject()
     fun color(key:String,fallback:Color):Color {val value=style.optString(key);val resolved=if(value.startsWith("$"))tokens.optJSONObject("colors")?.optString(value.drop(1)).orEmpty()else value;return runCatching{Color(android.graphics.Color.parseColor(resolved))}.getOrDefault(fallback)}
