@@ -60,7 +60,7 @@ row('file-upload', 'client-file-upload');
 row('session-controller', 'api-session-controller', { nativeOpen: false });
 row('workspace-controller', 'api-workspace-controller');
 row('terminal-controller', 'api-terminal-controller', { shell: { path: '/bin/bash', name: 'bash', args: ['--noprofile', '--norc', '-i'] }, unattendedTimeoutMs: 0 });
-for (const id of ['android-credentials', 'android-policy', 'android-device-info', 'android-ui', 'android-shizuku', 'hoshino-self', 'android-api']) rows.push({ id, name: resolve(plugins, id, 'index.js') });
+for (const id of ['android-credentials', 'android-policy', 'android-device-info', 'android-ui', 'android-shizuku', 'hoshino-m2', 'hoshino-self', 'android-api']) rows.push({ id, name: resolve(plugins, id, 'index.js') });
 const configPath = resolve(bootstrap.home, 'mobile.cordis.yml');
 await writeFile(configPath, JSON.stringify(rows));
 let bootContext: Context | undefined;

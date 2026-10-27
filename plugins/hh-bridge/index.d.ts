@@ -1,0 +1,2 @@
+export type NativeAction='capabilities'|'device.battery'|'file.deliver'|'file.save'|'file.share'|'notification.post'|'shortcut.add'|'intent.open'|'web.render';
+export declare function createBridge(ctx:{androidBridge:{call<T>(method:string,body:unknown):Promise<T>};mobileM2:{invoke(action:string,request:Record<string,unknown>):Promise<any>}}):{version:1;call<T=Record<string,unknown>>(action:NativeAction,request?:Record<string,unknown>):Promise<T>;contribute(slot:string,node:Record<string,unknown>):Promise<unknown>};

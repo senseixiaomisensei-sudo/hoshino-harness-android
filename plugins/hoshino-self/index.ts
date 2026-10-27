@@ -7,16 +7,17 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type {} from '@deepseek-ai/dsh-skill';
 import type {} from '../android-skills/index.js';
-import { validateOverrides } from './overrides.js';
+import { validateOverrides,validateSchema,UI_SCHEMA } from './overrides.js';
 import { workspacePath } from '../android-policy/paths.js';
+import type {} from '../hoshino-m2/index.js';
 type Json=string|number|boolean|null|Json[]|{[key:string]:Json};
 export interface HoshinoControl { invoke(action: string,request: Record<string,unknown>): Promise<Json> }
 declare module '@deepseek-ai/cordis' { interface Context { hoshinoControl: HoshinoControl } }
 export const name='hoshino-self';
-export const inject=['tools','androidBridge','systemPrompt','skills','mobileSkills','mobilePolicy'];
+export const inject=['tools','androidBridge','systemPrompt','skills','mobileSkills','mobilePolicy','mobileM2'];
 export async function apply(ctx: Context): Promise<void> {
   const root=ctx.androidBridge.bootstrap.selfHome ?? resolve(ctx.androidBridge.bootstrap.home,'hoshino');
-  const userRoots=['config','plugins','skills','ui'];
+  const userRoots=['config','plugins','skills','ui','source','prompts','modes'];
   for(const part of [...userRoots,'snapshots','self'])await mkdir(join(root,part),{recursive:true});
   const fibers=new Map<string,ReturnType<Context['plugin']>>();
   const invalid=new Set<string>();
@@ -59,7 +60,7 @@ export async function apply(ctx: Context): Promise<void> {
         const manifest=await readJson(join(root,'self','manifest.json'),{});
         const plugins=(await readdir(join(root,'plugins'),{withFileTypes:true})).filter(e=>e.isDirectory()).map(e=>({id:e.name,enabled:fibers.has(e.name),invalid:invalid.has(e.name)}));
         const summaries=await ctx.skills.list();
-        return {version:'0.1.0-m1',dshVersion:'0.2.1-rc.2',nodeVersion:process.versions.node,kernel:'ready',manifest,
+        return {version:'0.2.0-m2',dshVersion:'0.2.1-rc.2',nodeVersion:process.versions.node,kernel:'ready',manifest,
           plugins,tools:ctx.tools.schemas() as unknown as Json,skills:summaries as unknown as Json,mcp:[],hooks:[],
           paths:{self:join(root,'self'),plugins:join(root,'plugins'),skills:join(root,'skills'),workspace:ctx.androidBridge.bootstrap.workspace},
           ...(await ctx.androidBridge.call<Record<string,Json>>('self-status'))};
@@ -72,7 +73,7 @@ export async function apply(ctx: Context): Promise<void> {
           if(!access.authorized)throw new Error('Shizuku authorization is required for full-access');
         }
         const prior=ctx.mobilePolicy.options.get(id);
-        const options={tier:String(request.tier),planMode:typeof request.planMode==='boolean' ? request.planMode : prior?.planMode ?? false,prompt:typeof request.prompt==='string' ? request.prompt.slice(0,32000) : prior?.prompt ?? ''};
+        const options={tier:String(request.tier),planMode:typeof request.planMode==='boolean' ? request.planMode : prior?.planMode ?? false,prompt:typeof request.prompt==='string' ? request.prompt.slice(0,32000) : prior?.prompt ?? '',mode:String(request.mode??prior?.mode??'standard'),model:String(request.model??prior?.model??'')};
         ctx.mobilePolicy.options.set(id,options);return {};
       }
       case 'resolve-diff': await ctx.mobilePolicy.resolveDiff(String(request.sessionId),String(request.id),request.accept===true);return {};
@@ -90,7 +91,12 @@ export async function apply(ctx: Context): Promise<void> {
       });
       case 'ui-override': return invoke('config-write',{path:'ui/overrides.json',content:typeof request.content==='string' ? request.content : JSON.stringify(request.overrides)});
       case 'ui-read': {
-        try{return {value:validateOverrides(await readJson(join(root,'ui','overrides.json'),{})) as unknown as Json,valid:true};}
+        if(ctx.androidBridge.bootstrap.safeMode)return {value:{},valid:true,safeMode:true};
+        try{
+          const value=await readJson(join(root,'ui','overrides.json'),{}) as Record<string,any>;const slotErrors:Record<string,string>={};
+          if(value.slots && typeof value.slots==='object')for(const [id,node]of Object.entries(value.slots))try{validateSchema(node,UI_SCHEMA.$defs.node,'$.slots.'+id);}catch(error){slotErrors[id]=error instanceof Error?error.message:'Invalid slot';delete value.slots[id];}
+          return {value:validateOverrides(value) as unknown as Json,valid:true,slotErrors};
+        }
         catch{return {value:{},valid:false,error:'UI override validation failed; original UI is active'};}
       }
       case 'scaffold-plugin': return serial(async()=> {
@@ -107,6 +113,7 @@ export async function apply(ctx: Context): Promise<void> {
         await reloadSkills();await ctx.androidBridge.call('self-changed',{});return {id,snapshot:snap};
       });
       case 'reload': return serial<Json>(async()=> {
+        if(!request.plugin || request.plugin==='all' || request.plugin==='config'){await ctx.mobileM2.invoke('reload',{});await reloadSkills();return {reloaded:true};}
         if(request.plugin==='kernel') {await ctx.androidBridge.call('restart-after-turn',{sessionId:request.sessionId});return {scheduled:true} as Json;}
         if(request.plugin==='skills')await reloadSkills();else await loadPlugin(identifier(request.plugin));
         await ctx.androidBridge.call('self-changed',{});return {loaded:String(request.plugin)} as Json;
@@ -127,6 +134,7 @@ export async function apply(ctx: Context): Promise<void> {
       case 'remove-plugin': return serial(async()=> {
         const id=identifier(request.id);await snapshot();await fibers.get(id)?.dispose();fibers.delete(id);await rm(await workspacePath(join(root,'plugins'),id),{recursive:true,force:true});return {};
       });
+      case 'm2': return await ctx.mobileM2.invoke(String(request.operation),request) as Json;
       default: throw new Error('Unknown Hoshino control operation');
     }
   };

@@ -1,0 +1,121 @@
+import type {Context} from '../../node-host/src/platform.js';
+import {defineTool} from '@deepseek-ai/dsh-tools';
+import {readFile,writeFile,mkdir,readdir,lstat,appendFile} from 'node:fs/promises';
+import {join,dirname,relative} from 'node:path';
+import {Configuration,modes,defaults,interpolate,treeStamp,atomic,type Data} from './config.js';
+import {approval} from './approval.js';
+import {fetchPage,search,webUrl} from './web.js';
+import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,gitOperation,ensureTools,exportBackup,command} from './operations.js';
+import {UI_SCHEMA,validateOverrides} from '../hoshino-self/overrides.js';
+import {workspacePath} from '../android-policy/paths.js';
+export interface MobileM2 {config:Configuration;invoke(action:string,args:Data):Promise<any>;approve(action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>):Promise<{approved:boolean;remember?:boolean}>}
+declare module '@deepseek-ai/cordis'{interface Context{mobileM2:MobileM2}}
+export const name='hoshino-m2';
+export const inject=['androidBridge','mobilePolicy','systemPrompt','tools','agents'];
+export async function apply(ctx:Context){
+ const root=ctx.androidBridge.bootstrap.selfHome??join(ctx.androidBridge.bootstrap.home,'hoshino');const workspace=ctx.androidBridge.bootstrap.workspace;
+ const config=new Configuration(root);await config.reload();
+ const safe=ctx.androidBridge.bootstrap.safeMode===true;
+ const sdk=join(root,'plugin-packages','node_modules','@hh','bridge');await mkdir(sdk,{recursive:true});
+ await atomic(join(sdk,'package.json'),{name:'@hh/bridge',version:'1.0.0',type:'module',main:'index.js',types:'index.d.ts',license:'MIT'});
+ await writeFile(join(sdk,'index.js'),await readFile(new URL('../hh-bridge/index.js',import.meta.url)));
+ await writeFile(join(sdk,'index.d.ts'),await readFile(new URL('../hh-bridge/index.d.ts',import.meta.url)).catch(()=>Buffer.from('export declare function createBridge(ctx:any):any;')));
+ await mkdir(join(root,'ui'),{recursive:true});await atomic(join(root,'self','ui.schema.json'),UI_SCHEMA);
+ const originalCall=ctx.androidBridge.call.bind(ctx.androidBridge);
+ const bridge=<T=Data>(action:string,request:Data={})=>originalCall<T>('bridge-v1',{version:1,action,request});
+ // All existing plugins retain their approval seam, now backed by the selected policy.
+ ctx.androidBridge.call=async function<T>(method:string,body:unknown={},signal?:AbortSignal):Promise<T>{
+  if(method==='approve')return approval(ctx,config,body as Data,()=>originalCall('approve',body,signal)) as Promise<T>;
+  return originalCall<T>(method,body,signal);
+ };
+ ctx.effect(()=>()=>{ctx.androidBridge.call=originalCall;});
+ const modeFor=(sid:string)=>{const o=ctx.mobilePolicy.options.get(sid) as Data|undefined;return (config.get('modes.json').modes??modes).find((m:Data)=>m.id===o?.mode)??modes[1]!;};
+ const promptLayers=async(sid:string)=>{
+  const p=config.get('prompts.json');const mode=modeFor(sid);const layers:Data[]=[{source:'global',...(p.global??{})}];
+  for(const name of ['AGENTS.md','HOSHINO.md'])try{layers.push({source:name,operation:'append',text:await readFile(await workspacePath(workspace,name),'utf8')});}catch{}
+  layers.push({source:'mode:'+mode.id,operation:mode.promptOperation??'append',text:mode.systemPrompt??''},{source:'session',...(p.sessions?.[sid]??{})});return layers;
+ };
+ const workspacePrompts=new Map<string,string>();
+ async function refresh(){if(safe){for(const [k,v]of Object.entries(defaults))config.values.set(k,structuredClone(v));workspacePrompts.clear();}else{await config.reload();for(const file of ['AGENTS.md','HOSHINO.md'])workspacePrompts.set(file,await readFile(join(workspace,file),'utf8').catch(()=>''));}}
+ await refresh();
+ ctx.on('system-prompt/assemble',async(assembly,context,next)=>{
+  const sid=ctx.agents.currentInitiator()?.id??'';const p=config.get('prompts.json');const mode=modeFor(sid);
+  const variables={date:new Date().toISOString().slice(0,10),time:new Date().toISOString(),workspace,mode:mode.id,model:String((ctx.mobilePolicy.options.get(sid) as Data)?.model??''),device:'Android',language:'zh-CN',memory:'',...p.variables};
+  const layers=[{source:'base-custom',...(p.base??{})},{source:'global',...(p.global??{})},...Array.from(workspacePrompts,([source,text])=>({source,operation:'append',text})),{source:'mode:'+mode.id,operation:mode.promptOperation??'append',text:mode.systemPrompt??''},{source:'session',...(p.sessions?.[sid]??{})}];
+  for(const layer of layers){if(layer.operation==='replace')assembly.sections=[];if(layer.text)assembly.sections.push({name:'hoshino-'+layer.source,text:interpolate(String(layer.text),variables),interpolate:false});}
+  if(p.injectTools!==false)assembly.sections.push({name:'hoshino-tool-protocol',text:'Call available tools using the model provider native tool-call protocol and declared JSON schemas. Never invent tool results.',interpolate:false});
+  if(Array.isArray(mode.tools))assembly.tools=assembly.tools.filter(t=>mode.tools.includes(t.name));
+  assembly.variables={...assembly.variables,...Object.fromEntries(Object.entries(variables).map(([k,v])=>[k,String(v)]))};return next();
+ });
+ ctx.on('tools/pre-execute',async(exec,next)=>{const mode=modeFor(exec.agent?.id??'');if(Array.isArray(mode.tools)&&!mode.tools.includes(exec.name))return {kind:'deny',reason:'Tool excluded by Agent mode'};if(mode.readOnly&&!['read','read_image','get_device_info','self_read','self_inspect','self_doctor','self_diff','skill','self_config_read'].includes(exec.name))return {kind:'deny',reason:'Read-only mode'};return next();});
+ let stamp=await treeStamp(root);let checking=false;
+ const timer=setInterval(()=>{if(checking)return;checking=true;void(async()=>{const current=await treeStamp(root);if(current!==stamp){stamp=current;await refresh();await originalCall('self-changed',{});}})().catch(()=>{}).finally(()=>{checking=false;});},1500).unref();
+ ctx.effect(()=>()=>clearInterval(timer));
+ async function sourceFiles(dir:string,prefix=''):Promise<Array<{path:string;content:string;mode:string;type:string}>>{
+  const out:Array<{path:string;content:string;mode:string;type:string}>=[];
+  for(const e of await readdir(dir,{withFileTypes:true})){if(['.git','node_modules','build','.gradle','.research','local.properties'].includes(e.name)||/\.keystore$/.test(e.name))continue;const path=join(dir,e.name);const s=await lstat(path);if(s.isSymbolicLink())continue;const rel=prefix+e.name;if(e.isDirectory())out.push(...await sourceFiles(path,rel+'/'));else if(s.isFile()){if(s.size>1024*1024)continue;const bytes=await readFile(path);if(bytes.includes(0))continue;out.push({path:rel,content:bytes.toString('utf8'),mode:e.name==='gradlew'?'100755':'100644',type:'blob'});}}
+  if(out.length>3000)throw Error('Source tree too large');return out;
+ }
+ const github=(path:string,method='GET',body?:Data)=>bridge<Data>('github.request',{path,method,...(body?{body}:{})});
+ async function remoteBuild(args:Data){
+  const cfg=config.get('build.json');if(!/^[\w.-]+\/[\w.-]+$/.test(cfg.repository))throw Error('Set your GitHub repository in credentials/build settings');
+  const repo='/repos/'+cfg.repository;const info=await github(repo);const base=String(args.base??info.default_branch);const ref=await github(repo+'/git/ref/heads/'+encodeURIComponent(base));const commit=await github(repo+'/git/commits/'+ref.object.sha);
+  const files=await sourceFiles(join(root,'source'));if(!files.length)throw Error('Harness source working copy is not installed');
+  const snap=await checkpoint(root,workspace);const tree=await github(repo+'/git/trees','POST',{base_tree:commit.tree.sha,tree:files});const next=await github(repo+'/git/commits','POST',{message:String(args.message??'feat: self update Hoshino Harness'),tree:tree.sha,parents:[ref.object.sha]});
+  const branch=String(cfg.branch??'hoshino/self-update')+'-'+Date.now();await github(repo+'/git/refs','POST',{ref:'refs/heads/'+branch,sha:next.sha});await github(repo+'/actions/workflows/'+encodeURIComponent(cfg.workflow??'m2.yml')+'/dispatches','POST',{ref:branch});
+  await atomic(join(root,'config','last-build.json'),{repository:cfg.repository,branch,sha:next.sha,snapshot:snap});return {repository:cfg.repository,branch,sha:next.sha,snapshot:snap,url:`https://github.com/${cfg.repository}/actions`,status:'queued'};
+ }
+ const invoke=async(action:string,args:Data):Promise<any>=>{
+  switch(action){
+   case 'state':return {version:'0.2.0-m2',modes:config.get('modes.json').modes,configuration:Object.fromEntries(config.values),errors:Object.fromEntries(config.errors),schema:UI_SCHEMA,safeMode:ctx.androidBridge.bootstrap.safeMode??false};
+   case 'read':{const path=await safePublicPath(root,String(args.path));const s=await lstat(path);if(s.size>2*1024*1024)throw Error('Read in smaller pages');return {path:args.path,content:await readFile(path,'utf8')};}
+   case 'write':case 'apply':{
+    const path=await safePublicPath(root,String(args.path));const content=String(args.content??'');if(Buffer.byteLength(content)>2*1024*1024)throw Error('Public text edit exceeds 2 MiB');
+    if(/(?:api[_-]?key|authorization|access[_-]?token|password)\s*["']?\s*:/i.test(content))throw Error('Store credentials in Android Keystore');
+    if(String(args.path).endsWith('.json')){const parsed=JSON.parse(content);if(args.path==='ui/overrides.json')validateOverrides(parsed);}
+    const id=await checkpoint(root,workspace);const before=await readFile(path,'utf8').catch(()=>null);await mkdir(dirname(path),{recursive:true});await writeFile(path,content);await refresh();await originalCall('self-changed',{});return {written:args.path,checkpoint:id,before,after:content};
+   }
+   case 'diff':{const current=await readFile(await safePublicPath(root,String(args.path)),'utf8').catch(()=>'');return {path:args.path,before:current,after:String(args.content??''),changed:current!==String(args.content??'')};}
+   case 'reload':await refresh();await originalCall('self-changed',{});return {reloaded:true,errors:Object.fromEntries(config.errors)};
+   case 'snapshot':return {id:await checkpoint(root,workspace)};
+   case 'rollback-workspace':return restoreCheckpoint(root,workspace,String(args.id));
+   case 'doctor':return {kernel:'ready',dsh:'0.2.1-rc.2',node:process.version,configErrors:Object.fromEntries(config.errors),bridge:await bridge('capabilities'),safeMode:ctx.androidBridge.bootstrap.safeMode??false};
+   case 'config':{const name=String(args.name);if(args.value!==undefined){await config.write(name,args.value);await originalCall('self-changed',{});}return config.get(name);}
+   case 'prompt-preview':{const sid=String(args.sessionId??'');const assembly=await ctx.systemPrompt.assemble();return {layers:await promptLayers(sid),sections:assembly.sections,contexts:assembly.contexts,tools:assembly.tools.map(t=>t.name),variables:assembly.variables,tokenEstimate:Math.ceil(JSON.stringify(assembly.sections).length/4),tokenCountKind:'estimate'};}
+   case 'search':return search(String(args.query),config.get('search.json'));
+   case 'fetch':return fetchPage(String(args.url),config.get('search.json'));
+   case 'render':webUrl(String(args.url));return bridge('web.render',args);
+   case 'deliver':{const path=await workspacePath(workspace,String(args.path));const s=await lstat(path);if(!s.isFile())throw Error('Deliver a regular workspace file');return bridge('file.deliver',{sessionId:args.sessionId,path,name:args.name??path.split('/').at(-1),bytes:s.size});}
+   case 'ensure-tools':return ensureTools(String(args.group),workspace);
+   case 'install-plugin':return installPlugin(ctx,config,String(args.spec));
+   case 'plugin-search':return fetchPage('https://registry.npmjs.org/-/v1/search?text='+encodeURIComponent(String(args.query??'dsh-plugin'))+'&size=20',config.get('search.json'));
+   case 'git':return gitOperation(workspace,String(args.operation),args);
+   case 'build':return remoteBuild(args);
+   case 'build-status':{const cfg=config.get('build.json');return github('/repos/'+cfg.repository+'/actions/runs?branch='+encodeURIComponent(String(args.branch??cfg.branch))+'&per_page=5');}
+   case 'update':return bridge('update.install',args);
+   case 'backup':return exportBackup(root,workspace);
+   case 'bridge':return bridge(String(args.action),args.request??{});
+   default:throw Error('Unknown M2 operation');
+  }
+ };
+ ctx.provide('mobileM2',{config,invoke,approve:(action,ask)=>approval(ctx,config,action,ask)});
+ const tools:Array<[string,string,Data,string]>=[
+  ['self_read','Read a public self file, including source working copy.',{path:{type:'string',required:true}},'read'],
+  ['self_write','Write public self configuration, DSL, plugin or source, with checkpoint.',{path:{type:'string',required:true},content:{type:'string',required:true}},'write'],
+  ['self_diff','Preview a proposed text change without writing.',{path:{type:'string',required:true},content:{type:'string',required:true}},'diff'],
+  ['self_apply','Apply a proposed self file edit after policy approval.',{path:{type:'string',required:true},content:{type:'string',required:true}},'apply'],
+  ['self_snapshot','Take a workspace checkpoint before changing files.',{},'snapshot'],
+  ['self_rollback','Restore a workspace checkpoint, preserving a safety snapshot.',{id:{type:'string',required:true}},'rollback-workspace'],
+  ['self_doctor','Inspect kernel, schema errors and native bridge capabilities.',{},'doctor'],
+  ['self_build','Push the Harness source working copy to your configured GitHub fork and dispatch a signed build.',{message:{type:'string'}},'build'],
+  ['self_update','Verify APK SHA256, application ID and original signature, then request installation.',{url:{type:'string',required:true},sha256:{type:'string',required:true}},'update'],
+  ['web_search','Search free sources with automatic fallback; returns source URLs.',{query:{type:'string',required:true}},'search'],
+  ['web_fetch','Fetch a page as text/Markdown without a service key.',{url:{type:'string',required:true}},'fetch'],
+  ['web_render','Render a remote page using Android WebView; optionally click/input/scroll under approval.',{url:{type:'string',required:true},script:{type:'string'}},'render'],
+  ['deliver_file','Deliver a generated workspace file as a native file card.',{path:{type:'string',required:true},name:{type:'string'}},'deliver'],
+  ['ensure_tools','Install optional free local media/document/speech/git/native-build tools on demand.',{group:{type:'string',required:true}},'ensure-tools'],
+  ['plugin_install','Install an original Cordis/dsh plugin from npm, git, local directory or tgz.',{spec:{type:'string',required:true}},'install-plugin'],
+ ];
+ for(const [tool,description,parameters,action]of tools)ctx.tools.register(defineTool({name:tool,description,parameters:parameters as any,output:{schema:{type:'string'},render:(_,value)=>[{type:'text',text:value}]},async execute(args,exec){return JSON.stringify(await invoke(action,{...args,sessionId:exec.agent?.id}));}}));
+}
+

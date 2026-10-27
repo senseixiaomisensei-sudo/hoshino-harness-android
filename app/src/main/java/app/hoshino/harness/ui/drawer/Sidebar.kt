@@ -136,13 +136,17 @@ fun Sidebar(
                     Text(stringResource(R.string.new_session), style = t.bodyMedium, color = c.text)
                 }
                 Spacer(Modifier.height(8.dp))
-                ordered(listOf(
+                val navItems=ordered(listOf(
                     SidebarNav(Routes.PLUGINS,HIcons.Plug,stringResource(R.string.nav_plugins)),
                     SidebarNav(Routes.SKILLS,HIcons.Sparkle,stringResource(R.string.nav_skills)),
                     SidebarNav(Routes.MCP,HIcons.Server,stringResource(R.string.nav_mcp)),
                     SidebarNav(Routes.SCHEDULES,HIcons.Clock,stringResource(R.string.nav_schedules)),
                     SidebarNav(Routes.GOALS,HIcons.Target,stringResource(R.string.nav_goals)),
-                )).forEach{entry->NavEntry(entry.icon,entry.label){onNavigate(entry.route)}}
+                ))+listOf(SidebarNav(Routes.M2,HIcons.Settings,"M2 配置"))
+                val columns=customization.raw.optInt("sidebarColumns",1).coerceIn(1,4)
+                if(columns==1)navItems.forEach{entry->NavEntry(entry.icon,entry.label){onNavigate(entry.route)}}
+                else navItems.chunked(columns).forEach{group->Row(Modifier.fillMaxWidth().padding(horizontal=12.dp)){group.forEach{entry->Column(Modifier.weight(1f).clickable{onNavigate(entry.route)}.padding(10.dp),horizontalAlignment=Alignment.CenterHorizontally){entry.icon?.let{HIcon(it)};Text(entry.label,style=t.caption,color=c.text2)}};repeat(columns-group.size){Spacer(Modifier.weight(1f))}}}
+                customization.raw.optJSONArray("pages")?.let{pages->for(i in 0 until pages.length()){val p=pages.getJSONObject(i);NavEntry(HIcons.Layers,p.optString("title")){onNavigate(p.getString("route"))}}}
                 NavEntry(HIcons.Terminal, stringResource(R.string.nav_tools), trailing = if (showTools) HIcons.ChevronUp else HIcons.ChevronDown) { showTools = !showTools }
                 if (showTools) {
                     ordered(listOf(

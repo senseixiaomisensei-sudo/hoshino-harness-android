@@ -84,6 +84,7 @@ import app.hoshino.harness.ui.theme.HoshinoShapes
 import app.hoshino.harness.ui.theme.HoshinoTheme
 import app.hoshino.harness.core.Hoshino
 import kotlinx.coroutines.launch
+import app.hoshino.harness.ui.diy.DiySlot
 
 @Composable
 fun ChatScreen(
@@ -189,7 +190,7 @@ fun ChatScreen(
                 drawerTonalElevation = 0.dp,
                 windowInsets = WindowInsets(0, 0, 0, 0),
             ) {
-                Sidebar(
+                DiySlot("sidebar",onNavigate={navigate(it)},onPrompt={input=TextFieldValue(it)}) { Sidebar(
                     customization = custom,
                     onSearchSessions = vm::searchSessions,
                     sessions = sessions,
@@ -203,13 +204,15 @@ fun ChatScreen(
                     onAddWorkspace = { n, p -> vm.addWorkspace(n, p) },
                     onToggleTheme = onToggleTheme,
                 )
+                }
             }
         },
     ) {
         Column(Modifier.fillMaxSize().background(c.bg).statusBarsPadding()) {
             // ---------------- 顶栏
-            Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            DiySlot("topbar",onNavigate={navigate(it)},onPrompt={input=TextFieldValue(it)}) { Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconBtn(HIcons.Menu, stringResource(R.string.cd_sidebar), { scope.launch { drawer.open() } })
+                ApprovalQuickSwitch()
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(current?.title ?: stringResource(R.string.new_session), style = HoshinoTheme.type.bodyMedium, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -261,7 +264,9 @@ fun ChatScreen(
             }
             Hairline()
 
+            }
             val composerUi: @Composable (Modifier) -> Unit = { m ->
+                DiySlot("input",onNavigate={navigate(it)},onPrompt={input=TextFieldValue(it)}) {
                 Composer(
                     value = input,
                     onValueChange = { input = it },
@@ -290,6 +295,7 @@ fun ChatScreen(
                     onSlash = { runSlash(it) },
                     modifier = m,
                 )
+                }
             }
 
             val isHero = currentId == null && state.items.isEmpty()
@@ -316,6 +322,7 @@ fun ChatScreen(
                     Column(Modifier.fillMaxSize()) {
                         MessageList(
                             chatItems = state.items,
+                            sessionId = currentId.orEmpty(),
                             actions = MessageActions(
                                 onApprove = { id, d -> vm.respondApproval(id, d) },
                                 onAnswer = { id, a -> vm.answer(id, a) },
@@ -461,26 +468,31 @@ private fun Hero(
 
 /** 消息流：reverseLayout 保证流式输出时锚定底部；右侧轮次刻度；回到底部浮钮。 */
 @Composable
-fun MessageList(chatItems: List<app.hoshino.harness.core.ChatItem>, actions: MessageActions, modifier: Modifier = Modifier) {
+fun MessageList(chatItems: List<app.hoshino.harness.core.ChatItem>, actions: MessageActions, modifier: Modifier = Modifier,sessionId:String="") {
     val c = HoshinoTheme.colors
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val reversed = remember(chatItems) { chatItems.asReversed() }
+    val reversed = remember(chatItems) { presentTurns(chatItems).asReversed() }
+    val custom by Hoshino.client.uiCustomization.collectAsStateWithLifecycle()
     val atBottom by remember { derivedStateOf { listState.firstVisibleItemIndex <= 1 } }
-
-    LaunchedEffect(chatItems.size) {
-        if (atBottom) listState.animateScrollToItem(0)
-    }
 
     Box(modifier) {
         LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize()) {
             item(key = "bottom-spacer") { Spacer(Modifier.height(8.dp)) }
-            items(reversed, key = { it.id }) { item -> ChatItemView(item, actions) }
+            if(sessionId.isNotBlank())item(key="delivered-files"){DeliveredFiles(sessionId)}
+            items(reversed, key = { it.id }) { turn ->
+                Column {
+                    turn.user?.let{ChatItemView(it,actions)}
+                    ProcessTimeline(turn.process,actions,custom.raw.optJSONObject("process")?.optString("display","collapsed")?:"collapsed",custom.raw.optJSONObject("process")?.optJSONObject("types"))
+                    turn.actions.forEach{ChatItemView(it,actions)}
+                    turn.finalItems.forEach{ChatItemView(it,actions)}
+                }
+            }
             item(key = "top-spacer") { Spacer(Modifier.height(12.dp)) }
         }
 
         // 轮次导航刻度（≥3 轮时显示）
-        val userIdx = reversed.mapIndexedNotNull { i, it -> if (it is app.hoshino.harness.core.ChatItem.User) i + 1 else null }
+        val userIdx = reversed.mapIndexedNotNull { i, it -> if (it.user!=null) i + 1 else null }
         if (userIdx.size >= 3) {
             Column(
                 Modifier.align(Alignment.CenterEnd).padding(end = 2.dp),

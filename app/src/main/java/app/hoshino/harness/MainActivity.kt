@@ -12,6 +12,11 @@ import kotlinx.coroutines.launch
 import app.hoshino.harness.ui.HoshinoApp
 
 class MainActivity : ComponentActivity() {
+    override fun onKeyLongPress(keyCode:Int,event:android.view.KeyEvent?):Boolean {
+        if(keyCode==android.view.KeyEvent.KEYCODE_VOLUME_DOWN || keyCode==android.view.KeyEvent.KEYCODE_VOLUME_UP){app.hoshino.harness.core.M2SafeMode.set(this,true);lifecycleScope.launch{app.hoshino.harness.core.Hoshino.client.restartKernel()};return true}
+        return super.onKeyLongPress(keyCode,event)
+    }
+    override fun onKeyDown(keyCode:Int,event:android.view.KeyEvent?):Boolean {if(keyCode==android.view.KeyEvent.KEYCODE_VOLUME_DOWN || keyCode==android.view.KeyEvent.KEYCODE_VOLUME_UP){event?.startTracking();return true};return super.onKeyDown(keyCode,event)}
     override fun onResume(){super.onResume();app.hoshino.harness.core.AppSurface.resume(this);lifecycleScope.launch{app.hoshino.harness.core.Hoshino.client.refreshShizuku()}}
     override fun onPause(){app.hoshino.harness.core.AppSurface.pause(this);super.onPause()}
     override fun onCreate(savedInstanceState: Bundle?) {

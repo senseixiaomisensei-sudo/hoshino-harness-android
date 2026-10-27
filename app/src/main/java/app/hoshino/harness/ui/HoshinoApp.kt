@@ -46,6 +46,9 @@ import app.hoshino.harness.ui.settings.SecurityScreen
 import app.hoshino.harness.ui.settings.SettingsHomeScreen
 import app.hoshino.harness.ui.settings.ShizukuScreen
 import app.hoshino.harness.ui.theme.HoshinoTheme
+import app.hoshino.harness.ui.settings.M2Screen
+import app.hoshino.harness.ui.components.PageScaffold
+import app.hoshino.harness.ui.diy.DiyNode
 import app.hoshino.harness.ui.theme.ThemeMode
 import app.hoshino.harness.ui.tools.InspectorScreen
 import app.hoshino.harness.ui.tools.LspScreen
@@ -74,7 +77,7 @@ fun HoshinoApp() {
     }
 
     HoshinoTheme(mode = prefs.themeMode, bodyScale = custom.bodyScale ?: prefs.bodyScale, codeScale = custom.codeScale ?: prefs.codeScale,
-        accent=custom.accent?.let{Color(android.graphics.Color.parseColor(it))}) {
+        accent=custom.accent?.let{Color(android.graphics.Color.parseColor(it))},tokens=custom.raw.optJSONObject("themes")?.optJSONObject(custom.raw.optString("theme"))?:custom.raw.optJSONObject("tokens")) {
         val nav = rememberNavController()
         val back: () -> Unit = { nav.popBackStack() }
         val go: (String) -> Unit = { route -> nav.navigate(route) { launchSingleTop = true } }
@@ -101,6 +104,8 @@ fun HoshinoApp() {
 
             // ---------- 设置
             composable(Routes.SETTINGS) { SettingsHomeScreen(viewModel(), back, go) }
+            composable(Routes.M2) { M2Screen(back) }
+            custom.raw.optJSONArray("pages")?.let{pages->for(i in 0 until pages.length()){val page=pages.getJSONObject(i);composable(page.getString("route")){PageScaffold(page.getString("title"),back){DiyNode(page.getJSONObject("root"),custom.raw,go)}}}}
             composable(Routes.APPEARANCE) { AppearanceScreen(app, back) }
             composable(Routes.MODELS) { ModelsScreen(viewModel(), back, go) }
             composable(Routes.PROVIDER, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->

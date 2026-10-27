@@ -3,6 +3,7 @@ package app.hoshino.harness.ui.nav
 object Routes {
     const val CHAT = "chat"
     const val SETTINGS = "settings"
+    const val M2 = "settings/m2"
     const val APPEARANCE = "settings/appearance"
     const val MODELS = "settings/models"
     const val PROVIDER = "settings/provider/{id}"

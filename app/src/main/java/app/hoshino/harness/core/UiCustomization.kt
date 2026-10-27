@@ -9,6 +9,7 @@ data class UiCustomization(
     val capsules: List<UiCapsule>?=null,
     val commands: List<UiCommand> = emptyList(),
     val sidebar: List<UiSidebarEntry> = emptyList(),
+    val raw: org.json.JSONObject = org.json.JSONObject(),
 )
 data class UiCapsule(val label:String,val prompt:String)
 data class UiCommand(val name:String,val description:String,val prompt:String)

@@ -76,6 +76,7 @@ fun SettingsHomeScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (Str
     PageScaffold(stringResource(R.string.settings), onBack) {
         SectionLabel("通用")
         GroupCard {
+            ListRow("M2 · 自由配置", icon = HIcons.Sparkle, subtitle = "审批、模式、提示词、DSL、源码更新", showChevron = true, onClick = { onNavigate(Routes.M2) })
             ListRow(stringResource(R.string.settings_appearance), icon = HIcons.Palette, subtitle = "主题、字号、语言", showChevron = true, onClick = { onNavigate(Routes.APPEARANCE) })
             Hairline()
             ListRow(stringResource(R.string.settings_models), icon = HIcons.Cpu, value = "${providers.size} 个供应商", showChevron = true, onClick = { onNavigate(Routes.MODELS) })

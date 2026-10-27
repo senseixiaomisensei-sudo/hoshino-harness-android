@@ -133,7 +133,7 @@ fun ChatItemView(item: ChatItem, actions: MessageActions, modifier: Modifier = M
                 Text("完成选择",color=HoshinoTheme.colors.accent,style=HoshinoTheme.type.caption,modifier=Modifier.clickable { frozen=null }.padding(bottom=8.dp))
                 // Freeze this item's display, while the real event stream keeps accumulating.
                 SelectionContainer { MessageContent() }
-            } else MessageContent()
+            } else app.hoshino.harness.ui.diy.DiySlot(when(item){is ChatItem.Tool->"tool";is ChatItem.Terminal->"terminal";is ChatItem.Thinking->"thinking";else->"message"}){MessageContent()}
         }
         DropdownMenu(expanded=menu,onDismissRequest={menu=false}) {
             DropdownMenuItem(text={Text("复制全文")},onClick={menu=false;copyToClipboard(context,item.plainText())})

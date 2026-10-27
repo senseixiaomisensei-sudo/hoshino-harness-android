@@ -157,6 +157,7 @@ data class ModelRouting(
     val subagent: ModelRef? = null,
     val compact: ModelRef? = null,
     val vision: ModelRef? = null,
+    val approval: ModelRef? = null,
 )
 
 // ---------- Agent 预设 ----------

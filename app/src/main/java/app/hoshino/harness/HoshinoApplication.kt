@@ -7,6 +7,7 @@ import app.hoshino.harness.core.Hoshino
 class HoshinoApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        app.hoshino.harness.core.M2SafeMode.initialize(this)
         Hoshino.client=DshHarnessClient(this)
     }
 }

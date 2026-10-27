@@ -1,0 +1,4 @@
+import type {Context} from '../../node-host/src/platform.js';
+export type NativeAction='capabilities'|'device.battery'|'file.deliver'|'file.save'|'file.share'|'notification.post'|'shortcut.add'|'intent.open'|'web.render';
+/** Uses the authenticated Android callback seam of the original host, never a remote service. */
+export function createBridge(ctx:Context){return {version:1 as const,call<T=Record<string,unknown>>(action:NativeAction,request:Record<string,unknown>={}){return ctx.androidBridge.call<T>('bridge-v1',{version:1,action,request});},async contribute(slot:string,node:Record<string,unknown>){const current=await ctx.mobileM2.invoke('read',{path:'ui/overrides.json'}).catch(()=>({content:'{}'}));const value=JSON.parse(current.content);value.slots={...value.slots,[slot]:node};return ctx.mobileM2.invoke('write',{path:'ui/overrides.json',content:JSON.stringify(value)});}};}

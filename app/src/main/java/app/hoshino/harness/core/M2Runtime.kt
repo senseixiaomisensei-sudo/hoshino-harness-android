@@ -1,0 +1,116 @@
+package app.hoshino.harness.core
+
+import android.content.Context
+import android.content.Intent
+import android.app.PendingIntent
+import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
+import android.os.BatteryManager
+import android.os.Build
+import androidx.core.content.FileProvider
+import dev.hoshino.bridge.ProviderStore
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import org.json.JSONObject
+import org.json.JSONArray
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
+import java.util.UUID
+
+data class DeliveredFile(val id:String,val sessionId:String,val path:String,val name:String,val bytes:Long)
+
+/** Android capabilities only: no Agent loop or model decisions live here. */
+class M2Runtime(private val context:Context) {
+    val deliveries=MutableStateFlow<List<DeliveredFile>>(emptyList())
+    private val vault=ProviderStore(context)
+    private val records=File(context.filesDir,"hoshino-deliveries.json")
+    init {runCatching {val a=JSONArray(records.readText());deliveries.value=(0 until a.length()).map {val r=a.getJSONObject(it);DeliveredFile(r.getString("id"),r.getString("sessionId"),r.getString("path"),r.getString("name"),r.getLong("bytes"))}}}
+    fun workspaceFile(path:String):File {
+        val root=File(context.filesDir,"workspace").canonicalFile
+        val relative=path.removePrefix("/root/workspace/").removePrefix("/workspace/")
+        val file=File(root,relative).canonicalFile
+        require(file.path.startsWith(root.path+File.separator) && file.isFile){"文件不在工作区或已失效"}
+        return file
+    }
+    suspend fun handle(body:JSONObject):JSONObject {
+        require(body.getInt("version")==1){"不支持的原生桥版本"}
+        val args=body.optJSONObject("request")?:JSONObject()
+        return when(body.getString("action")) {
+            "capabilities" -> JSONObject().put("version",1).put("actions",JSONArray(listOf("device.battery","file.deliver","file.save","file.share","notification.post","shortcut.add","intent.open","github.request","update.install","web.render")))
+            "device.battery" -> JSONObject().put("percent",context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
+            "file.deliver" -> {
+                val file=workspaceFile(args.getString("path"));val row=DeliveredFile(UUID.randomUUID().toString(),args.optString("sessionId"),args.getString("path"),args.optString("name",file.name).take(180),file.length())
+                deliveries.update {(it+row).takeLast(500)}
+                withContext(Dispatchers.IO){records.writeText(JSONArray(deliveries.value.map{JSONObject().put("id",it.id).put("sessionId",it.sessionId).put("path",it.path).put("name",it.name).put("bytes",it.bytes)}).toString())}
+                JSONObject().put("delivered",true).put("id",row.id).put("name",row.name).put("bytes",row.bytes)
+            }
+            "file.share" -> withContext(Dispatchers.Main){AppMedia(context).shareFile(workspaceFile(args.getString("path")));JSONObject().put("opened",true)}
+            "file.save" -> save(workspaceFile(args.getString("path")),args.optString("name"))
+            "notification.post" -> {M2Notifications.post(context,args.optString("title","Hoshino"),args.optString("text"));JSONObject().put("posted",true)}
+            "intent.open" -> withContext(Dispatchers.Main) {
+                val uri=android.net.Uri.parse(args.getString("uri"));require(uri.scheme in setOf("https","http","mailto","tel","geo")){"此 URI 协议不在公开桥白名单"}
+                context.startActivity(Intent(Intent.ACTION_VIEW,uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));JSONObject().put("opened",true)
+            }
+            "shortcut.add" -> {
+                val manager=context.getSystemService(android.content.pm.ShortcutManager::class.java)
+                val shortcut=android.content.pm.ShortcutInfo.Builder(context,args.getString("id").take(100)).setShortLabel(args.getString("label").take(40)).setIntent(Intent(context,app.hoshino.harness.MainActivity::class.java).setAction(Intent.ACTION_VIEW).putExtra("hoshino.prompt",args.optString("prompt"))).build()
+                manager.addDynamicShortcuts(listOf(shortcut));JSONObject().put("registered",true)
+            }
+            "github.request" -> github(args)
+            "update.install" -> install(args)
+            "web.render" -> M2WebRenderer.render(context,args)
+            else -> error("未知原生桥能力")
+        }
+    }
+    suspend fun save(file:File,name:String=""):JSONObject=withContext(Dispatchers.IO) {
+        val type=android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())?:"application/octet-stream"
+        val values=android.content.ContentValues().apply{put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,name.ifBlank{file.name}.replace('/','_'));put(android.provider.MediaStore.MediaColumns.MIME_TYPE,type);put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,"Download/Hoshino");put(android.provider.MediaStore.MediaColumns.IS_PENDING,1)}
+        val uri=context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("无法创建下载文件")
+        try{context.contentResolver.openOutputStream(uri)!!.use{out->file.inputStream().use{it.copyTo(out,65536)}};values.clear();values.put(android.provider.MediaStore.MediaColumns.IS_PENDING,0);context.contentResolver.update(uri,values,null,null)}catch(e:Exception){context.contentResolver.delete(uri,null,null);throw e}
+        JSONObject().put("uri",uri.toString()).put("bytes",file.length())
+    }
+    private suspend fun github(args:JSONObject):JSONObject=withContext(Dispatchers.IO) {
+        val path=args.getString("path");require(path.startsWith("/repos/") && !path.contains("..") && !path.contains("\r") && !path.contains("\n"))
+        val cfg=File(context.filesDir,"hoshino/config/build.json").let{if(it.isFile)JSONObject(it.readText())else JSONObject()}
+        val repository=cfg.optString("repository");require(repository.matches(Regex("[\\w.-]+/[\\w.-]+"))) {"请先设置 GitHub 仓库"}
+        require(path=="/repos/$repository" || path.startsWith("/repos/$repository/")){"只允许访问配置的 GitHub 仓库"}
+        val token=vault.resolve("GITHUB_TOKEN")?:error("请在凭证页填写自己的 GitHub token")
+        val connection=URL("https://api.github.com$path").openConnection() as HttpURLConnection
+        try{
+            connection.requestMethod=args.optString("method","GET").also{require(it in setOf("GET","POST","PATCH","PUT"))};connection.connectTimeout=20000;connection.readTimeout=60000;connection.setRequestProperty("Authorization","Bearer $token");connection.setRequestProperty("Accept","application/vnd.github+json");connection.setRequestProperty("X-GitHub-Api-Version","2022-11-28")
+            args.optJSONObject("body")?.let{connection.doOutput=true;connection.setRequestProperty("Content-Type","application/json");connection.outputStream.use{out->out.write(it.toString().toByteArray())}}
+            val code=connection.responseCode;check(code in 200..299){"GitHub 请求失败（HTTP $code），检查仓库与 token 权限"}
+            val text=connection.inputStream.bufferedReader().use{it.readText()};if(text.isBlank())JSONObject().put("status",code)else JSONObject(text)
+        }finally{connection.disconnect()}
+    }
+    private suspend fun install(args:JSONObject):JSONObject=withContext(Dispatchers.IO) {
+        val url=URL(args.getString("url"));require(url.protocol=="https" && url.userInfo==null){"更新包必须为 HTTPS"}
+        val expected=args.getString("sha256").lowercase();require(expected.matches(Regex("[a-f0-9]{64}")))
+        val dir=File(context.filesDir,"hoshino/updates").apply{mkdirs()};val apk=File(dir,"candidate.apk");val hash=MessageDigest.getInstance("SHA-256")
+        val c=url.openConnection() as HttpURLConnection;c.connectTimeout=20000;c.readTimeout=60000
+        try{check(c.responseCode in 200..299);var bytes=0L;c.inputStream.use{input->apk.outputStream().use{out->val buffer=ByteArray(65536);while(true){val n=input.read(buffer);if(n<0)break;bytes+=n;check(bytes<=300L*1024*1024){"更新包超过 300 MiB"};hash.update(buffer,0,n);out.write(buffer,0,n)}}}}finally{c.disconnect()}
+        check(hash.digest().joinToString(""){"%02x".format(it)}==expected){"APK SHA256 不匹配，已阻止安装"}
+        val flags=PackageManager.GET_SIGNING_CERTIFICATES;val incoming=context.packageManager.getPackageArchiveInfo(apk.path,flags)?:error("APK 无法解析")
+        val installed=context.packageManager.getPackageInfo(context.packageName,flags)
+        check(incoming.packageName==context.packageName){"更新包 applicationId 不匹配"}
+        val existing=installed.signingInfo!!.apkContentsSigners.map{it.toByteArray().toList()}.toSet();val signatures=incoming.signingInfo!!.apkContentsSigners.map{it.toByteArray().toList()}.toSet()
+        check(existing==signatures){"更新包签名不匹配，已阻止安装"}
+        File(context.applicationInfo.sourceDir).copyTo(File(dir,"previous-${installed.longVersionCode}.apk"),true)
+        dir.listFiles{f->f.name.startsWith("previous-")&&f.extension=="apk"}?.sortedByDescending{it.lastModified()}?.drop(3)?.forEach{it.delete()}
+        val installer=context.packageManager.packageInstaller;val params=PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply{setAppPackageName(context.packageName)}
+        val sessionId=installer.createSession(params)
+        installer.openSession(sessionId).use{session->session.openWrite("base.apk",0,apk.length()).use{out->apk.inputStream().use{it.copyTo(out,65536)};session.fsync(out)};val result=PendingIntent.getBroadcast(context,sessionId,Intent(context,M2InstallReceiver::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE);session.commit(result.intentSender)}
+        JSONObject().put("verified",true).put("sessionId",sessionId).put("installation","system-confirmation").put("rollbackApks",3)
+    }
+}
+
+class M2InstallReceiver:android.content.BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){
+    when(intent.getIntExtra(PackageInstaller.EXTRA_STATUS,PackageInstaller.STATUS_FAILURE)){
+        PackageInstaller.STATUS_PENDING_USER_ACTION->{@Suppress("DEPRECATION") val confirmation=intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT);confirmation?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let{context.startActivity(it)}}
+        PackageInstaller.STATUS_SUCCESS->M2Notifications.post(context,"Hoshino 更新完成","会话和配置保留")
+        else->M2Notifications.post(context,"更新未完成","旧版本与数据仍保留，可重新安装")
+    }
+}}

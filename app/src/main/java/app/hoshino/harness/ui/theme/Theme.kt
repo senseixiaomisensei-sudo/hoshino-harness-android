@@ -137,6 +137,7 @@ fun HoshinoTheme(
     bodyScale: Float = 1f,
     codeScale: Float = 1f,
     accent: Color? = null,
+    tokens: org.json.JSONObject? = null,
     content: @Composable () -> Unit,
 ) {
     val dark = when (mode) {
@@ -145,8 +146,11 @@ fun HoshinoTheme(
         ThemeMode.Dark -> true
     }
     val base = if (dark) DarkHoshinoColors else LightHoshinoColors
-    val c = if(accent==null)base else base.copy(accent=accent,accentSoft=accent.copy(alpha=if(dark)0.12f else 0.08f),onAccent=if(accent.luminance()>0.5f)Color.Black else Color.White)
-    val type = hoshinoType(bodyScale, codeScale)
+    val original = if(accent==null)base else base.copy(accent=accent,accentSoft=accent.copy(alpha=if(dark)0.12f else 0.08f),onAccent=if(accent.luminance()>0.5f)Color.Black else Color.White)
+    val colors=tokens?.optJSONObject("colors")
+    fun color(key:String,fallback:Color)=runCatching{Color(android.graphics.Color.parseColor(colors?.optString(key)))}.getOrDefault(fallback)
+    val c=original.copy(bg=color("bg",original.bg),surface=color("surface",original.surface),surface2=color("surface2",original.surface2),line=color("line",original.line),text=color("text",original.text),text2=color("text2",original.text2),text3=color("text3",original.text3),accent=color("accent",original.accent),accentSoft=color("accentSoft",original.accentSoft),onAccent=color("onAccent",original.onAccent),success=color("success",original.success),warning=color("warning",original.warning),danger=color("danger",original.danger))
+    val type = hoshinoType((tokens?.optDouble("bodyScale",bodyScale.toDouble())?.toFloat()?:bodyScale).coerceIn(0.8f,1.5f),(tokens?.optDouble("codeScale",codeScale.toDouble())?.toFloat()?:codeScale).coerceIn(0.8f,1.5f))
 
     val scheme = if (dark) {
         darkColorScheme(

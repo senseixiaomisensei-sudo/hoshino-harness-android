@@ -6,7 +6,7 @@ import {resolve} from 'node:path';
 import type {} from '@deepseek-ai/dsh-working-directory';
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs';
 import type { ToolExecutionToken } from '@deepseek-ai/dsh-tools';
-export interface SessionOptions { tier?: string; planMode?: boolean; prompt?: string }
+export interface SessionOptions { tier?: string; planMode?: boolean; prompt?: string;mode?:string;model?:string }
 interface Change { sessionId: string; target: FsTarget; before: string|null; after: string; version: NonNullable<FsInfo>['version'] }
 export interface MobilePolicy {
   options: Map<string,SessionOptions>;
@@ -20,7 +20,7 @@ export function apply(ctx: Context): void {
   const changes=new Map<string,Change>();
   const guards=new Map<ToolExecutionToken,{path: string;target: FsTarget;before: string|null;info: FsInfo|undefined}>();
   const remembered=new Set<string>();
-  const reads=new Set(['get_device_info','read','read_image','skill','self_inspect','self_config_read']);
+  const reads=new Set(['get_device_info','read','read_image','skill','self_inspect','self_config_read','self_read','self_diff','self_doctor']);
   ctx.provide('mobilePolicy',{ options,async resolveDiff(sessionId,id,accept) {
     const change=changes.get(id);if(!change || change.sessionId!==sessionId)throw new Error('Diff is no longer available');
     if(!accept) {
@@ -56,7 +56,7 @@ export function apply(ctx: Context): void {
       catch {
         if(exec.name==='read') {
           const home=ctx.androidBridge.bootstrap.selfHome ?? resolve(ctx.androidBridge.bootstrap.home,'hoshino');
-          for(const publicRoot of [resolve(home,'self'),'/opt/hoshino/dsh-source']) {
+          for(const publicRoot of [home,'/opt/hoshino/dsh-source']) {
             try{path=await workspacePath(publicRoot,executionPath);break;}catch{}
           }
         }

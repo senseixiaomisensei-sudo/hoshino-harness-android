@@ -58,6 +58,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val uiCustomization=MutableStateFlow(UiCustomization())
     override val uiCustomizationError=MutableStateFlow<String?>(null)
     override val configurationRollbackSupported=true
+    val m2=M2Runtime(context)
+    override val presets=MutableStateFlow(listOf("chat" to "聊天","standard" to "Agent","plan" to "Plan","ask" to "Ask","research" to "Research","review" to "Review","goal" to "Goal","auto" to "Auto","orchestrator" to "Orchestrator").map{(id,name)->AgentPreset(id,name,"",true,"",emptyList(),null,PermissionTier.WorkspaceWrite)})
     val files=dev.hoshino.bridge.WorkspaceFiles(java.io.File(context.filesDir,"workspace"),java.io.File(context.filesDir,"hoshino-trash"))
     private val metadata=context.getSharedPreferences("m1-session-metadata",Context.MODE_PRIVATE)
     private val restartAfter=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -113,6 +115,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             }
             "self-status" -> return JSONObject().put("currentModel",routing.value.main?.modelId ?: "").put("provider",routing.value.main?.providerId ?: "").put("logs",JSONArray(runtime.state.value.logs))
             "self-changed" -> {scope.launch {runCatching {refreshControl()}};return JSONObject()}
+            "bridge-v1" -> return m2.handle(body)
             "restart-after-turn" -> {restartAfter.add(body.getString("sessionId"));return JSONObject()}
             "file-diff" -> {
                 val before=body.optString("before","");val after=body.getString("after")
@@ -127,11 +130,12 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val network=body.optString("kind")=="network"
         val detail=if(network) "向所选模型接口发送本次上下文" else vault.redact(listOf(body.optString("path"),body.optString("before"),body.optString("after"),body.optJSONObject("arguments")?.toString(2).orEmpty()).filter {it.isNotBlank() && it!="null"}.joinToString("\n").take(12000))
         publish(HarnessEvent.ApprovalRequested(session,id,if(network) "模型网络请求" else "工具执行审批",detail,if(network) "发送到当前 provider" else body.optString("command").ifEmpty{body.optString("tool")}))
+        M2Notifications.approval(context,session,id,if(network)"模型网络请求" else body.optString("tool"))
         return try {
             val chosen=withTimeoutOrNull(290000) { decision.await() } ?: ApprovalDecision.Deny
             publish(HarnessEvent.ApprovalResolved(session,id,chosen))
             JSONObject().put("approved",chosen!=ApprovalDecision.Deny).put("remember",chosen==ApprovalDecision.AllowSession)
-        } finally { approvals.remove(id) }
+        } finally { approvals.remove(id);M2Notifications.dismiss(context,id) }
     }
     override suspend fun respondApproval(sessionId: String,approvalId: String,decision: ApprovalDecision) { approvals[approvalId]?.complete(decision) }
     private fun JSONArray.rows()=(0 until length()).map { getJSONObject(it) }
@@ -267,7 +271,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         if(options.effort!=ReasoningEffort.Off && (!modelInfo.reasoning || maxBudget!=modelInfo.maxOutput || provider.protocol==ProviderProtocol.Anthropic && options.effort==ReasoningEffort.Max && modelInfo.defaultEffort!=ReasoningEffort.Max))
             upsertProvider(provider.copy(models=provider.models.map{if(it.id==model.modelId)it.copy(reasoning=true,defaultEffort=options.effort,maxOutput=maxBudget) else it}))
         require(attachments.none{it.kind==AttachmentKind.Image || it.kind==AttachmentKind.Camera} || modelInfo.vision){"当前模型未开启视觉，请在模型设置开启或切换模型"}
-        control("session-options",JSONObject().put("sessionId",sessionId).put("tier",options.tier.key).put("planMode",options.planMode))
+        control("session-options",JSONObject().put("sessionId",sessionId).put("tier",options.tier.key).put("planMode",options.planMode).put("mode",options.presetId).put("model",model.modelId))
         val selection=JSONObject().put("sessionId",sessionId).put("provider",model.providerId).put("model",model.modelId)
         // dsh exposes no reasoning capability for a non-reasoning model; even
         // sending "off" then causes session/model-unavailable before any HTTP call.
@@ -303,6 +307,10 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun setProviderEnabled(providerId: String,enabled: Boolean) { upsertProvider(providerRows.value.first { it.id==providerId }.copy(enabled=enabled)) }
     override suspend fun setRouting(routing: ModelRouting) { routingRow.value=routing }
     suspend fun control(action:String,request:JSONObject=JSONObject()):JSONObject=api().mobile("control",JSONObject().put("action",action).put("request",request))
+    suspend fun m2Control(operation:String,request:JSONObject=JSONObject()):JSONObject=control("m2",request.put("operation",operation))
+    override suspend fun setSessionPreset(sessionId:String,presetId:String){metadata.edit().putString("preset:$sessionId",presetId).apply();sessionRows.update{rows->rows.map{if(it.id==sessionId)it.copy(presetId=presetId)else it}}}
+    override suspend fun upsertPreset(preset:AgentPreset){val current=m2Control("config",JSONObject().put("name","modes.json"));val rows=current.optJSONArray("modes")?:JSONArray();val next=JSONArray();for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("id")!=preset.id)next.put(row)};next.put(JSONObject().put("id",preset.id).put("name",preset.name).put("description",preset.description).put("systemPrompt",preset.systemPrompt).put("tools",JSONArray(preset.tools)));m2Control("config",JSONObject().put("name","modes.json").put("value",JSONObject().put("modes",next)));refreshControl()}
+    override suspend fun deletePreset(presetId:String){val current=m2Control("config",JSONObject().put("name","modes.json"));val rows=current.optJSONArray("modes")?:JSONArray();val next=JSONArray();for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("id")!=presetId)next.put(row)};m2Control("config",JSONObject().put("name","modes.json").put("value",JSONObject().put("modes",next)));refreshControl()}
     suspend fun refreshControl() {
         val state=control("inspect");val manifest=state.optJSONObject("manifest")
         val built=manifest?.optJSONArray("plugins")?.rows().orEmpty().map{row->Plugin(row.getString("id"),row.getString("id"),row.optString("name"),"0.2.1-rc.2",true,PluginSource.BuiltIn,PluginCategory.Tool,"Cordis · "+row.optString("source"))}
@@ -314,6 +322,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val parsed=runCatching { check(overrides.optBoolean("valid",true));parseUiCustomization(overrides.getJSONObject("value")) }
         uiCustomization.value=parsed.getOrDefault(UiCustomization())
         uiCustomizationError.value=if(parsed.isSuccess)null else "UI 覆盖配置无效，已恢复原始界面；可在内核设置中回滚"
+        runCatching{val config=m2Control("state");presets.value=config.getJSONArray("modes").rows().map{r->AgentPreset(r.getString("id"),r.optString("name",r.getString("id")),r.optString("description"),r.getString("id") in setOf("chat","standard","plan","ask","research","review","goal","auto","orchestrator"),r.optString("systemPrompt"),r.optJSONArray("tools")?.let{a->(0 until a.length()).map{a.getString(it)}}.orEmpty(),null,if(r.optBoolean("readOnly"))PermissionTier.ReadOnly else PermissionTier.WorkspaceWrite)};val prefs=config.optJSONObject("configuration")?.optJSONObject("preferences.json");if(!uiCustomization.value.raw.has("process")){uiCustomization.value=uiCustomization.value.copy(raw=JSONObject(uiCustomization.value.raw.toString()).put("process",JSONObject().put("display",prefs?.optString("process","collapsed")?:"collapsed").put("types",prefs?.optJSONObject("typeDefaults")?:JSONObject())))}}
+        M2SafeMode.ready(context)
     }
     private fun parseUiCustomization(value:JSONObject):UiCustomization {
         fun scale(key:String)=if(value.has(key))value.getDouble(key).also{require(it.isFinite() && it in 0.8..1.5)}.toFloat() else null
@@ -321,7 +331,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         return UiCustomization(accent,scale("bodyScale"),scale("codeScale"),value.optString("tagline").takeIf{it.isNotBlank()},
             value.optJSONArray("capsules")?.rows()?.map{UiCapsule(it.getString("label"),it.getString("prompt"))},
             value.optJSONArray("commands")?.rows().orEmpty().map{UiCommand("/"+it.getString("name"),it.getString("description"),it.getString("prompt"))},
-            value.optJSONArray("sidebar")?.rows().orEmpty().map{UiSidebarEntry(it.getString("route"),it.getBoolean("visible"))})
+            value.optJSONArray("sidebar")?.rows().orEmpty().map{UiSidebarEntry(it.getString("route"),it.getBoolean("visible"))},value)
     }
     override suspend fun configurationSnapshots():List<String> {
         val rows=control("snapshots").getJSONArray("items");return (0 until rows.length()).map{rows.getString(it)}

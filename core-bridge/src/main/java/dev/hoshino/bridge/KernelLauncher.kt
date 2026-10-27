@@ -42,6 +42,13 @@ class ProotKernelLauncher : KernelLauncher {
         val workspace = File(context.filesDir, "workspace").apply { mkdirs() }
         val home = File(context.filesDir, "dsh-home").apply { mkdirs() }
         val hoshino = File(context.filesDir,"hoshino").apply { mkdirs() }
+        val source=File(hoshino,"source").apply{mkdirs()}
+        if(source.listFiles().isNullOrEmpty())runCatching{
+            java.util.zip.ZipInputStream(context.assets.open("harness-source.zip")).use{zip->
+                var entry=zip.nextEntry;var total=0L
+                while(entry!=null){val dest=File(source,entry.name).canonicalFile;require(dest.path.startsWith(source.canonicalPath+File.separator));if(entry.isDirectory)dest.mkdirs()else{dest.parentFile?.mkdirs();dest.outputStream().use{out->val b=ByteArray(65536);while(true){val n=zip.read(b);if(n<0)break;total+=n;require(total<=50L*1024*1024);out.write(b,0,n)}}};zip.closeEntry();entry=zip.nextEntry}
+            }
+        }.onFailure{onDiagnostic("host: source bundle unavailable")}
         File(root,"root/workspace").mkdirs();File(root,"root/.hoshino").mkdirs()
         val tmp = File(context.cacheDir, "proot").apply { mkdirs() }
         val network = context.getSystemService(android.net.ConnectivityManager::class.java)
@@ -61,7 +68,7 @@ class ProotKernelLauncher : KernelLauncher {
         currentCoroutineContext().ensureActive()
         val child = builder.start(); process = child
         owner?.invokeOnCompletion { cause -> if(cause is CancellationException)child.destroy() }
-        child.outputStream.bufferedWriter().use { it.write(bootstrap.put("workspace", "/root/workspace").put("home", "/home/hoshino").put("selfHome","/root/.hoshino").toString()); it.newLine() }
+        child.outputStream.bufferedWriter().use { it.write(bootstrap.put("workspace", "/root/workspace").put("home", "/home/hoshino").put("selfHome","/root/.hoshino").put("safeMode",context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE).getBoolean("safe",false)).toString()); it.newLine() }
         Thread {
             // Arbitrary child output may contain tool data or credentials. Keep only classified diagnostics.
             try {
