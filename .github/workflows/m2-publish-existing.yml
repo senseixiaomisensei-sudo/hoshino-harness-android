@@ -1,0 +1,73 @@
+name: Publish existing signed M2 build
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: f7f88ac1ecb5c32dd9e42e71e452da47a81246a2 }
+      - name: Wait only for signed build artifact
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          for attempt in $(seq 1 50); do
+            result=$(gh api repos/${{ github.repository }}/actions/runs/40506804124/jobs --jq '.jobs[] | select(.name=="development") | .conclusion')
+            if test "$result" = success; then exit 0; fi
+            if test -n "$result"; then echo "Build did not pass: $result"; exit 1; fi
+            sleep 15
+          done
+          exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: hoshino-m2-development
+          path: artifacts
+          run-id: 40506804124
+          github-token: ${{ github.token }}
+      - name: Record ongoing acceptance separately
+        run: |
+          mkdir -p native-results
+          printf '%s\n' 'Full native/on-demand acceptance is running in https://github.com/${{ github.repository }}/actions/runs/40506804124. Publication does not claim full M2 acceptance.' > native-results/acceptance-status.txt
+      - name: Publish signed dual ABI implementation preview and honest evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_RESULT: pending-see-build-run
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,hashlib,zipfile
+          records=json.loads(pathlib.Path('artifacts/docs/m2-apk-sizes.json').read_text())
+          metrics=json.loads(pathlib.Path('m2-metrics.json').read_text())
+          metrics.update(status='implementation-preview-not-full-M2-acceptance',sourceCommit='f7f88ac1ecb5c32dd9e42e71e452da47a81246a2',buildRun='${{ github.server_url }}/${{ github.repository }}/actions/runs/40506804124',nativeVerification='pending-see-build-run')
+          metrics['apkBytes']={r['abi']:r['bytes'] for r in records}
+          metrics['apkSha256']={r['abi']:r['sha256'] for r in records}
+          native=pathlib.Path('native-results/reports/m2-native-metrics.json')
+          if native.exists():
+            try:
+              sample=json.loads(native.read_text());metrics.update(uiDslReloadMs=sample.get('uiDslReloadMs'),kernelReadyMs=sample.get('firstBootKernelReadyMs'),deviceEnvironment=sample.get('environment'));metrics['nativeSample']=sample
+            except ValueError: pass
+          for record in records:
+            apk=pathlib.Path('artifacts/build/deliverables')/record['apk']
+            assert apk.stat().st_size==record['bytes']
+            assert hashlib.sha256(apk.read_bytes()).hexdigest()==record['sha256']
+            with zipfile.ZipFile(apk) as z: assert {n.split('/')[1] for n in z.namelist() if n.startswith('lib/')}=={record['abi']}
+          pathlib.Path('m2-metrics.json').write_text(json.dumps(metrics,ensure_ascii=False,indent=2)+'\n')
+          PY
+          cat > release-notes.md <<'NOTES'
+          0.2.0-m2 implementation preview. Same application ID dev.hoshino.app, versionCode 200, original signing certificate e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1.
+
+          Main Android phones: download arm64-v8a. x86_64 is for compatible devices/emulators. Keep the installed app and use overwrite installation; do not uninstall to update.
+
+          This is not full acceptance of Hoshino_Harness_M2.md. The attached m2-report.md lists implemented functions and explicit remaining gaps. No OEM/arm64 physical phone was connected. No fabricated performance data; unavailable measurements are null.
+
+          Source: f7f88ac1ecb5c32dd9e42e71e452da47a81246a2
+          Build and signature gate: ${{ github.server_url }}/${{ github.repository }}/actions/runs/40506804124
+          Native regression result: pending-see-build-run. Raw native reports are attached as m2-native-reports.zip.
+          NOTES
+          zip -qr m2-native-reports.zip native-results
+          gh release view v0.2.0-m2 >/dev/null 2>&1 && exit 0
+          gh release create v0.2.0-m2 --target 'f7f88ac1ecb5c32dd9e42e71e452da47a81246a2' --title 'Hoshino Harness 0.2.0-m2 · 实现预览' --prerelease --notes-file release-notes.md artifacts/build/deliverables/* docs/m2-report.md docs/m2-decisions.md docs/m2-plugin-compat.md docs/m2-device-checklist.md docs/m2-slim.md docs/m2-security-review.md artifacts/docs/m2-apk-sizes.json m2-metrics.json m2-native-reports.zip README.md
