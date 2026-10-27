@@ -79,6 +79,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     fun startKernel()=runtime.start()
     fun stopKernel() { approvals.values.forEach { it.complete(ApprovalDecision.Deny) };systemShell.close();runtime.stop() }
+    suspend fun closeForRestore(){stopKernel();runtime.stopAndWait()}
+    fun disposeAfterRestore(){scope.cancel()}
     override suspend fun restartKernel() {
         for(session in sessions.value.filter { it.running })runCatching { api().rpc("session/cancel",JSONObject().put("sessionId",session.id)) }
         withTimeoutOrNull(5000) { sessions.first { rows -> rows.none { it.running } } }
@@ -117,7 +119,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             }
             "self-status" -> return JSONObject().put("currentModel",routing.value.main?.modelId ?: "").put("provider",routing.value.main?.providerId ?: "").put("logs",JSONArray(runtime.state.value.logs))
             "self-changed" -> {scope.launch {runCatching {refreshControl()}};return JSONObject()}
-            "bridge-v1" -> return m2.handle(body)
+            "bridge-v1" -> return try{m2.handle(body)}catch(failure:Exception){JSONObject().put("ok",false).put("error",vault.redact(failure.message.orEmpty()).take(1200).ifBlank{"原生能力执行失败"})}
             "question" -> {
                 val sid=body.getString("sessionId");val id=UUID.randomUUID().toString();val answer=CompletableDeferred<String>();questions[id]=answer
                 val options=body.optJSONArray("options")?:JSONArray()
@@ -185,6 +187,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                 tokenTurns.remove(sid)?.takeIf{it.reported}?.let{u->publish(HarnessEvent.UsageReported(sid,id,Usage(u.input,u.output,u.cache,u.reasoning,(event.optLong("time",System.currentTimeMillis())-u.start).coerceAtLeast(0))))}
                 live.remove(sid)?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) }
                 val reason=data.optJSONObject("reason")
+                if(!replay&&!AppSurface.foreground)M2Notifications.post(context,"Hoshino 任务"+if(reason?.optString("kind")=="error")"失败"else"完成","打开应用查看会话结果")
                 publish(HarnessEvent.TurnFinished(sid,id,reason?.optString("kind")=="aborted"))
                 sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=false,updatedAt=System.currentTimeMillis()) else it } }
                 scope.launch{runCatching{api().rpc("session/list",JSONObject()).getJSONArray("items").rows().firstOrNull{it.optString("sessionId")==sid}?.optJSONObject("projections")?.optJSONObject("values")?.let{publishContext(sid,it)}}}
@@ -343,7 +346,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val overrides=control("ui-read")
         val parsed=runCatching { check(overrides.optBoolean("valid",true));parseUiCustomization(overrides.getJSONObject("value")) }
         uiCustomization.value=parsed.getOrDefault(UiCustomization())
-        uiCustomizationError.value=if(parsed.isSuccess)null else "UI 覆盖配置无效，已恢复原始界面；可在内核设置中回滚"
+        uiCustomizationError.value=if(parsed.isFailure)"UI 覆盖配置无效，已恢复原始界面；可在内核设置中回滚" else overrides.optJSONObject("slotErrors")?.takeIf{it.length()>0}?.let{"部分 slot 已恢复默认组件："+it.toString().take(2000)}
         runCatching{val config=m2Control("state");presets.value=config.getJSONArray("modes").rows().map{r->AgentPreset(r.getString("id"),r.optString("name",r.getString("id")),r.optString("description"),r.getString("id") in setOf("chat","standard","plan","ask","research","review","goal","auto","orchestrator"),r.optString("systemPrompt"),r.optJSONArray("tools")?.let{a->(0 until a.length()).map{a.getString(it)}}.orEmpty(),null,if(r.optBoolean("readOnly"))PermissionTier.ReadOnly else PermissionTier.WorkspaceWrite)};val prefs=config.optJSONObject("configuration")?.optJSONObject("preferences.json");if(!uiCustomization.value.raw.has("process")){uiCustomization.value=uiCustomization.value.copy(raw=JSONObject(uiCustomization.value.raw.toString()).put("process",JSONObject().put("display",prefs?.optString("process","collapsed")?:"collapsed").put("types",prefs?.optJSONObject("typeDefaults")?:JSONObject())))}}
         M2SafeMode.ready(context)
     }

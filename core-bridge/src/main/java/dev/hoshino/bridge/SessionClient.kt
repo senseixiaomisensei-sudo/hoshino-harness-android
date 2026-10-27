@@ -92,8 +92,9 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
     suspend fun mobile(method: String, request: JSONObject = JSONObject()): JSONObject = withContext(Dispatchers.IO) {
         require(method.matches(Regex("[a-z][a-z0-9/-]*")))
         http.newCall(Request.Builder().url("$base/mobile/$method").header("Cookie",cookie).post(request.toString().toRequestBody("application/json".toMediaType())).build()).execute().use {
-            check(it.isSuccessful) { "手机插件请求失败 (${it.code})" }
-            JSONObject(it.body!!.string())
+            val body=it.body!!.string()
+            check(it.isSuccessful) { runCatching{JSONObject(body).optString("error")}.getOrDefault("").ifBlank{"手机插件请求失败 (${it.code})"} }
+            JSONObject(body)
         }
     }
     suspend fun prompt(sessionId: String, text: String) = rpc("session/prompt", JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",JSONArray().put(JSONObject().put("type","text").put("text",text))))

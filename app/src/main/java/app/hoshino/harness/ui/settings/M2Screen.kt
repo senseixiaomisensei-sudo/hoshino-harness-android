@@ -19,6 +19,16 @@ fun M2Screen(onBack:()->Unit){
     var pluginSpec by remember{mutableStateOf("")}
     val export=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")){uri->uri?.let{context.contentResolver.openOutputStream(it)?.use{out->out.write(content.toByteArray())}}}
     val importConfig=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()){uri->uri?.let{scope.launch{runCatching{context.contentResolver.openInputStream(it)!!.use{input->val out=java.io.ByteArrayOutputStream();val b=ByteArray(65536);while(true){val n=input.read(b);if(n<0)break;check(out.size()+n<=2*1024*1024){"配置文件超过 2 MiB"};out.write(b,0,n)};out.toString("UTF-8")}}.onSuccess{value->content=value}.onFailure{failure->status=failure.message.orEmpty()}}}}
+    val restoreArchive=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()){uri->uri?.let{scope.launch{busy=true;try{
+        check(client!=null&&client.sessions.value.none{it.running}){"恢复前请先暂停运行中的会话"}
+        val archive=java.io.File(context.cacheDir,"hoshino-restore.zip")
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){context.contentResolver.openInputStream(it)!!.use{input->archive.outputStream().use{out->val b=ByteArray(65536);var total=0L;while(true){val n=input.read(b);if(n<0)break;total+=n;check(total<=512L*1024*1024){"备份超过 512 MiB"};out.write(b,0,n)}}}}
+        val safety=client.m2Control("backup").getString("path");client.closeForRestore()
+        try{client.m2.restoreArchive(archive)}catch(failure:Exception){client.startKernel();throw IllegalStateException("恢复未完成；原始安全备份：$safety",failure)}
+        client.disposeAfterRestore();Hoshino.client=DshHarnessClient(context.applicationContext);Hoshino.resetStore();(Hoshino.client as DshHarnessClient).startKernel()
+        toast(context,"备份已恢复；原有凭据保留，其他设备需重新填写密钥")
+        context.startActivity(android.content.Intent(context,app.hoshino.harness.MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK))
+    }catch(failure:Exception){status=client?.describeFailure(failure)?:failure.message.orEmpty()}finally{busy=false}}}}
     val files=mapOf("审批" to "approval.json","模式" to "modes.json","提示词" to "prompts.json","搜索" to "search.json","模型路由" to "routing.json","源码构建" to "build.json","折叠" to "preferences.json")
     fun load(){scope.launch{busy=true;runCatching{if(section=="UI DSL")client?.control("config-read",JSONObject().put("path","ui/overrides.json"))?.getString("content")?:"{}" else if(section in files)client?.m2Control("config",JSONObject().put("name",files[section]))?.toString(2)?:"{}"else client?.m2Control("doctor")?.toString(2)?:"{}"}.onSuccess{content=it;status=""}.onFailure{status=client?.describeFailure(it)?:"内核未连接"};busy=false}}
     LaunchedEffect(section){load()}
@@ -61,6 +71,7 @@ fun M2Screen(onBack:()->Unit){
             }
             if(section=="诊断与备份"){
                 HButton("导出完整配置与会话备份",{scope.launch{runCatching{val result=client?.m2Control("backup")?:error("内核未连接");client.m2Control("deliver",JSONObject().put("path",result.getString("path")));status=result.toString(2)}.onFailure{status=client?.describeFailure(it).orEmpty()}}})
+                HButton("从 ZIP 恢复（先自动备份）",{restoreArchive.launch(arrayOf("application/zip","application/octet-stream"))},enabled=!busy)
                 HButton(if(M2SafeMode.enabled(context))"退出安全模式并重载"else"进入安全模式并重载",{M2SafeMode.set(context,!M2SafeMode.enabled(context));scope.launch{runCatching{client?.restartKernel()};load()}})
                 Text("安全模式入口：启动时长按音量键；连续三次启动失败也会进入。旧 APK 保留在应用 updates 目录。",style=HoshinoTheme.type.caption,color=HoshinoTheme.colors.text2)
             }

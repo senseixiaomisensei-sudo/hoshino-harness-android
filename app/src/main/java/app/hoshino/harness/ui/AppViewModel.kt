@@ -1,6 +1,9 @@
 package app.hoshino.harness.ui
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import app.hoshino.harness.core.ApprovalPolicy
 import app.hoshino.harness.core.PermissionTier
 import app.hoshino.harness.ui.theme.ThemeMode
@@ -22,8 +25,10 @@ data class UiPrefs(
 class AppViewModel : ViewModel() {
     val customization=app.hoshino.harness.core.Hoshino.client.uiCustomization
     val customizationError=app.hoshino.harness.core.Hoshino.client.uiCustomizationError
-    private val _prefs = MutableStateFlow(UiPrefs())
+    private val disk=app.hoshino.harness.core.Hoshino.applicationContext?.getSharedPreferences("hoshino-ui",android.content.Context.MODE_PRIVATE)
+    private val _prefs = MutableStateFlow(runCatching{UiPrefs(themeMode=ThemeMode.valueOf(disk?.getString("theme","System")?:"System"),bodyScale=disk?.getFloat("bodyScale",1f)?:1f,codeScale=disk?.getFloat("codeScale",1f)?:1f,language=disk?.getString("language","简体中文")?:"简体中文",defaultTier=PermissionTier.valueOf(disk?.getString("tier","WorkspaceWrite")?:"WorkspaceWrite"),approvalPolicy=ApprovalPolicy.valueOf(disk?.getString("approval","Dangerous")?:"Dangerous"))}.getOrDefault(UiPrefs()))
     val prefs: StateFlow<UiPrefs> = _prefs.asStateFlow()
+    init{viewModelScope.launch{_prefs.collect{p->disk?.edit()?.putString("theme",p.themeMode.name)?.putFloat("bodyScale",p.bodyScale)?.putFloat("codeScale",p.codeScale)?.putString("language",p.language)?.putString("tier",p.defaultTier.name)?.putString("approval",p.approvalPolicy.name)?.apply()}}}
 
     fun setTheme(mode: ThemeMode) = _prefs.update { it.copy(themeMode = mode) }
     fun cycleTheme(currentlyDark: Boolean) =

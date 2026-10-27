@@ -487,7 +487,7 @@ fun MessageList(chatItems: List<app.hoshino.harness.core.ChatItem>, actions: Mes
             items(reversed, key = { it.id }) { turn ->
                 Column {
                     turn.user?.let{ChatItemView(it,actions)}
-                    ProcessTimeline(turn.process,actions,custom.raw.optJSONObject("process")?.optString("display","collapsed")?:"collapsed",custom.raw.optJSONObject("process")?.optJSONObject("types"))
+                    ProcessTimeline(turn.process,actions,custom.raw.optJSONObject("process")?.optString("display","collapsed")?:"collapsed",custom.raw.optJSONObject("process")?.optJSONObject("types"),turn.actions.any{it is app.hoshino.harness.core.ChatItem.Approval && it.decision==null})
                     turn.actions.forEach{ChatItemView(it,actions)}
                     turn.finalItems.forEach{ChatItemView(it,actions)}
                 }

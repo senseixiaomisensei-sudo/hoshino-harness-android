@@ -8,6 +8,12 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file(System.getenv("HOSHINO_SIGNING_STORE") ?: "${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = "android"; keyAlias = "androiddebugkey"; keyPassword = "android"
+        }
+    }
     flavorDimensions += "abi"
     productFlavors {
         create("arm64") { dimension="abi";ndk { abiFilters += "arm64-v8a" } }

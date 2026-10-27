@@ -29,7 +29,7 @@ internal fun presentTurns(items:List<ChatItem>):List<TurnPresentation>{
 }
 
 @Composable
-internal fun ProcessTimeline(items:List<ChatItem>,actions:MessageActions,display:String="collapsed",types:org.json.JSONObject?=null){
+internal fun ProcessTimeline(items:List<ChatItem>,actions:MessageActions,display:String="collapsed",types:org.json.JSONObject?=null,waiting:Boolean=false){
     if(items.isEmpty())return
     val c=HoshinoTheme.colors
     val context=androidx.compose.ui.platform.LocalContext.current
@@ -44,7 +44,7 @@ internal fun ProcessTimeline(items:List<ChatItem>,actions:MessageActions,display
     val files=items.filterIsInstance<ChatItem.Diff>().map{it.path}.distinct().size
     val current=items.lastOrNull()
     val action=when(current){is ChatItem.Tool->current.name;is ChatItem.Terminal->current.command.lineSequence().firstOrNull().orEmpty().take(60);is ChatItem.Thinking->"思考中";else->"处理任务"}
-    val status=if(running)"运行中"else if(failed)"失败"else "已完成"
+    val status=if(waiting)"等待审批"else if(running)"运行中"else if(failed)"失败"else "已完成"
     val title=if(running)"$action · $tools 步 · ${formatDuration(duration)} · $status" else "已运行 $tools 步 · ${formatDuration(duration)}${if(files>0)" · 改了 $files 个文件"else""} · $status"
     Column(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp).hairlineCard(c.surface,c.line)){
         Row(Modifier.fillMaxWidth().clickable{expanded=!expanded}.padding(12.dp)){
@@ -65,7 +65,7 @@ internal fun ProcessTimeline(items:List<ChatItem>,actions:MessageActions,display
                             Text("${if(output)"▾"else"▸"} 长输出 · ${item.plainText().length} 字符",color=c.text3,modifier=Modifier.clickable{output=!output}.padding(8.dp))
                             if(output)SelectionContainer{Text(item.plainText().take(12000),style=HoshinoTheme.type.code,color=c.text)}
                             HButton("查看全部",{full=true},compact=true)
-                        }else ChatItemView(item,actions)
+                        }else if(item is ChatItem.Thinking || item is ChatItem.Tool || item is ChatItem.Terminal)SelectionContainer{Text(item.plainText(),style=HoshinoTheme.type.code,color=c.text,modifier=Modifier.padding(8.dp))}else ChatItemView(item,actions)
                     }
                 }
                 if(full)HSheet(onDismiss={full=false},title="查看全部"){

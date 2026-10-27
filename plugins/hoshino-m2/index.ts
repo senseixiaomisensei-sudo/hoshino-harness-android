@@ -26,7 +26,7 @@ export async function apply(ctx:Context){
  await writeFile(join(sdk,'index.d.ts'),await readFile(new URL('../hh-bridge/index.d.ts',import.meta.url)).catch(()=>Buffer.from('export declare function createBridge(ctx:any):any;')));
  await mkdir(join(root,'ui'),{recursive:true});await atomic(join(root,'self','ui.schema.json'),UI_SCHEMA);
  const originalCall=ctx.androidBridge.call.bind(ctx.androidBridge);
- const bridge=<T=Data>(action:string,request:Data={})=>originalCall<T>('bridge-v1',{version:1,action,request});
+ const bridge=async<T=Data>(action:string,request:Data={}):Promise<T>=>{const result=await originalCall<T>('bridge-v1',{version:1,action,request});if(result&&(result as Data).ok===false&&(result as Data).error)throw Error(String((result as Data).error));return result;};
  // All existing plugins retain their approval seam, now backed by the selected policy.
  ctx.androidBridge.call=async function<T>(method:string,body:unknown={},signal?:AbortSignal):Promise<T>{
   if(method==='approve')return approval(ctx,config,body as Data,()=>originalCall('approve',body,signal)) as Promise<T>;
@@ -108,7 +108,7 @@ export async function apply(ctx:Context){
    case 'config':{const name=String(args.name);if(args.value!==undefined){await config.write(name,args.value);await originalCall('self-changed',{});}return config.get(name);}
    case 'prompt-preview':{const sid=String(args.sessionId??'');const assembly=await ctx.systemPrompt.assemble({hoshinoSessionId:sid} as any);return {layers:await promptLayers(sid),sections:assembly.sections,contexts:assembly.contexts,tools:assembly.tools.map(t=>t.name),variables:assembly.variables,tokenEstimate:Math.ceil(JSON.stringify(assembly.sections).length/4),tokenCountKind:'estimate'};}
    case 'search':return search(String(args.query),config.get('search.json'));
-   case 'fetch':return fetchPage(String(args.url),config.get('search.json'));
+   case 'fetch':return fetchPage(String(args.url),{...config.get('search.json'),workspace});
    case 'render':webUrl(String(args.url));return bridge('web.render',args);
    case 'question':return originalCall('question',args);
    case 'deliver':{const path=await workspacePath(workspace,String(args.path));const s=await lstat(path);if(!s.isFile())throw Error('Deliver a regular workspace file');return bridge('file.deliver',{sessionId:args.sessionId,path,name:args.name??path.split('/').at(-1),bytes:s.size});}
@@ -128,8 +128,8 @@ export async function apply(ctx:Context){
     const artifacts=await github(repo+'/actions/runs/'+run.id+'/artifacts');const artifact=artifacts.artifacts?.find((a:Data)=>a.name==='hoshino-m2-development'&&!a.expired);if(!artifact)throw Error('Signed APK artifact missing or expired');
     return bridge('update.artifact',{artifactId:artifact.id,runId:run.id});
    }
-   case 'backup':return exportBackup(root,workspace,ctx.androidBridge.bootstrap.home);
-   case 'restore-backup':return restoreBackup(root,workspace,ctx.androidBridge.bootstrap.home,String(args.path));
+   case 'backup':{await atomic(join(root,'config/android-metadata.json'),await bridge('backup.metadata'));return exportBackup(root,workspace,ctx.androidBridge.bootstrap.home);}
+   case 'restore-backup':throw Error('Use native Settings → M2 → Diagnostics backup restoration; it stops the kernel before replacing session logs.');
    case 'schedules':return {items:await ctx.schedule.catalog()};
    case 'schedule-create':return ctx.schedule.create(String(args.sessionId) as any,args.request as any);
    case 'schedule-delete':return ctx.schedule.delete({sessionId:String(args.sessionId),id:String(args.id)} as any);
@@ -164,7 +164,7 @@ export async function apply(ctx:Context){
   ['self_update','Poll the last self-build and install its matching signed artifact. Or supply a direct HTTPS APK URL and SHA256.',{url:{type:'string'},sha256:{type:'string'}},'update'],
   ['web_search','Search free sources with automatic fallback; returns source URLs.',{query:{type:'string',required:true}},'search'],
   ['web_fetch','Fetch a page as text/Markdown without a service key.',{url:{type:'string',required:true}},'fetch'],
-  ['web_render','Render a remote page using Android WebView; optionally click/input/scroll under approval.',{url:{type:'string',required:true},script:{type:'string'}},'render'],
+  ['web_render','Render a remote page using Android WebView; optionally click/input/scroll under approval.',{url:{type:'string',required:true},script:{type:'string'},screenshot:{type:'boolean'}},'render'],
   ['ask_user','Ask the user a question with optional choices; the card and notification remain outside process folding.',{question:{type:'string',required:true},options:{type:'array',items:{type:'string'}}},'question'],
   ['deliver_file','Deliver a generated workspace file as a native file card.',{path:{type:'string',required:true},name:{type:'string'}},'deliver'],
   ['ensure_tools','Install optional free local media/document/speech/git/native-build tools on demand.',{group:{type:'string',required:true}},'ensure-tools'],

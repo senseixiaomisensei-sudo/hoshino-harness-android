@@ -66,6 +66,9 @@ export async function apply(ctx: Context): Promise<void> {
       const input=JSON.parse(Buffer.concat(chunks).toString('utf8')) as {action:string;request:Record<string,unknown>};
       const value=await ctx.hoshinoControl.invoke(input.action,input.request ?? {});
       res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(value));
-    } catch {res.writeHead(400,{'Content-Type':'application/json'}).end('{"error":"Control operation failed; check arguments or rollback"}');}
+    } catch(failure) {
+      const message=failure instanceof SyntaxError?'Invalid JSON configuration; check syntax':failure instanceof Error?failure.message.slice(0,1200):'Control operation failed; check arguments or rollback';
+      res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:message.replace(/Bearer\s+[^\s"']+/gi,'Bearer [redacted]').replace(/\bsk-[a-zA-Z0-9_-]{8,}/g,'[redacted]')}));
+    }
   }}));
 }

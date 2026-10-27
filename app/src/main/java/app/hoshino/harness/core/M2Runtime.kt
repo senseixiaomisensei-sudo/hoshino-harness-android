@@ -42,6 +42,10 @@ class M2Runtime(private val context:Context,private val silentInstall:suspend(Fi
             "capabilities" -> JSONObject().put("version",1).put("versionCode",context.packageManager.getPackageInfo(context.packageName,0).longVersionCode).put("actions",JSONArray(listOf("device.battery","file.deliver","file.save","file.share","notification.post","shortcut.add","intent.open","github.request","update.install","web.render")))
             "device.battery" -> JSONObject().put("percent",context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
             "scheduler.sync" -> {M2Scheduler.sync(context,args.optJSONArray("entries")?:JSONArray());JSONObject().put("scheduled",true)}
+            "backup.metadata" -> {
+                val prefs=JSONObject();for(name in listOf("m1-session-metadata","hoshino-ui"))prefs.put(name,JSONObject(context.getSharedPreferences(name,Context.MODE_PRIVATE).all))
+                JSONObject().put("providers",JSONArray(vault.list().map{it.json()})).put("preferences",prefs)
+            }
             "file.deliver" -> {
                 val file=workspaceFile(args.getString("path"));val row=DeliveredFile(UUID.randomUUID().toString(),args.optString("sessionId"),args.getString("path"),args.optString("name",file.name).take(180),file.length())
                 deliveries.update {(it+row).takeLast(500)}
@@ -74,6 +78,16 @@ class M2Runtime(private val context:Context,private val silentInstall:suspend(Fi
         val uri=context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("无法创建下载文件")
         try{context.contentResolver.openOutputStream(uri)!!.use{out->file.inputStream().use{it.copyTo(out,65536)}};values.clear();values.put(android.provider.MediaStore.MediaColumns.IS_PENDING,0);context.contentResolver.update(uri,values,null,null)}catch(e:Exception){context.contentResolver.delete(uri,null,null);throw e}
         JSONObject().put("uri",uri.toString()).put("bytes",file.length())
+    }
+    suspend fun restoreArchive(archive:File)=withContext(Dispatchers.IO){
+        var total=0L
+        java.util.zip.ZipFile(archive).use{zip->
+            val entries=zip.entries().asSequence().toList();require(entries.size<=20000)
+            for(entry in entries){val name=entry.name;require(!name.contains('\\')&&!name.split('/').contains(".."));require(name.matches(Regex("^(self/(config|plugins|skills|ui|prompts|modes)|home/(sessions|storages))/.*")));if(entry.isDirectory)continue;require(entry.size in 0..512L*1024*1024);total+=entry.size;require(total<=1024L*1024*1024)}
+            for(entry in entries){if(entry.isDirectory)continue;val nativeRoot=File(context.filesDir,if(entry.name.startsWith("self/"))"hoshino"else"dsh-home").canonicalFile;val relative=entry.name.substringAfter('/');val dest=File(nativeRoot,relative).canonicalFile;require(dest.path.startsWith(nativeRoot.path+File.separator));dest.parentFile!!.mkdirs();val temp=File(dest.parentFile,".restore-${UUID.randomUUID()}");var bytes=0L;zip.getInputStream(entry).use{input->temp.outputStream().use{out->val b=ByteArray(65536);while(true){val n=input.read(b);if(n<0)break;bytes+=n;require(bytes<=entry.size);out.write(b,0,n)}}};java.nio.file.Files.move(temp.toPath(),dest.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING,java.nio.file.StandardCopyOption.ATOMIC_MOVE)}
+        }
+        val metadata=File(context.filesDir,"hoshino/config/android-metadata.json")
+        if(metadata.isFile){val root=JSONObject(metadata.readText());val providers=root.optJSONArray("providers")?:JSONArray();for(i in 0 until providers.length()){val p=providers.getJSONObject(i);val models=p.getJSONArray("models");vault.save(dev.hoshino.bridge.Provider(p.getString("id"),p.getString("type"),p.getString("baseURL"),(0 until models.length()).map{models.getString(it)},p.optJSONObject("metadata")?:JSONObject()),"")};val prefs=root.optJSONObject("preferences")?:JSONObject();for(name in listOf("m1-session-metadata","hoshino-ui")){val values=prefs.optJSONObject(name)?:continue;val edit=context.getSharedPreferences(name,Context.MODE_PRIVATE).edit();values.keys().forEach{key->when(val value=values.opt(key)){is Boolean->edit.putBoolean(key,value);is Int->edit.putInt(key,value);is Long->edit.putLong(key,value);is Double->edit.putFloat(key,value.toFloat());is String->edit.putString(key,value)}};edit.commit()}}
     }
     private suspend fun github(args:JSONObject):JSONObject=withContext(Dispatchers.IO) {
         val path=args.getString("path");require(path.startsWith("/repos/") && !path.contains("..") && !path.contains("\r") && !path.contains("\n"))
