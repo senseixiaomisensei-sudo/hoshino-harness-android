@@ -20,11 +20,13 @@ export async function apply(ctx:Context){
  const root=ctx.androidBridge.bootstrap.selfHome??join(ctx.androidBridge.bootstrap.home,'hoshino');const workspace=ctx.androidBridge.bootstrap.workspace;
  const config=new Configuration(root);await config.reload();
  const safe=ctx.androidBridge.bootstrap.safeMode===true;
+ void ctx.androidBridge.whenReady.then(async()=>{
  const sdk=join(root,'plugin-packages','node_modules','@hh','bridge');await mkdir(sdk,{recursive:true});
  await atomic(join(sdk,'package.json'),{name:'@hh/bridge',version:'1.0.0',type:'module',main:'index.js',types:'index.d.ts',license:'MIT'});
  await writeFile(join(sdk,'index.js'),await readFile(new URL('../hh-bridge/index.js',import.meta.url)));
  await writeFile(join(sdk,'index.d.ts'),await readFile(new URL('../hh-bridge/index.d.ts',import.meta.url)).catch(()=>Buffer.from('export declare function createBridge(ctx:any):any;')));
  await mkdir(join(root,'ui'),{recursive:true});await atomic(join(root,'self','ui.schema.json'),UI_SCHEMA);
+ }).catch(()=>{});
  const originalCall=ctx.androidBridge.call.bind(ctx.androidBridge);
  const bridge=async<T=Data>(action:string,request:Data={}):Promise<T>=>{const result=await originalCall<T>('bridge-v1',{version:1,action,request});if(result&&(result as Data).ok===false&&(result as Data).error)throw Error(String((result as Data).error));return result;};
  // All existing plugins retain their approval seam, now backed by the selected policy.
@@ -66,10 +68,10 @@ export async function apply(ctx:Context){
   assembly.variables={...assembly.variables,...Object.fromEntries(Object.entries(variables).map(([k,v])=>[k,String(v)]))};return next();
  });
  ctx.on('tools/pre-execute',async(exec,next)=>{const mode=modeFor(exec.agent?.id??'');if(Array.isArray(mode.tools)&&!mode.tools.includes(exec.name))return {kind:'deny',reason:'Tool excluded by Agent mode'};if(mode.readOnly&&!['read','read_image','get_device_info','self_read','self_inspect','self_doctor','self_diff','skill','self_config_read'].includes(exec.name))return {kind:'deny',reason:'Read-only mode'};return next();});
- let stamp=await treeStamp(root);let checking=false;
- const timer=setInterval(()=>{if(checking)return;checking=true;void(async()=>{const current=await treeStamp(root);if(current!==stamp){const previous=stamp;stamp=current;await refresh();if(!safe){const control=ctx.get('hoshinoControl');if(control){await control.invoke('reload',{plugin:'skills'});const disabled=JSON.parse(await readFile(join(root,'config/disabled-plugins.json'),'utf8').catch(()=>'[]'));for(const entry of await readdir(join(root,'plugins'),{withFileTypes:true}).catch(()=>[])){if(!entry.isDirectory()||disabled.includes(entry.name))continue;const prefix=join(root,'plugins',entry.name);if(current.split('\n').filter(s=>s.startsWith(prefix)).join('\n')!==previous.split('\n').filter(s=>s.startsWith(prefix)).join('\n'))await control.invoke('reload',{plugin:entry.name}).catch(()=>{});}}}await originalCall('self-changed',{});}})().catch(()=>{}).finally(()=>{checking=false;});},1500).unref();
+ let stamp='';let checking=false;let backgroundReady=false;void ctx.androidBridge.whenReady.then(async()=>{stamp=await treeStamp(root);backgroundReady=true;}).catch(()=>{});
+ const timer=setInterval(()=>{if(!backgroundReady||checking)return;checking=true;void(async()=>{const current=await treeStamp(root);if(current!==stamp){const previous=stamp;stamp=current;await refresh();if(!safe){const control=ctx.get('hoshinoControl');if(control){await control.invoke('reload',{plugin:'skills'});const disabled=JSON.parse(await readFile(join(root,'config/disabled-plugins.json'),'utf8').catch(()=>'[]'));for(const entry of await readdir(join(root,'plugins'),{withFileTypes:true}).catch(()=>[])){if(!entry.isDirectory()||disabled.includes(entry.name))continue;const prefix=join(root,'plugins',entry.name);if(current.split('\n').filter(s=>s.startsWith(prefix)).join('\n')!==previous.split('\n').filter(s=>s.startsWith(prefix)).join('\n'))await control.invoke('reload',{plugin:entry.name}).catch(()=>{});}}}await originalCall('self-changed',{});}})().catch(()=>{}).finally(()=>{checking=false;});},1500).unref();
  ctx.effect(()=>()=>clearInterval(timer));
- ctx.on('schedule/changed',()=>{void ctx.schedule.catalog().then(entries=>bridge('scheduler.sync',{entries})).catch(()=>{});});
+ ctx.on('schedule/changed',()=>{if(!ctx.get('schedule'))return;void ctx.schedule.catalog().then(entries=>bridge('scheduler.sync',{entries})).catch(()=>{});});
  ctx.on('tools/execute',async(exec,next)=>{const start=Date.now();try{return await next();}finally{await mkdir(join(root,'audit'),{recursive:true});await appendFile(join(root,'audit','actions.jsonl'),JSON.stringify({at:new Date().toISOString(),sessionId:exec.agent?.id,tool:exec.name,durationMs:Date.now()-start})+'\n');}});
  async function sourceFiles(dir:string,prefix=''):Promise<Data[]>{
   const out:Data[]=[];

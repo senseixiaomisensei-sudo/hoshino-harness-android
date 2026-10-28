@@ -70,6 +70,7 @@ fun ModelsScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (String) -
     }
 
     PageScaffold("模型", onBack, actions = { IconBtn(HIcons.Plus, "添加供应商", { catalog = true }) }) {
+        ChatGptSubscription()
         SectionLabel("供应商")
         if (providers.isEmpty()) {
             EmptyState("还没有模型供应商", subtitle = "添加一个供应商，再为它配置一个或多个模型", icon = HIcons.Cpu)

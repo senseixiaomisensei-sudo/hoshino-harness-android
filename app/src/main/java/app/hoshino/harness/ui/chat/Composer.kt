@@ -145,10 +145,10 @@ fun Composer(
                 queued.forEachIndexed { i, q ->
                     if (i > 0) Hairline()
                     Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Tag(stringResource(R.string.queued_n, i + 1))
+                        Tag(if(q.id.startsWith("waiting:"))"等待内核"else stringResource(R.string.queued_n, i + 1))
                         Spacer(Modifier.width(8.dp))
                         Text(q.text, style = t.caption, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        Text(
+                        if(!q.id.startsWith("waiting:"))Text(
                             stringResource(R.string.steer),
                             style = t.caption,
                             color = c.accent,

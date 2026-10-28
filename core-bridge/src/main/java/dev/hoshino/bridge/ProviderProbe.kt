@@ -11,8 +11,11 @@ import java.util.concurrent.TimeUnit
 
 /** Explicit Settings action, with bounded responses and no authentication redirects. */
 class ProviderProbe {
-    private val http=OkHttpClient.Builder().followRedirects(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(20,TimeUnit.SECONDS).build()
+    companion object{private val cached=java.util.concurrent.ConcurrentHashMap<String,Pair<Long,String>>()}
+    private val http=OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY).followRedirects(false).connectTimeout(2,TimeUnit.SECONDS).readTimeout(2,TimeUnit.SECONDS).callTimeout(2,TimeUnit.SECONDS).build()
     suspend fun models(provider: Provider,key: String,headers: Map<String,String>): JSONArray=withContext(Dispatchers.IO) {
+        val cacheKey=java.security.MessageDigest.getInstance("SHA-256").digest((provider.id+provider.type+provider.baseURL+key+headers.toString()).toByteArray()).joinToString(""){"%02x".format(it)}
+        cached[cacheKey]?.takeIf{it.first>android.os.SystemClock.elapsedRealtime()}?.let{return@withContext JSONArray(it.second)}
         val uri=java.net.URI(provider.baseURL)
         require(uri.scheme in listOf("http","https") && uri.host!=null && uri.userInfo==null && uri.query==null && uri.fragment==null)
         val base=providerBaseURL(provider.type,provider.baseURL)
@@ -36,7 +39,7 @@ class ProviderProbe {
             JSONArray((0 until data.length()).map { index ->
                 val row=data.getJSONObject(index);val id=row.getString("id");require(id.length in 1..512)
                 JSONObject().put("id",id).put("name",row.optString("display_name",id))
-            })
+            }).also{if(cached.size>128)cached.clear();cached[cacheKey]=android.os.SystemClock.elapsedRealtime()+300000 to it.toString()}
         }
     }
 }

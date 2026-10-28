@@ -20,6 +20,7 @@
         <service android:name="dev.hoshino.app.KernelService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User initiated on-device AI agent runtime with persistent sessions" />
         </service>
+        <receiver android:name="app.hoshino.harness.core.KernelPrewarmReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter></receiver>
         <receiver android:name="app.hoshino.harness.core.M2ActionReceiver" android:exported="false" />
         <receiver android:name="app.hoshino.harness.core.M2InstallReceiver" android:exported="false" />
         <receiver android:name="app.hoshino.harness.core.M2ScheduleReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>

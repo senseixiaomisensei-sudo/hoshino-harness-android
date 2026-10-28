@@ -1,5 +1,6 @@
 package dev.hoshino.bridge
 
+import kotlinx.coroutines.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.*
@@ -17,10 +18,15 @@ import java.util.concurrent.TimeUnit
 class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFailure: (String) -> Unit,
                     private val onScopedFrame: (String, JSONObject) -> Unit) : Closeable {
     constructor(onFrame: (JSONObject) -> Unit,onFailure: (String) -> Unit): this(onFrame,onFailure,{ _, _ -> })
-    private val http = OkHttpClient.Builder().followRedirects(false).readTimeout(0, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY).followRedirects(false).connectTimeout(2,TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS).build()
     private var base = ""
     private var cookie = ""
     private var socket: WebSocket? = null
+    private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+    private val streamRequests=java.util.concurrent.ConcurrentHashMap<String,String>()
+    private val reconnecting=java.util.concurrent.atomic.AtomicBoolean(false)
+    private val socketGeneration=java.util.concurrent.atomic.AtomicInteger()
+    @Volatile private var closed=false
     private val followed=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     suspend fun connect(port: Int, token: String) = withContext(Dispatchers.IO) {
         base = "http://127.0.0.1:$port"
@@ -28,8 +34,14 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
             check(it.code == 302) { "内核鉴权失败" }; cookie = it.header("Set-Cookie")!!.substringBefore(';')
         }
         val ready = kotlinx.coroutines.CompletableDeferred<Unit>()
+        fun open(){
+        val generation=socketGeneration.incrementAndGet()
         socket = http.newWebSocket(Request.Builder().url(base.replace("http:","ws:") + "/api/remote.mux").header("Cookie",cookie).build(), object: WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) { ready.complete(Unit) }
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                if(closed||generation!=socketGeneration.get()){webSocket.close(1000,null);return}
+                streamRequests.values.forEach{webSocket.send(it)}
+                if(ready.isCompleted)onFailure("restored")else ready.complete(Unit)
+            }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val message=JSONObject(text)
@@ -47,12 +59,18 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
                     onFailure("frame:${failure.javaClass.simpleName}:${site?.methodName}:${site?.lineNumber}")
                 }
             }
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { ready.completeExceptionally(IllegalStateException("内核连接中断")); onFailure("transport:${t.javaClass.simpleName}") }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if(closed||generation!=socketGeneration.get())return
+                onFailure("reconnecting")
+                if(reconnecting.compareAndSet(false,true))scope.launch{delay(100);reconnecting.set(false);if(!closed)open()}
+            }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(code, null)
-                onFailure("closing:$code")
+                if(!closed&&generation==socketGeneration.get()){onFailure("reconnecting");if(reconnecting.compareAndSet(false,true))scope.launch{delay(100);reconnecting.set(false);if(!closed)open()}}
             }
         })
+        }
+        open()
         kotlinx.coroutines.withTimeout(15000) { ready.await() }
     }
     suspend fun rpc(method: String, request: JSONObject? = null): JSONObject {
@@ -80,12 +98,14 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
         openNamedStream(id,endpoint,JSONObject().put("request",request))
     }
     fun openNamedStream(id: String,endpoint: String,args: JSONObject) {
-        check(socket?.send(JSONObject().put("type","open").put("streamId",id).put("endpoint",endpoint).put("payload",JSONObject().put("args",args)).toString()) == true)
+        val message=JSONObject().put("type","open").put("streamId",id).put("endpoint",endpoint).put("payload",JSONObject().put("args",args)).toString();streamRequests[id]=message
+        check(socket?.send(message) == true)
     }
     fun streamInput(id: String,value: JSONObject) {
         check(socket?.send(JSONObject().put("type","item").put("streamId",id).put("value",value).toString())==true) { "终端连接已断开" }
     }
     fun cancelStream(id: String) {
+        streamRequests.remove(id)
         if(id.startsWith("session:"))followed.remove(id.removePrefix("session:"))
         socket?.send(JSONObject().put("type","cancel").put("streamId",id).toString())
     }
@@ -108,5 +128,5 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
     suspend fun reloadProviders() = withContext(Dispatchers.IO) {
         http.newCall(Request.Builder().url("$base/mobile/providers").header("Cookie",cookie).post("{}".toRequestBody("application/json".toMediaType())).build()).execute().use { check(it.isSuccessful) { "模型配置未生效" } }
     }
-    override fun close() { followed.clear();socket?.close(1000,"shutdown"); http.dispatcher.executorService.shutdown();http.connectionPool.evictAll() }
+    override fun close() { closed=true;scope.cancel();streamRequests.clear();followed.clear();socket?.close(1000,"shutdown"); http.dispatcher.executorService.shutdown();http.connectionPool.evictAll() }
 }

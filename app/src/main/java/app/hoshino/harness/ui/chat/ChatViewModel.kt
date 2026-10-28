@@ -65,7 +65,7 @@ class ChatViewModel : ViewModel() {
         (custom.commands.map{app.hoshino.harness.core.SlashCommand(it.name,it.description,"用户覆盖")}+commands).distinctBy{it.name}
     }.stateIn(viewModelScope,SharingStarted.Eagerly,client.slashCommands.value)
 
-    private val _currentId = MutableStateFlow<String?>(null)
+    private val _currentId = MutableStateFlow<String?>(client.preferredSessionId)
     val currentId: StateFlow<String?> = _currentId.asStateFlow()
 
     val current: StateFlow<SessionInfo?> = combine(_currentId, client.sessions) { id, list -> list.firstOrNull { it.id == id } }
@@ -73,7 +73,7 @@ class ChatViewModel : ViewModel() {
 
     val session: StateFlow<SessionState> = _currentId
         .flatMapLatest { id -> if (id == null) flowOf(SessionState()) else store.state(id) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, SessionState())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, client.preferredSessionId?.let{store.state(it).value}?:SessionState())
 
     private val _composer = MutableStateFlow(ComposerState())
     val composer: StateFlow<ComposerState> = _composer.asStateFlow()
@@ -97,8 +97,8 @@ class ChatViewModel : ViewModel() {
             client.events.filterIsInstance<HarnessEvent.TurnFinished>().collect { e ->
                 if (!e.cancelled) {
                     delay(250)
-                    val next = store.popQueued(e.sessionId)
-                    if (next != null) client.send(e.sessionId, next.text, next.attachments, options())
+                    val next = store.state(e.sessionId).value.queued.firstOrNull{!it.id.startsWith("waiting:")}
+                    if (next != null){store.removeQueued(e.sessionId,next.id);client.send(e.sessionId, next.text, next.attachments, options())}
                 }
             }
         }
@@ -177,7 +177,9 @@ class ChatViewModel : ViewModel() {
 
     // ---------- 发送 ----------
 
+    @Volatile var lastSendClickEpoch:Long=0;private set
     fun send(text: String, onComplete: (Boolean) -> Unit = {}) {
+        lastSendClickEpoch=System.currentTimeMillis()
         val trimmed = text.trim()
         if (trimmed.isEmpty() && _composer.value.attachments.isEmpty()) { onComplete(false);return }
         if (_composer.value.model==null) { _messages.tryEmit("请先在设置 → 供应商中添加模型");onComplete(false);return }
@@ -222,6 +224,7 @@ class ChatViewModel : ViewModel() {
 
     fun removeQueued(queuedId: String) {
         val id = _currentId.value ?: return
+        (client as? app.hoshino.harness.core.DshHarnessClient)?.cancelWaiting(queuedId)
         store.removeQueued(id, queuedId)
     }
 

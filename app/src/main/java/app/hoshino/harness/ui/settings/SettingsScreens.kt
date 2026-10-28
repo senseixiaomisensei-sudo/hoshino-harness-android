@@ -73,6 +73,8 @@ fun SettingsHomeScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (Str
     val shizuku by vm.shizuku.collectAsStateWithLifecycle()
     val providers by vm.providers.collectAsStateWithLifecycle()
     val kernel by vm.kernel.collectAsStateWithLifecycle()
+    val startupContext=LocalContext.current
+    var prewarm by remember{mutableStateOf(app.hoshino.harness.core.KernelPrewarm.enabled(startupContext))}
     PageScaffold(stringResource(R.string.settings), onBack) {
         SectionLabel("通用")
         GroupCard {
@@ -83,6 +85,8 @@ fun SettingsHomeScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (Str
             Hairline()
             ListRow(stringResource(R.string.settings_presets), icon = HIcons.Sparkle, subtitle = "Standard / PTC / Minimal / Creator", showChevron = true, onClick = { onNavigate(Routes.PRESETS) })
         }
+        SectionLabel("内核常驻")
+        GroupCard{ListRow("开机与更新后预热",subtitle="后台保留本地内核，重新打开立即连接",trailing={HSwitch(prewarm,{value->prewarm=value;app.hoshino.harness.core.KernelPrewarm.set(startupContext,value)})})}
         SectionLabel("权限与系统")
         GroupCard {
             ListRow(stringResource(R.string.settings_security), icon = HIcons.Shield, value = "Shizuku · ${shizuku.label}", showChevron = true, onClick = { onNavigate(Routes.SECURITY) })

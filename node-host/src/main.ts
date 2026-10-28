@@ -27,7 +27,8 @@ process.env.DSH_TELEMETRY_DISABLED = '1';
 const plugins = resolve(dirname(fileURLToPath(import.meta.url)), '../../plugins');
 type Row = { id: string; name: string; config?: object; inject?: string[] };
 const rows: Row[] = [];
-const row = (id: string, pkg = id, config?: object, inject?: string[]) => rows.push({ id, name: `@deepseek-ai/dsh-${pkg}`, ...(config && {config}), ...(inject && {inject}) });
+const deferredRows: Row[] = [];
+const row = (id: string, pkg = id, config?: object, inject?: string[]) => (/^(subagent|tool-subagent|goal|tool-goal|schedule|tool-schedule)/.test(id)?deferredRows:rows).push({ id, name: `@deepseek-ai/dsh-${pkg}`, ...(config && {config}), ...(inject && {inject}) });
 row('timer', '../cordis-plugin-timer'); rows[0]!.name = '@deepseek-ai/cordis-plugin-timer';
 for (const id of ['llm', 'session', 'session-projection', 'agent', 'tools', 'working-directory', 'commands', 'llm-retry', 'jobs-local']) row(id);
 row('token-meter');
@@ -88,9 +89,10 @@ for (const key of ['agents', 'sessionController', 'connection', 'webServer', 'mo
   if (!ctx.get(key)) throw new Error(`Kernel required service did not start: ${key}`);
 }
 const inputPath=resolve(dirname(fileURLToPath(import.meta.url)),'../../self-input.json');
-await writeSelfDocs(ctx,rows,resolve(selfHome,'self'),inputPath);
-if(process.argv.includes('--self-document-only')) {await ctx.fiber.dispose();process.exit(0);}
+if(process.argv.includes('--self-document-only')) {await writeSelfDocs(ctx,[...rows,...deferredRows],resolve(selfHome,'self'),inputPath);await ctx.fiber.dispose();process.exit(0);}
 await bridge.call('ready', ctx.get('mobileApi'));
+bridge.markReady();
+setTimeout(()=>{void(async()=>{const modules=await Promise.all(deferredRows.map(async item=>({item,module:await import(item.name)})));await Promise.all(modules.map(({item,module})=>ctx.plugin(module.default??module,item.config??{})));await writeSelfDocs(ctx,[...rows,...deferredRows],resolve(selfHome,'self'),inputPath);})().catch(()=>console.error('hoshino: optional background initialization deferred'));},1000).unref();
 const shutdown = async () => { await ctx.fiber.dispose(); process.exit(0); };
 process.once('SIGTERM', () => void shutdown());
 process.once('SIGINT', () => void shutdown());

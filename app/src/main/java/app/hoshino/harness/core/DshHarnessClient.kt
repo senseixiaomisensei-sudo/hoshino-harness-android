@@ -15,18 +15,28 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val supportedPermissionTiers=PermissionTier.entries.toSet()
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val vault=ProviderStore(context)
+    private val metadata=context.getSharedPreferences("m1-session-metadata",Context.MODE_PRIVATE)
+    private val nativeCache=NativeSessionCache(context)
+    private val cachedData=nativeCache.load()
+    private val diskHistory=if(cachedData==null)OriginalSessionHistory.read(context)else emptyList()
+    private val initialRows=cachedData?.let{nativeCache.rows(it)}?:diskHistory.map{OriginalSessionHistory.row(it,metadata)}
+    private val cachedRecords=java.util.concurrent.ConcurrentHashMap<String,List<JSONObject>>()
+    private val outbox=PendingKernelMessages(context)
+    private val pendingRequestIds=java.util.concurrent.ConcurrentHashMap<String,String>()
+    private val draining=java.util.concurrent.atomic.AtomicBoolean(false)
     override fun describeFailure(failure: Throwable)=vault.redact(failure.message.orEmpty()).take(1500).ifBlank { "操作未完成，内核没有返回错误详情" }
     private val shizukuConnection=dev.hoshino.bridge.ShizukuConnection(context.applicationContext)
     private val systemShell=dev.hoshino.bridge.ShizukuShell(context.applicationContext)
     override val shizuku=shizukuConnection.state.map { ShizukuStatus.valueOf(it.name) }.stateIn(scope,SharingStarted.Eagerly,ShizukuStatus.valueOf(shizukuConnection.state.value.name))
     override suspend fun refreshShizuku(){shizukuConnection.refresh()}
     override suspend fun requestShizukuPermission()=withContext(Dispatchers.Main){shizukuConnection.requestPermission()}
+    val chatGptAuth=dev.hoshino.bridge.ChatGptAuth.get(context)
     val runtime=NativeKernel(context,callbackHandler=::callback)
     private val eventBus=MutableSharedFlow<HarnessEvent>(extraBufferCapacity=1024)
     override val events=eventBus.asSharedFlow()
-    override val connection=runtime.state.map { when(it.phase) { "已连接" -> ConnectionState.Connected; "启动中" -> ConnectionState.Connecting; else -> ConnectionState.Disconnected } }.stateIn(scope,SharingStarted.Eagerly,ConnectionState.Disconnected)
+    override val connection=runtime.state.map { when(it.phase) { "已连接" -> ConnectionState.Connected; "启动中", "重新连接" -> ConnectionState.Connecting; else -> ConnectionState.Disconnected } }.stateIn(scope,SharingStarted.Eagerly,ConnectionState.Disconnected)
     override val kernel=runtime.state.map { KernelInfo("0.2.1-rc.2","24.18.1",it.phase=="已连接","proot + Alpine",it.phase=="已连接") }.stateIn(scope,SharingStarted.Eagerly,KernelInfo("0.2.1-rc.2","24.18.1",false,"proot + Alpine",false))
-    private val sessionRows=MutableStateFlow<List<SessionInfo>>(emptyList())
+    private val sessionRows=MutableStateFlow<List<SessionInfo>>(initialRows)
     override val sessions=sessionRows.asStateFlow()
     private val workspaceRows=MutableStateFlow(listOf(Workspace("ws-default","workspace","/root/workspace")))
     override val workspaces=workspaceRows.asStateFlow()
@@ -62,12 +72,14 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     val m2=M2Runtime(context){systemShell.installApk(it)}
     override val presets=MutableStateFlow(listOf("chat" to "聊天","standard" to "Agent","plan" to "Plan","ask" to "Ask","research" to "Research","review" to "Review","goal" to "Goal","auto" to "Auto","orchestrator" to "Orchestrator").map{(id,name)->AgentPreset(id,name,"",true,"",emptyList(),null,PermissionTier.WorkspaceWrite)})
     val files=dev.hoshino.bridge.WorkspaceFiles(java.io.File(context.filesDir,"workspace"),java.io.File(context.filesDir,"hoshino-trash"))
-    private val metadata=context.getSharedPreferences("m1-session-metadata",Context.MODE_PRIVATE)
     private val restartAfter=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     override val preferredSessionId:String? get()=metadata.getString("last-active-session",null)
-    override fun activateSession(sessionId:String) { activeSession=sessionId;metadata.edit().putString("last-active-session",sessionId).apply() }
+    override fun activateSession(sessionId:String) { activeSession=sessionId;metadata.edit().putString("last-active-session",sessionId).apply();if(runtime.state.value.phase=="已连接")scope.launch{runCatching{api().follow(sessionId)}} }
 
     init {
+        val saved=cachedData?.optJSONObject("events")
+        if(saved!=null)saved.keys().forEach{id->val a=saved.optJSONArray(id)?:JSONArray();cachedRecords[id]=(0 until a.length()).map{a.getJSONObject(it)}}
+        else diskHistory.firstOrNull{it.id==preferredSessionId}?.let{cachedRecords[it.id]=it.events}
         scope.launch { runtime.frames.collect { (stream,frame) ->
             try {
                 if(stream.startsWith("session:"))accept(stream.removePrefix("session:"),frame)
@@ -75,7 +87,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             }
             catch(failure: Exception) { runtime.diagnostic("mapping: ${failure.javaClass.simpleName}") }
         } }
-        scope.launch { runtime.state.map { it.phase }.distinctUntilChanged().collect { if(it=="已连接")runCatching { refreshSessions();refreshControl();resumeInterrupted() }.onFailure { runtime.diagnostic("sessions: ${it.javaClass.simpleName}") } } }
+        scope.launch { runtime.state.map { it.phase }.distinctUntilChanged().collect { if(it=="已连接")runCatching { flushOutbox();refreshSessions();scope.launch{runCatching{refreshControl();resumeInterrupted()}} }.onFailure { runtime.diagnostic("sessions: ${it.javaClass.simpleName}") } } }
     }
     fun startKernel()=runtime.start()
     fun stopKernel() { approvals.values.forEach { it.complete(ApprovalDecision.Deny) };systemShell.close();runtime.stop() }
@@ -180,6 +192,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private suspend fun durable(sid: String,event: JSONObject,replay:Boolean=false) {
         val seq=event.getInt("seq");if(!seen.getOrPut(sid) { mutableSetOf() }.add(seq))return
         val id="e:$seq";val data=event.optJSONObject("data") ?: return
+        cachedRecords[sid]=(cachedRecords[sid].orEmpty().filterNot{it.optInt("seq")==seq}+event).takeLast(300)
+        if(event.optString("type") in setOf("user/message","assistant/message")){val time=OriginalSessionHistory.time(event.opt("time"));sessionRows.update{rows->rows.map{if(it.id==sid)it.copy(updatedAt=maxOf(it.updatedAt,time))else it}}}
         when(event.getString("type")) {
             "turn/start" -> {if(!replay)M2SafeMode.recordRunningMemory(context);tokenTurns[sid]=TurnTokens(event.optLong("time",System.currentTimeMillis()));publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
             "turn/end" -> {
@@ -189,13 +203,14 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                 val reason=data.optJSONObject("reason")
                 if(!replay&&!AppSurface.foreground)M2Notifications.post(context,"Hoshino 任务"+if(reason?.optString("kind")=="error")"失败"else"完成","打开应用查看会话结果")
                 publish(HarnessEvent.TurnFinished(sid,id,reason?.optString("kind")=="aborted"))
-                sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=false,updatedAt=System.currentTimeMillis()) else it } }
+                sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=false) else it } }
+                scope.launch{persistCache()}
                 scope.launch{runCatching{api().rpc("session/list",JSONObject()).getJSONArray("items").rows().firstOrNull{it.optString("sessionId")==sid}?.optJSONObject("projections")?.optJSONObject("values")?.let{publishContext(sid,it)}}}
                 if(reason?.optString("kind")=="error") {
                     // dsh TurnEndReasonMap.error contains `error: LlmFailure`.
                     val failure=reason.optJSONObject("error")
                     val facts=listOfNotNull(failure?.optString("code")?.takeIf { it.isNotBlank() },failure?.optInt("status")?.takeIf { it in 100..599 }?.let { "HTTP $it" }).joinToString(" · ")
-                    val detail=vault.redact(failure?.optString("message").orEmpty()).take(1500).ifBlank { "内核未返回错误详情" }
+                    val detail=if(metadata.getString("session-provider:$sid",null)=="openai-codex"&&failure?.optInt("status") in setOf(401,403))"ChatGPT 登录已失效，请到设置 → 模型 → ChatGPT 订阅重新登录"else if(metadata.getString("session-provider:$sid",null)=="openai-codex"&&failure?.optInt("status")==429)"ChatGPT 订阅额度已用尽或受到限流，请稍后重试；模型设置中可重新登录"else vault.redact(failure?.optString("message").orEmpty()).take(1500).ifBlank { "内核未返回错误详情" }
                     publish(HarnessEvent.Notice(sid,"error:$seq","请求未完成${if(facts.isBlank()) "" else "（$facts）"}：$detail"))
                 }
             }
@@ -241,6 +256,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         publish(HarnessEvent.ContextUsageChanged(sid,ContextUsage(used.coerceAtLeast(0),limit,breakdown)))
     }
     suspend fun refreshSessions() {
+        val history=withContext(Dispatchers.IO){OriginalSessionHistory.read(context)}.associateBy{it.id}
         val client=api();val items=client.rpc("session/list",JSONObject()).getJSONArray("items").rows()
         val recovered=workspaceRows.value.toMutableList()
         val rows=items.map { row ->
@@ -250,10 +266,11 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             val saved=old?.workspaceId ?: metadata.getString("workspace:$id","ws-default")!!
             val workspace=recovered.firstOrNull{it.path==cwd} ?: recovered.firstOrNull{it.id==saved} ?: Workspace(saved,cwd.substringAfterLast('/').ifBlank{"历史工作区"},cwd.ifBlank{"/root/workspace"}).also{recovered.add(it)}
             val title=(row.optJSONObject("projections")?.optJSONObject("values")?.opt("title") as? String)?.takeIf{it.isNotBlank()} ?: old?.title
-            SessionInfo(id,title ?: "会话 ${id.take(8)}",workspace.id,old?.presetId ?: metadata.getString("preset:$id","standard")!!,old?.tier ?: PermissionTier.entries.firstOrNull{it.key==metadata.getString("tier:$id",null)} ?: PermissionTier.WorkspaceWrite,old?.createdAt ?: row.getLong("updatedAt"),row.getLong("updatedAt"),row.getBoolean("running"),old?.archived ?: metadata.getBoolean("archived:$id",false),row.optString("parentSessionId").ifEmpty { null })
+            SessionInfo(id,title ?: "会话 ${id.take(8)}",workspace.id,old?.presetId ?: metadata.getString("preset:$id","standard")!!,old?.tier ?: PermissionTier.entries.firstOrNull{it.key==metadata.getString("tier:$id",null)} ?: PermissionTier.WorkspaceWrite,history[id]?.created ?: old?.createdAt ?: OriginalSessionHistory.time(row.opt("updatedAt")),history[id]?.updated ?: old?.updatedAt ?: 0L,row.getBoolean("running"),old?.archived ?: metadata.getBoolean("archived:$id",false),row.optString("parentSessionId").ifEmpty { null })
         }
-        workspaceRows.value=recovered.distinctBy{it.id};sessionRows.value=rows
-        sessionRows.value.forEach { client.follow(it.id) }
+        workspaceRows.value=recovered.distinctBy{it.id};sessionRows.value=rows+sessionRows.value.filter{local->metadata.getBoolean("local:${local.id}",false)&&rows.none{it.id==local.id}}
+        preferredSessionId?.let{client.follow(it)}
+        scope.launch{persistCache()}
     }
     override suspend fun searchSessions(query:String):SessionSearchResults {
         val value=api().rpc("session/search",JSONObject().put("query",query.trim()))
@@ -264,9 +281,11 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun createSession(workspaceId: String,presetId: String,tier: PermissionTier): SessionInfo {
         require(tier!=PermissionTier.FullAccess || shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready) { "请先启动 Shizuku 并授权 Hoshino Harness" }
         val path=workspaceRows.value.firstOrNull { it.id==workspaceId }?.path ?: "/root/workspace"
-        val client=api();val id=client.rpc("session/create",JSONObject().put("cwd",path)).getString("sessionId")
-        val now=System.currentTimeMillis();val result=SessionInfo(id,"新会话",workspaceId,presetId,tier,now,now)
-        sessionRows.update { it.filterNot { row -> row.id==id }+result };activeSession=id;client.follow(id)
+        val id=UUID.randomUUID().toString()
+        val connected=runtime.state.value.phase=="已连接"
+        if(connected)api().rpc("session/create",JSONObject().put("cwd",path).put("sessionId",id))else metadata.edit().putBoolean("local:$id",true).apply()
+        val now=System.currentTimeMillis();val result=SessionInfo(id,"新会话",workspaceId,presetId,tier,now,0L)
+        sessionRows.update { it.filterNot { row -> row.id==id }+result };activeSession=id;activateSession(id);if(connected)api().follow(id)
         metadata.edit().putString("workspace:$id",workspaceId).putString("preset:$id",presetId).putString("tier:$id",tier.key).apply()
         return result
     }
@@ -278,9 +297,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(tier=tier) else it } };metadata.edit().putString("tier:$sessionId",tier.key).apply()
     }
     override suspend fun send(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) {
+        if(runtime.state.value.phase!="已连接"){
+            val id="waiting:"+UUID.randomUUID();outbox.add(PendingKernelMessages.Pending(id,sessionId,text,attachments,options));Hoshino.store.enqueue(sessionId,QueuedMessage(id,text,attachments));persistCache();startKernel();return
+        }
         val client=api();activeSession=sessionId
         val model=options.model ?: error("请先配置模型供应商")
         val provider=providers.value.first{it.id==model.providerId}
+        metadata.edit().putString("session-provider:$sessionId",provider.id).apply()
         val modelInfo=provider.models.first{it.id==model.modelId}
         val maxBudget=if(options.effort==ReasoningEffort.Max)maxOf(modelInfo.maxOutput,minOf(32768,(modelInfo.contextLength-1024).coerceAtLeast(modelInfo.maxOutput))) else modelInfo.maxOutput
         // /models often omits capabilities. An explicit user effort is authoritative.
@@ -301,18 +324,39 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             if(attachment.kind==AttachmentKind.Image || attachment.kind==AttachmentKind.Camera)content.put(media.imageBlock(file,attachment.name))
             else content.put(JSONObject().put("type","file").put("receiptId",client.uploadFile(sessionId,file,attachment.name)))
         }
-        val checkpoint=m2Control("snapshot",JSONObject().put("sessionId",sessionId))
-        metadata.edit().putString("checkpoint:$sessionId",checkpoint.optString("workspaceCheckpoint")).putBoolean("pending:$sessionId",true).commit()
-        try{client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",content))}catch(failure:Exception){metadata.edit().remove("pending:$sessionId").apply();throw failure}
+        metadata.edit().putBoolean("pending:$sessionId",true).apply()
+        try{client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",pendingRequestIds[sessionId]?:UUID.randomUUID().toString()).put("mode","queue").put("content",content))}catch(failure:Exception){metadata.edit().remove("pending:$sessionId").apply();throw failure}
+    }
+    private fun persistCache(){runCatching{val keep=preferredSessionId?:activeSession;nativeCache.save(sessionRows.value,cachedRecords.filterKeys{it==keep},vault::redact)}}
+    fun restoreVisibleCache(){runBlocking{withTimeout(2000){eventBus.subscriptionCount.first{it>0}};for((id,records)in cachedRecords.toMap())for(event in records)runCatching{durable(id,event,true)}}}
+    fun cancelWaiting(id:String){if(id.startsWith("waiting:"))outbox.remove(id)}
+    fun restoreWaitingMessages(){for(p in outbox.list())Hoshino.store.enqueue(p.sessionId,QueuedMessage(p.id,p.text,p.attachments))}
+    private suspend fun flushOutbox(){
+        if(!draining.compareAndSet(false,true))return
+        try{for(p in outbox.list()){
+            try{
+                if(metadata.getBoolean("local:${p.sessionId}",false)){val row=sessionRows.value.firstOrNull{it.id==p.sessionId};val cwd=workspaceRows.value.firstOrNull{it.id==row?.workspaceId}?.path?:"/root/workspace";api().rpc("session/create",JSONObject().put("sessionId",p.sessionId).put("cwd",cwd));metadata.edit().remove("local:${p.sessionId}").apply()}
+                api().follow(p.sessionId);pendingRequestIds[p.sessionId]=p.id;send(p.sessionId,p.text,p.attachments,p.options);outbox.remove(p.id);Hoshino.store.removeQueued(p.sessionId,p.id)
+            }catch(failure:Exception){publish(HarnessEvent.Notice(p.sessionId,"waiting-error:${p.id}","等待内核消息仍已保留："+describeFailure(failure)))}finally{pendingRequestIds.remove(p.sessionId)}
+        }}finally{draining.set(false)}
     }
     override suspend fun steer(sessionId: String,text: String) { api().rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","steer").put("content",JSONArray().put(JSONObject().put("type","text").put("text",text)))) }
     private suspend fun resumeInterrupted(){if(M2SafeMode.enabled(context))return;val live=api().rpc("session/list",JSONObject()).getJSONArray("items").rows().associateBy{it.getString("sessionId")};for(row in sessions.value){if(metadata.getBoolean("pending:${row.id}",false)&&live[row.id]?.optBoolean("running")!=true){api().rpc("session/prompt",JSONObject().put("sessionId",row.id).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",JSONArray().put(JSONObject().put("type","text").put("text","Resume the interrupted user task from the persisted session log and last completed step. Inspect actual files before repeating any side effect. Do not duplicate completed actions."))))}}}
     override suspend fun stop(sessionId: String) { api().rpc("session/cancel",JSONObject().put("sessionId",sessionId)) }
     private fun readProviders(): List<Provider> = vault.list().map { p ->
         val m=p.metadata;val configured=m.optJSONArray("models")?.rows()?.associateBy { it.getString("id") }.orEmpty()
-        Provider(p.id,m.optString("name",p.id),m.optString("catalogId",p.id),if(p.type=="anthropic")ProviderProtocol.Anthropic else ProviderProtocol.OpenAICompatible,p.baseURL,if(vault.hasSecret(p.credentialRef))"••••••••" else "",m.optJSONArray("headerRefs")?.rows()?.map { it.getString("name") to "••••••••" }.orEmpty(),m.optBoolean("enabled",true),p.models.map { id -> val d=configured[id];ModelInfo(id,d?.optString("displayName",id) ?: id,d?.optInt("contextLength",128000) ?: 128000,d?.optInt("maxOutput",4096) ?: 4096,d?.optBoolean("vision",false) ?: false,d?.optBoolean("reasoning",p.type=="anthropic") ?: (p.type=="anthropic"),runCatching { ReasoningEffort.valueOf(d?.optString("defaultEffort") ?: if(p.type=="anthropic")"Medium" else "Off") }.getOrDefault(ReasoningEffort.Off)) })
+        Provider(p.id,m.optString("name",p.id),m.optString("catalogId",p.id),if(p.type=="anthropic")ProviderProtocol.Anthropic else ProviderProtocol.OpenAICompatible,p.baseURL,if(vault.hasSecret(p.credentialRef)||p.type=="openai-codex"&&chatGptAuth.state.value.signedIn)"••••••••" else "",m.optJSONArray("headerRefs")?.rows()?.map { it.getString("name") to "••••••••" }.orEmpty(),m.optBoolean("enabled",true),p.models.map { id -> val d=configured[id];ModelInfo(id,d?.optString("displayName",id) ?: id,d?.optInt("contextLength",128000) ?: 128000,d?.optInt("maxOutput",4096) ?: 4096,d?.optBoolean("vision",false) ?: false,d?.optBoolean("reasoning",p.type=="anthropic") ?: (p.type=="anthropic"),runCatching { ReasoningEffort.valueOf(d?.optString("defaultEffort") ?: if(p.type=="anthropic")"Medium" else "Off") }.getOrDefault(ReasoningEffort.Off)) })
+    }
+    suspend fun setChatGptEnabled(enabled:Boolean){
+        val stored=vault.list().firstOrNull{it.id=="openai-codex"}
+        val models=JSONArray(context.assets.open("codex-models.json").bufferedReader().use{it.readText()})
+        val metadata=JSONObject().put("name","ChatGPT 订阅（实验）").put("catalogId","openai-codex").put("enabled",enabled).put("models",models)
+        vault.save(stored?.copy(metadata=metadata)?:StoredProvider("openai-codex","openai-codex","https://chatgpt.com/backend-api",models.rows().map{it.getString("id")},metadata),"")
+        providerRows.value=readProviders();if(runtime.state.value.phase=="已连接")api().reloadProviders()
     }
     override suspend fun upsertProvider(provider: Provider) {
+        if(provider.id=="openai-codex") {val stored=vault.list().firstOrNull{it.id==provider.id}?:error("请通过 ChatGPT 订阅入口启用");vault.save(stored.copy(metadata=JSONObject(stored.metadata.toString()).put("enabled",provider.enabled)),"");providerRows.value=readProviders();if(runtime.state.value.phase=="已连接")api().reloadProviders();return}
+
         require(provider.protocol!=ProviderProtocol.OpenAIResponses) { "OpenAI Responses 即将支持" }
         val id=provider.id.takeIf { it.matches(Regex("[a-z][a-z0-9-]*")) } ?: "p-"+provider.id.lowercase().replace(Regex("[^a-z0-9-]"),"-")
         val prior=vault.list().firstOrNull { it.id==id };val oldRefs=prior?.metadata?.optJSONArray("headerRefs")?.rows().orEmpty()

@@ -40,11 +40,11 @@ class NativeKernel(private val context: Context,
                 callback=AndroidCallbackServer(scope,::diagnostic) { method,body ->
                     when(method) {
                         "providers" -> JSONArray(store.list().filter { it.metadata.optBoolean("enabled",true) }.map { store.runtimeJson(it) })
-                        "credential" -> JSONObject().put("value",store.resolve(body.getString("ref")) ?: "").put("source","android-keystore")
+                        "credential" -> JSONObject().put("value",if(body.getString("ref")=="KEY_OPENAI_CODEX")ChatGptAuth.get(context).accessToken()else store.resolve(body.getString("ref")) ?: "").put("source","android-keystore")
                         "device-info" -> JSONObject().put("model","${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}").put("androidVersion",android.os.Build.VERSION.RELEASE).put("battery",(context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
                         "ready" -> {
                             check(current==generation.get())
-                            val connected=SessionClient({}, { if(current==generation.get()) {diagnostic("connection: $it"); state.update { s -> s.copy(phase="崩溃") }} }, { id,frame -> if(current==generation.get())incoming.trySend(id to frame) })
+                            val connected=SessionClient({}, { if(current==generation.get()) {diagnostic("connection: $it"); state.update { s -> s.copy(phase=if(it=="restored")"已连接"else"重新连接") }} }, { id,frame -> if(current==generation.get())incoming.trySend(id to frame) })
                             connected.connect(body.getInt("port"),body.getString("token"));api=connected
                             ready.complete(connected)
                             state.update { it.copy(phase="已连接",readyAt=SystemClock.elapsedRealtime()) }
@@ -54,6 +54,7 @@ class NativeKernel(private val context: Context,
                         else -> callbackHandler(method,body)
                     }
                 }
+                if(context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE!=0){val wait=context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE).getLong("test-start-delay-ms",0).coerceIn(0,10000);if(wait>0)delay(wait)}
                 process=launcher.launch(context,JSONObject().put("callbackPort",callback!!.port).put("callbackToken",callback!!.token),
                     { code -> if(current==generation.get()) {diagnostic("内核退出 ($code)");state.update { it.copy(phase="崩溃") }} },::diagnostic)
             } catch(failure: Exception) {

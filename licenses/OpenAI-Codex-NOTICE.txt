@@ -1,0 +1,7 @@
+OAuth/PKCE and token exchange ported from OpenAI Codex (Apache-2.0).
+Copyright OpenAI.
+Source revision: 13b0217567d310bd1c295f12539422a2bc224480
+https://github.com/openai/codex/blob/13b0217567d310bd1c295f12539422a2bc224480/codex-rs/login/src/server.rs
+https://github.com/openai/codex/blob/13b0217567d310bd1c295f12539422a2bc224480/codex-rs/login/src/oauth/client.rs
+https://github.com/openai/codex/blob/13b0217567d310bd1c295f12539422a2bc224480/codex-rs/login/src/pkce.rs
+Android transport, callback handling and Keystore integration are Hoshino adaptations.

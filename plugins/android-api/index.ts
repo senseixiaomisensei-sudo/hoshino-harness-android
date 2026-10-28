@@ -12,12 +12,14 @@ export async function apply(ctx: Context): Promise<void> {
   let providerFiber: ReturnType<Context['plugin']> | undefined;
   const reload = async () => {
     const providers = await ctx.androidBridge.call<Provider[]>('providers');
+    // Load only the enabled providers' local wire implementation before reporting chat-ready. No network probe.
+    await Promise.all([...new Set(providers.map(p=>p.type==='anthropic'?'anthropic':p.type==='openai-codex'?'openai-codex-responses':'openai-completions'))].map(api=>import('@earendil-works/pi-ai/api/'+api)));
     const map: Record<string, object> = {};
     for (const p of providers) {
       if (!/^[a-z][a-z0-9-]*$/.test(p.id) || !p.models.length) throw new Error('Invalid provider configuration');
       map[p.id] = {
-        api: p.type === 'anthropic' ? 'anthropic-messages' : 'openai-completions',
-        baseURL: providerBaseURL(p.type, p.baseURL), apiKeyEnv: p.apiKey, headers: p.headers ?? {}, displayName: p.metadata?.name ?? p.id,
+        ...(p.type==='openai-codex'?{transport:'sse'}:{api:p.type === 'anthropic' ? 'anthropic-messages' : 'openai-completions'}),
+        baseURL: p.type==='openai-codex'?p.baseURL:providerBaseURL(p.type,p.baseURL), apiKeyEnv: p.apiKey, headers: p.headers ?? {}, displayName: p.metadata?.name ?? p.id,
         models: p.models.map(id => {
           const model=p.metadata?.models?.find(model=>model.id===id);
           const reasoning=model?.reasoning ?? p.type==='anthropic';

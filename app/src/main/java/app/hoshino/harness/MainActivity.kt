@@ -22,13 +22,14 @@ class MainActivity : ComponentActivity() {
     override fun onPause(){app.hoshino.harness.core.AppSurface.pause(this);super.onPause()}
     override fun onCreate(savedInstanceState: Bundle?) {
         // Android 12+ 系统 SplashScreen（低版本由 core-splashscreen 兼容），主题见 Theme.Hoshino.Starting
+        val activityStartedAt=android.os.SystemClock.elapsedRealtime()
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         startForegroundService(Intent(this,KernelService::class.java))
         setContent { HoshinoApp() }
         var inputRecorded=false
-        val observer=object:android.view.ViewTreeObserver.OnDrawListener{override fun onDraw(){if(inputRecorded)return;inputRecorded=true;window.decorView.post{runCatching{java.io.File(filesDir,"m2-input-ready.json").writeText(org.json.JSONObject().put("coldStartToInputMs",android.os.SystemClock.elapsedRealtime()-app.hoshino.harness.core.M2SafeMode.processStartedAt).put("definition","Application.onCreate to first native Compose draw").toString())};window.decorView.viewTreeObserver.removeOnDrawListener(this)}}}
+        val observer=object:android.view.ViewTreeObserver.OnDrawListener{override fun onDraw(){if(inputRecorded)return;inputRecorded=true;window.decorView.post{runCatching{java.io.File(filesDir,"m2-input-ready.json").writeText(org.json.JSONObject().put("coldStartToInputMs",android.os.SystemClock.elapsedRealtime()-app.hoshino.harness.core.M2SafeMode.processStartedAt).put("definition","Application.onCreate to first native Compose draw").put("activityToFirstDrawMs",android.os.SystemClock.elapsedRealtime()-activityStartedAt).put("sessionsAtFirstDraw",app.hoshino.harness.core.Hoshino.client.sessions.value.size).put("kernelAtFirstDraw",(app.hoshino.harness.core.Hoshino.client as? app.hoshino.harness.core.DshHarnessClient)?.runtime?.state?.value?.phase).toString())};window.decorView.viewTreeObserver.removeOnDrawListener(this)}}}
         window.decorView.viewTreeObserver.addOnDrawListener(observer)
         lifecycleScope.launch{runCatching{app.hoshino.harness.core.M2Intents.receive(this@MainActivity,intent)}}
     }

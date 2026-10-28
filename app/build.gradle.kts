@@ -4,7 +4,7 @@ android {
     compileSdk { version = release(37) { minorApiLevel = 0 } }
     defaultConfig {
         applicationId = "dev.hoshino.app"; minSdk = 29; targetSdk = 37
-        versionCode = 200; versionName = "0.2.0-m2"
+        versionCode = 201; versionName = "0.2.1-m2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -71,7 +71,9 @@ val stageRuntimeAssets by tasks.registering {
         for(abi in listOf("arm64-v8a","x86_64")) {
             copy { from("src/main/assets/kernel/$abi.txz","src/main/assets/kernel/manifest.json");into(layout.buildDirectory.dir("generated/runtimeAssets/$abi/kernel")) }
             copy { from("src/main/assets/licenses/$abi");into(layout.buildDirectory.dir("generated/runtimeAssets/$abi/licenses")) }
+            copy { from(rootProject.file("licenses"));into(layout.buildDirectory.dir("generated/runtimeAssets/$abi/licenses")) }
             copy { from(rootProject.file("THIRD_PARTY.md"));into(layout.buildDirectory.dir("generated/runtimeAssets/$abi/licenses")) }
+            copy { from("src/main/assets/codex-models.json");into(layout.buildDirectory.dir("generated/runtimeAssets/$abi")) }
             copy { from("src/main/assets/harness-source.zip");into(layout.buildDirectory.dir("generated/runtimeAssets/$abi")) }
             copy { from(rootProject.file(".research/runtime/$abi.tgz"));rename { "baseline.tgz" };into(layout.buildDirectory.dir("generated/benchmarkAssets/$abi")) }
         }

@@ -161,5 +161,5 @@ export async function apply(ctx: Context): Promise<void> {
     output:{schema:{type:'string'},render:(_,value)=>[{type:'text',text:value}]},
     async execute(args,exec){return JSON.stringify(await invoke(action,{...args,sessionId:exec.agent?.id}));},
   }));
-  await loadUsers();
+  void ctx.androidBridge.whenReady.then(()=>loadUsers()).catch(()=>{});
 }

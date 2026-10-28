@@ -1,12 +1,15 @@
 import type { Context } from '@deepseek-ai/cordis';
 export interface Provider {
-  id: string; type: 'anthropic' | 'openai-compatible'; baseURL: string;
+  id: string; type: 'anthropic' | 'openai-compatible' | 'openai-codex'; baseURL: string;
   apiKey: string; models: string[];
   headers?: Record<string,string>;
   metadata?: { name?: string; models?: Array<{ id: string; contextLength?: number; maxOutput?: number; vision?: boolean; reasoning?: boolean; defaultEffort?: string }> };
 }
 export interface Bootstrap { callbackPort: number; callbackToken: string; workspace: string; home: string; selfHome?: string; safeMode?: boolean }
 export class AndroidBridge {
+  private acceptReady!:()=>void;
+  readonly whenReady=new Promise<void>(accept=>{this.acceptReady=accept;});
+  markReady(){this.acceptReady();}
   constructor(readonly bootstrap: Bootstrap) {}
   async call<T>(method: string, body: unknown = {}, signal?: AbortSignal): Promise<T> {
     const response = await fetch(`http://127.0.0.1:${this.bootstrap.callbackPort}/${method}`, {

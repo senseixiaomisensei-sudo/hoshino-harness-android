@@ -694,12 +694,14 @@ fun ShimmerText(text: String, style: TextStyle, modifier: Modifier = Modifier) {
 // ---------------------------------------------------------------- 工具函数
 
 fun relativeTime(ts: Long, now: Long = System.currentTimeMillis()): String {
+    if(ts<=0)return "未知"
     val d = (now - ts).coerceAtLeast(0) / 1000
     return when {
         d < 60 -> "刚刚"
         d < 3600 -> "${d / 60} 分钟前"
         d < 86_400 -> "${d / 3600} 小时前"
         d < 7 * 86_400 -> "${d / 86_400} 天前"
+        d < 30 * 86_400 -> "${d / (7 * 86_400)} 周前"
         else -> java.text.SimpleDateFormat("M月d日", Locale.CHINA).format(java.util.Date(ts))
     }
 }

@@ -108,15 +108,9 @@ export function apply(ctx: Context): void {
       return result;
     } finally { guards.delete(exec.token); }
   });
-  ctx.on('agent/request', async (payload, next) => {
-    const sessionId=ctx.agents.requireInitiator().id;
-    const key=`${sessionId}:network`;
-    if(remembered.has(key))return next();
-    const approved = await ctx.androidBridge.call<{ approved: boolean;remember?:boolean }>('approve', { kind: 'network',sessionId }, payload.signal);
-    if (!approved.approved) throw new Error('Network request declined');
-    if(approved.remember)remembered.add(key);
-    return next();
-  });
+  // Sending a user prompt to an explicitly enabled provider is already authorized.
+  // Tool/network side effects still use the tool approval policy above.
+
 }
 
 

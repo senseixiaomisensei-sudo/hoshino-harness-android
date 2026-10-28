@@ -28,7 +28,7 @@ class ProviderStore(private val context: Context) {
     }
     @Synchronized fun save(provider: Provider, apiKey: String) {
         require(provider.id.matches(Regex("[a-z][a-z0-9-]*"))) { "ID 仅支持小写字母、数字和连字符" }
-        require(provider.type in listOf("anthropic", "openai-compatible"))
+        require(provider.type in listOf("anthropic", "openai-compatible", "openai-codex"))
         val uri = java.net.URI(provider.baseURL)
         require(uri.scheme in listOf("http", "https") && uri.host != null && uri.userInfo == null && uri.query == null && uri.fragment == null) { "请输入有效的 API 地址" }
         require(provider.models.isNotEmpty() && provider.models.all { it.isNotBlank() })
@@ -55,6 +55,7 @@ class ProviderStore(private val context: Context) {
         }
         writeConfig(list().filterNot { it.id==id })
     }
+    @Synchronized fun removeSecret(ref:String){encrypted.edit().remove(ref).commit()}
     fun hasSecret(ref: String) = encrypted.contains(ref)
     fun runtimeJson(provider: Provider): JSONObject {
         val headers=JSONObject();val refs=provider.metadata.optJSONArray("headerRefs") ?: JSONArray()
