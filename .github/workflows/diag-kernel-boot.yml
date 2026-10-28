@@ -1,0 +1,18 @@
+name: diag-kernel-boot
+on: { push: { branches: [diag/kernel-boot] } }
+jobs:
+  boot:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: arm64-alpha2, os: ubuntu-24.04-arm, abi: arm64-v8a, url: "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2-dsh-alpha.2/Hoshino-Harness-0.2.1-m2-dsh-alpha.2-arm64-v8a-debug.apk" }
+          - { name: x86-alpha2, os: ubuntu-24.04, abi: x86_64, url: "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2-dsh-alpha.2/Hoshino-Harness-0.2.1-m2-dsh-alpha.2-x86_64-debug.apk" }
+          - { name: arm64-m2, os: ubuntu-24.04-arm, abi: arm64-v8a, url: "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.0-m2/Hoshino-Harness-0.2.0-m2-arm64-v8a-debug.apk" }
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash boot.sh "${{ matrix.url }}" "${{ matrix.abi }}"
+        working-directory: tools/diag
