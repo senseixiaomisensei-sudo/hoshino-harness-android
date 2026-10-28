@@ -8,6 +8,7 @@ import '@deepseek-ai/dsh-host-webserver';
 import '@deepseek-ai/dsh-api-session-controller';
 import type {} from '../hoshino-self/index.js';
 import { providerBaseURL } from './provider-config.js';
+import { installAnthropicCompatFetch, setThirdPartyAnthropicBases } from './anthropic-compat.js';
 export const name = 'android-api';
 export const inject = ['llm', 'connection', 'webServer', 'sessionController', 'androidBridge', 'hoshinoControl'];
 export async function apply(ctx: Context): Promise<void> {
@@ -17,6 +18,8 @@ export async function apply(ctx: Context): Promise<void> {
     // Load only the enabled providers' local wire implementation before reporting chat-ready. No network probe.
     // pi-ai exports ./api/<file>; the Anthropic wire file is anthropic-messages. Warm-up only: a failure here must never stop the kernel.
     await Promise.all([...new Set(providers.map(p=>p.type==='anthropic'?'anthropic-messages':p.type==='openai-codex'?'openai-codex-responses':'openai-completions'))].map(api=>import('@earendil-works/pi-ai/api/'+api).catch(()=>undefined)));
+    installAnthropicCompatFetch();
+    setThirdPartyAnthropicBases(providers.filter(p=>p.type==='anthropic').map(p=>{try{return providerBaseURL(p.type,p.baseURL);}catch{return '';}}));
     const map: Record<string, object> = {};
     for (const p of providers) {
       if (!/^[a-z][a-z0-9-]*$/.test(p.id) || !p.models.length) throw new Error('Invalid provider configuration');
