@@ -28,7 +28,7 @@ class WorkspaceFiles(private val root:File,private val trash:File) {
         val target=File(root,relative).canonicalFile
         require(target.toPath().startsWith(root.canonicalFile.toPath())) {"路径或符号链接越出工作区"}
         // Keep the public filename: canonicalizing a PRoot hard link exposes its backing file.
-        return if(Files.isSymbolicLink(requested))requested.toFile() else target
+        return if(Files.isSymbolicLink(requested))root.canonicalFile.toPath().resolve(rootPath.relativize(requested)).toFile() else target
     }
     /** Accept only PRoot's two-hop regular-file hard links contained in this workspace. */
     private fun isProotHardLink(path:Path):Boolean = runCatching {
