@@ -33,7 +33,8 @@ class WorkspaceFilesTest {
     }
     @Test fun prootHardLinksKeepTheirPublicNameAndRejectEscapes() {
         val store=store();val root=store.resolve("").toPath()
-        val intermediate=root.resolve(".l2s.hello.tmp0001");val backing=root.resolve(".l2s.hello.tmp0001.0001")
+        val staging=Files.createDirectory(root.resolve(".hello.txt.123.fixture.tmpdir"))
+        val intermediate=staging.resolve(".l2s.hello.tmp0001");val backing=staging.resolve(".l2s.hello.tmp0001.0001")
         Files.writeString(backing,"from kernel\n")
         try {Files.createSymbolicLink(intermediate,backing);Files.createSymbolicLink(root.resolve("hello.txt"),intermediate)}catch(e:java.nio.file.FileSystemException){org.junit.Assume.assumeNoException("Host cannot create test symlink",e)}
         assertEquals("from kernel\n",store.editable("hello.txt").text)
