@@ -84,6 +84,24 @@ fun PluginsScreen(vm: ConfigViewModel, onBack: () -> Unit) {
     var configFor by remember { mutableStateOf<Plugin?>(null) }
     var removeFor by remember { mutableStateOf<Plugin?>(null) }
     CollectToasts(vm)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val zipPicker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            installing = true
+            scope.launch {
+                val r = runCatching {
+                    val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "plugin.zip"
+                    val file = java.io.File(context.cacheDir, "plugin-import-${System.currentTimeMillis()}.zip")
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)!!.use { input -> file.outputStream().use { out -> val b = ByteArray(65536); var total = 0L; while (true) { val n = input.read(b); if (n < 0) break; total += n; check(total <= 128L * 1024 * 1024) { "ZIP 超过 128 MiB" }; out.write(b, 0, n) } } }
+                    }
+                    name to file
+                }.fold({ (name, file) -> vm.client.installPluginFromZip(file, name) }, { Result.failure(it) })
+                installing = false
+                vm.toast(r.fold({ "已导入 ${it.name}" }, { it.message ?: "导入失败" }))
+            }
+        }
+    }
 
     val shown = plugins.filter {
         (category == null || it.category == category) &&
@@ -96,6 +114,7 @@ fun PluginsScreen(vm: ConfigViewModel, onBack: () -> Unit) {
             IconBtn(HIcons.Plus, "安装插件", { menu = true })
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("从 Git 安装", style = t.body, color = c.text) }, leadingIcon = { HIcon(HIcons.Fork, size = 18.dp) }, onClick = { menu = false; gitDialog = true })
+                DropdownMenuItem(text = { Text("从本地 ZIP 导入", style = t.body, color = c.text) }, leadingIcon = { HIcon(HIcons.Archive, size = 18.dp) }, onClick = { menu = false; zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) })
                 DropdownMenuItem(text = { Text("本地链接", style = t.body, color = c.text) }, leadingIcon = { HIcon(HIcons.Folder, size = 18.dp) }, onClick = { menu = false; localDialog = true })
             }
         }

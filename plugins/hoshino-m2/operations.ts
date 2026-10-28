@@ -18,17 +18,24 @@ export async function checkpoint(root:string,workspace:string):Promise<string>{
  await visit(workspace);await atomic(join(target,'manifest.json'),{id,workspace,items,bytes});await pruneHistory(root,'checkpoints',id);return id;
 }
 export async function restoreCheckpoint(root:string,workspace:string,id:string){if(!/^\d+-[a-f0-9]{8}$/.test(id))throw Error('Invalid checkpoint');const target=await workspacePath(join(root,'checkpoints'),id);const manifest=JSON.parse(await readFile(join(target,'manifest.json'),'utf8'));if(manifest.workspace!==workspace)throw Error('Checkpoint belongs to another workspace');const safety=await checkpoint(root,workspace);for(const item of manifest.items){const source=await workspacePath(join(target,'files'),item.path);const dest=await workspacePath(workspace,item.path);await mkdir(dirname(dest),{recursive:true});await cp(source,dest);}return {restored:id,safetySnapshot:safety,note:'Files created after the checkpoint remain; no unrelated files are deleted.'};}
-export async function installPlugin(ctx:Context,config:Configuration,spec:string){
+export async function installPlugin(ctx:Context,config:Configuration,spec:string,flags:string[]=[]){
  if(!spec || spec.length>2000 || spec.startsWith('-') || /[\x00-\x1f]/.test(spec))throw Error('Invalid plugin specification');
  const dir=join(config.root,'plugin-packages');await mkdir(dir,{recursive:true});let before:Data;try{before=JSON.parse(await readFile(join(dir,'package.json'),'utf8'));}catch{before={private:true,type:'module'};await atomic(join(dir,'package.json'),before);}
  try{await command('npm',['--version'],dir,10000);}catch{const install=await command('apk',['add','--no-cache','npm','git'],dir,600000);if(install.code)throw Error('Could not download optional npm/git; check network and retry');}
- const result=await command('npm',['install','--no-audit','--no-fund','--save-exact','--',spec],dir,600000);
+ const result=await command('npm',['install','--no-audit','--no-fund','--save-exact',...flags,'--',spec],dir,600000);
  if(result.code!==0)return {ok:false,error:'Plugin dependency installation failed. Native addons require a musl arm64 prebuild or ensure_tools native-build, then retry.',detail:result.output.slice(-8000)};
  const pkg=JSON.parse(await readFile(join(dir,'package.json'),'utf8'));const names=Object.keys(pkg.dependencies??{});const name=names.find(n=>pkg.dependencies[n]!==before.dependencies?.[n])??names.find(n=>pkg.dependencies[n]===spec)??names.find(n=>spec===n||spec.startsWith(n+'@'));if(!name)throw Error('Package already installed or did not declare a unique entry; inspect plugin-packages/package.json');
  const entry=join(dir,'node_modules',name);const manifest=JSON.parse(await readFile(join(entry,'package.json'),'utf8'));const id=name.replace(/^@/,'').replace(/[^a-zA-Z0-9-]/g,'-').toLowerCase();const dest=join(config.root,'plugins',id);await mkdir(dest,{recursive:true});
  const {createRequire}=await import('node:module');const require=createRequire(join(dir,'package.json'));const resolved=require.resolve(name);
  await writeFile(join(dest,'index.js'),`export * from ${JSON.stringify('file://'+resolved)};\n`);await atomic(join(dest,'config.json'),{});
  return {ok:true,id,name,version:manifest.version,entry:resolved,next:`self_reload plugin=${id}`,compatibility:'Installed using npm; actual Cordis activation is checked on reload'};
+}
+export async function installPluginZip(ctx:Context,config:Configuration,rel:string,label:string){
+ if(!/^plugin-sources\/[a-f0-9-]{36}$/.test(rel))throw Error('Invalid imported plugin folder');
+ const base=join(config.root,rel);const has=async(p:string)=>lstat(p).then(x=>x.isFile(),()=>false);
+ let dir=base;if(!await has(join(dir,'package.json'))&&!await has(join(dir,'index.js'))&&!await has(join(dir,'index.mjs'))){const kids=(await readdir(base,{withFileTypes:true})).filter(e=>!e.name.startsWith('.')&&e.name!=='__MACOSX');if(kids.length===1&&kids[0].isDirectory())dir=join(base,kids[0].name);}
+ if(!await has(join(dir,'package.json'))){const main=await has(join(dir,'index.mjs'))?'index.mjs':await has(join(dir,'index.js'))?'index.js':null;if(!main)throw Error('ZIP 里没有 package.json 或 index.js');const name='hoshino-local-'+(label.replace(/\.zip$/i,'').toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'')||'plugin');await atomic(join(dir,'package.json'),{name,version:'0.0.0',type:'module',main});}
+ try{const r=await installPlugin(ctx,config,dir,['--install-links']);if(!(r as Data).ok)await rm(base,{recursive:true,force:true});return r;}catch(e){await rm(base,{recursive:true,force:true});throw e;}
 }
 export async function gitOperation(workspace:string,action:string,args:Data){
  const allowed:Record<string,string[]>={status:['status','--short'],diff:['diff','--no-ext-diff'],branches:['branch','--list'],commit:['commit','-m',String(args.message??'')],push:['push'],branch:['switch','-c',String(args.name??'')]};

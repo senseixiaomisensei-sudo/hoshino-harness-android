@@ -410,6 +410,20 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun removePlugin(pluginId:String) {require(plugins.value.none{it.id==pluginId && it.source==PluginSource.BuiltIn});control("remove-plugin",JSONObject().put("id",pluginId));refreshControl()}
     override suspend fun installPluginFromGit(spec:String):Result<Plugin> = runCatching{val result=m2Control("install-plugin",JSONObject().put("spec",spec));check(result.optBoolean("ok")){result.optString("error","插件安装失败")+"\n"+result.optString("detail")};val id=result.getString("id");control("reload",JSONObject().put("plugin",id));refreshControl();plugins.value.first{it.id==id}}
     override suspend fun linkLocalPlugin(path:String):Result<Plugin> = installPluginFromGit(path)
+    override suspend fun installPluginFromZip(archive:java.io.File,name:String):Result<Plugin> = runCatching{
+        val id=java.util.UUID.randomUUID().toString();val root=java.io.File(context.filesDir,"hoshino/plugin-sources/$id").also{it.mkdirs()}.canonicalFile
+        try{
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){java.util.zip.ZipFile(archive).use{zip->var total=0L;var count=0
+                for(entry in zip.entries()){count++;check(count<=20000){"ZIP 文件过多"};val n=entry.name;if(n.startsWith("__MACOSX/"))continue
+                    require(!n.contains('\\')&&!n.startsWith("/")&&n.split('/').none{it==".."}){"ZIP 含不安全路径：$n"}
+                    val dest=java.io.File(root,n).canonicalFile;require(dest.path.startsWith(root.path+java.io.File.separator)){"ZIP 含不安全路径：$n"}
+                    if(entry.isDirectory){dest.mkdirs();continue};dest.parentFile!!.mkdirs()
+                    zip.getInputStream(entry).use{input->dest.outputStream().use{out->val b=ByteArray(65536);while(true){val r=input.read(b);if(r<0)break;total+=r;check(total<=256L*1024*1024){"插件解压后超过 256 MiB"};out.write(b,0,r)}}}}}}
+            val result=m2Control("install-plugin-zip",JSONObject().put("dir","plugin-sources/$id").put("name",name))
+            check(result.optBoolean("ok")){result.optString("error","插件安装失败")+"\n"+result.optString("detail")}
+            val pid=result.getString("id");control("reload",JSONObject().put("plugin",pid));refreshControl();plugins.value.first{it.id==pid}
+        }catch(e:Exception){root.deleteRecursively();throw e}finally{archive.delete()}
+    }
     override suspend fun readPluginConfig(pluginId:String)=control("config-read",JSONObject().put("path","plugins/$pluginId/config.json")).getString("content")
     override suspend fun writePluginConfig(pluginId:String,content:String) {control("config-write",JSONObject().put("path","plugins/$pluginId/config.json").put("content",content));control("reload",JSONObject().put("plugin",pluginId));refreshControl()}
     override suspend fun createSkill(name:String,description:String,content:String) {control("create-skill",JSONObject().put("name",name).put("description",description).put("content",content));refreshControl()}

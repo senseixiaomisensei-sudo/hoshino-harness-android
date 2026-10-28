@@ -5,7 +5,7 @@ import {join,dirname,relative} from 'node:path';
 import {Configuration,modes,defaults,interpolate,treeStamp,atomic,type Data} from './config.js';
 import {approval} from './approval.js';
 import {fetchPage,search,webUrl} from './web.js';
-import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,gitOperation,ensureTools,exportBackup,restoreBackup,selfSnapshot,command} from './operations.js';
+import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,installPluginZip,gitOperation,ensureTools,exportBackup,restoreBackup,selfSnapshot,command} from './operations.js';
 import {UI_SCHEMA,validateOverrides} from '../hoshino-self/overrides.js';
 import {workspacePath} from '../android-policy/paths.js';
 import type {} from '@deepseek-ai/dsh-goal';
@@ -122,6 +122,7 @@ export async function apply(ctx:Context){
    case 'deliver':{const path=await workspacePath(workspace,String(args.path));const s=await lstat(path);if(!s.isFile())throw Error('Deliver a regular workspace file');return bridge('file.deliver',{sessionId:args.sessionId,path,name:args.name??path.split('/').at(-1),bytes:s.size});}
    case 'ensure-tools':return ensureTools(String(args.group),workspace);
    case 'install-plugin':return installPlugin(ctx,config,String(args.spec));
+   case 'install-plugin-zip':return installPluginZip(ctx,config,String(args.dir),String(args.name??''));
    case 'plugin-search':return fetchPage('https://registry.npmjs.org/-/v1/search?text='+encodeURIComponent(String(args.query??'dsh-plugin'))+'&size=20',config.get('search.json'));
    case 'git':return gitOperation(workspace,String(args.operation),args);
    case 'build':return remoteBuild(args);

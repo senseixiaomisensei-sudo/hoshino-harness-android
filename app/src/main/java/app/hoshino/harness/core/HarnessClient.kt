@@ -85,6 +85,8 @@ interface HarnessClient {
     /** spec 形如 github:owner/repo#ref */
     suspend fun installPluginFromGit(spec: String): Result<Plugin>
     suspend fun linkLocalPlugin(path: String): Result<Plugin>
+    /** 从本地 ZIP 导入插件（package.json 或 index.js 在根目录或唯一子目录）。 */
+    suspend fun installPluginFromZip(archive: java.io.File, name: String): Result<Plugin> = Result.failure(UnsupportedOperationException("即将支持"))
     suspend fun removePlugin(pluginId: String)
     suspend fun readPluginConfig(pluginId: String): String
     suspend fun writePluginConfig(pluginId: String, content: String)
