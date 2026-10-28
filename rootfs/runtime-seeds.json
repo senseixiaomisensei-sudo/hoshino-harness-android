@@ -61,5 +61,6 @@
   "@deepseek-ai/dsh-tool-goal",
   "@deepseek-ai/dsh-schedule",
   "@deepseek-ai/dsh-tool-schedule",
-  "fflate"
+  "fflate",
+  "@deepseek-ai/dsh-tool-executor-native"
 ]

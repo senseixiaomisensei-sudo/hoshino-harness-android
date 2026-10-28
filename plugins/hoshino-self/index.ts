@@ -61,7 +61,7 @@ export async function apply(ctx: Context): Promise<void> {
         const manifest=await readJson(join(root,'self','manifest.json'),{});
         const plugins=(await readdir(join(root,'plugins'),{withFileTypes:true})).filter(e=>e.isDirectory()).map(e=>({id:e.name,enabled:fibers.has(e.name),invalid:invalid.has(e.name)}));
         const summaries=await ctx.skills.list();
-        return {version:'0.2.0-m2',dshVersion:'0.2.1-rc.2',nodeVersion:process.versions.node,kernel:'ready',manifest,
+        return {version:'0.2.0-m2',dshVersion:'0.2.2-alpha.2',nodeVersion:process.versions.node,kernel:'ready',manifest,
           plugins,tools:ctx.tools.schemas() as unknown as Json,skills:summaries as unknown as Json,mcp:[],hooks:[],
           paths:{self:join(root,'self'),plugins:join(root,'plugins'),skills:join(root,'skills'),workspace:ctx.androidBridge.bootstrap.workspace},
           ...(await ctx.androidBridge.call<Record<string,Json>>('self-status'))};
@@ -75,7 +75,7 @@ export async function apply(ctx: Context): Promise<void> {
         }
         const prior=ctx.mobilePolicy.options.get(id);
         const options={tier:String(request.tier),planMode:typeof request.planMode==='boolean' ? request.planMode : prior?.planMode ?? false,prompt:typeof request.prompt==='string' ? request.prompt.slice(0,32000) : prior?.prompt ?? '',mode:String(request.mode??prior?.mode??'standard'),model:String(request.model??prior?.model??'')};
-        ctx.mobilePolicy.options.set(id,options);return {};
+        ctx.mobilePolicy.options.set(id,options);ctx.mobileM2.syncTools(id);return {};
       }
       case 'resolve-diff': await ctx.mobilePolicy.resolveDiff(String(request.sessionId),String(request.id),request.accept===true);return {};
       case 'config-read': {

@@ -12,7 +12,8 @@ import type {} from '@deepseek-ai/dsh-goal';
 import type {} from '@deepseek-ai/dsh-schedule';
 import type {} from '@deepseek-ai/dsh-subagent';
 import {createRequire} from 'node:module';
-export interface MobileM2 {config:Configuration;invoke(action:string,args:Data):Promise<any>;approve(action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>):Promise<{approved:boolean;remember?:boolean}>}
+import {createScope,type Scope} from '@deepseek-ai/dsh-scope';
+export interface MobileM2 {config:Configuration;syncTools(sessionId:string):void;invoke(action:string,args:Data):Promise<any>;approve(action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>):Promise<{approved:boolean;remember?:boolean}>}
 declare module '@deepseek-ai/cordis'{interface Context{mobileM2:MobileM2}}
 export const name='hoshino-m2';
 export const inject=['androidBridge','mobilePolicy','systemPrompt','tools','agents'];
@@ -36,6 +37,12 @@ export async function apply(ctx:Context){
  };
  ctx.effect(()=>()=>{ctx.androidBridge.call=originalCall;});
  const modeFor=(sid:string)=>{const o=ctx.mobilePolicy.options.get(sid) as Data|undefined;return (config.get('modes.json').modes??modes).find((m:Data)=>m.id===o?.mode)??modes[1]!;};
+ const toolMasks=new Map<string,{scope:Scope;release?:()=>void}>();let syncingTools=false;
+ const syncTools=(id:string)=>{if(syncingTools)return;const item=toolMasks.get(id);if(!item)return;syncingTools=true;try{item.release?.();item.release=undefined;const mode=modeFor(id);if(Array.isArray(mode.tools)){const deny=ctx.tools.definitions().map(t=>t.name).filter(name=>!mode.tools.includes(name));if(deny.length)item.release=item.scope.ctx.tools.restrict({deny});}}finally{syncingTools=false;}};
+ ctx.on('agent/created',({agent})=>{toolMasks.set(agent.id,{scope:createScope(ctx,agent)});syncTools(agent.id);return undefined;});
+ ctx.on('agent/disposed',({agent})=>{const item=toolMasks.get(agent.id);toolMasks.delete(agent.id);if(item)void item.scope.dispose();});
+ ctx.on('tools/change',()=>{if(!syncingTools)for(const id of toolMasks.keys())syncTools(id);});
+ ctx.effect(()=>()=>Promise.all([...toolMasks.values()].map(v=>v.scope.dispose())).then(()=>{}));
  const fallbackRoutes=new Map<string,Data>();const failedRoutes=new Map<string,Set<string>>();
  ctx.on('agent/request',async(payload,next)=>{
   const id=payload.agent.id;const mode=modeFor(id);if(typeof mode.maxSteps==='number'&&payload.step>=mode.maxSteps)throw Error('Configured maximum Agent steps reached');
@@ -64,7 +71,6 @@ export async function apply(ctx:Context){
   const layers=[{source:'base-custom',...(p.base??{})},{source:'global',...(p.global??{})},...Array.from(workspacePrompts,([source,text])=>({source,operation:'append',text})),{source:'mode:'+mode.id,operation:mode.promptOperation??'append',text:mode.systemPrompt??''},{source:'session',...(p.sessions?.[sid]??{})}];
   for(const layer of layers){if(layer.operation==='replace')assembly.sections=[];if(layer.text)assembly.sections.push({name:'hoshino-'+layer.source,text:interpolate(String(layer.text),variables),interpolate:false});}
   if(p.injectTools!==false)assembly.sections.push({name:'hoshino-tool-protocol',text:'Call available tools using the model provider native tool-call protocol and declared JSON schemas. Never invent tool results.',interpolate:false});
-  if(Array.isArray(mode.tools))assembly.tools=assembly.tools.filter(t=>mode.tools.includes(t.name));
   assembly.variables={...assembly.variables,...Object.fromEntries(Object.entries(variables).map(([k,v])=>[k,String(v)]))};return next();
  });
  ctx.on('tools/pre-execute',async(exec,next)=>{const mode=modeFor(exec.agent?.id??'');if(Array.isArray(mode.tools)&&!mode.tools.includes(exec.name))return {kind:'deny',reason:'Tool excluded by Agent mode'};if(mode.readOnly&&!['read','read_image','get_device_info','self_read','self_inspect','self_doctor','self_diff','skill','self_config_read'].includes(exec.name))return {kind:'deny',reason:'Read-only mode'};return next();});
@@ -106,7 +112,7 @@ export async function apply(ctx:Context){
    case 'reload':await refresh();await originalCall('self-changed',{});return {reloaded:true,errors:Object.fromEntries(config.errors)};
    case 'snapshot':return {id:await selfSnapshot(root),workspaceCheckpoint:await checkpoint(root,workspace)};
    case 'rollback-workspace':{try{await lstat(join(root,'checkpoints',String(args.id)));return restoreCheckpoint(root,workspace,String(args.id));}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;return ctx.hoshinoControl.invoke('rollback',{id:args.id});}}
-   case 'doctor':return {kernel:'ready',dsh:'0.2.1-rc.2',node:process.version,configErrors:Object.fromEntries(config.errors),bridge:await bridge('capabilities'),safeMode:ctx.androidBridge.bootstrap.safeMode??false};
+   case 'doctor':return {kernel:'ready',dsh:'0.2.2-alpha.2',node:process.version,configErrors:Object.fromEntries(config.errors),bridge:await bridge('capabilities'),safeMode:ctx.androidBridge.bootstrap.safeMode??false};
    case 'config':{const name=String(args.name);if(args.value!==undefined){await config.write(name,args.value);await originalCall('self-changed',{});}return config.get(name);}
    case 'prompt-preview':{const sid=String(args.sessionId??'');const assembly=await ctx.systemPrompt.assemble({hoshinoSessionId:sid} as any);return {layers:await promptLayers(sid),sections:assembly.sections,contexts:assembly.contexts,tools:assembly.tools.map(t=>t.name),variables:assembly.variables,tokenEstimate:Math.ceil(JSON.stringify(assembly.sections).length/4),tokenCountKind:'estimate'};}
    case 'search':return search(String(args.query),config.get('search.json'));
@@ -153,7 +159,7 @@ export async function apply(ctx:Context){
    default:throw Error('Unknown M2 operation');
   }
  };
- ctx.provide('mobileM2',{config,invoke,approve:(action,ask)=>approval(ctx,config,action,ask)});
+ ctx.provide('mobileM2',{config,invoke,syncTools,approve:(action,ask)=>approval(ctx,config,action,ask)});
  const tools:Array<[string,string,Data,string]>=[
   ['self_read','Read a public self file, including source working copy.',{path:{type:'string',required:true}},'read'],
   ['self_write','Write public self configuration, DSL, plugin or source, with checkpoint.',{path:{type:'string',required:true},content:{type:'string',required:true}},'write'],

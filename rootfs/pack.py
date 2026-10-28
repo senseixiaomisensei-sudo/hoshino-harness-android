@@ -15,7 +15,13 @@ def pack(source, abi, target, baseline, refresh=False, add_dependencies=False):
                 try:packages[posixpath.dirname(name)]=json.load(archive.extractfile(item))
                 except (ValueError,UnicodeError):pass
     additions={}
+    replacements=set()
     if add_dependencies:
+        locked=json.loads((ROOT/'node-host/package-lock.json').read_text(encoding='utf-8'))['packages']
+        # A refreshed kernel must contain the exact new lock, not cached same-name JS.
+        for name in list(packages):
+            key=name[len(PREFIX):]
+            if key not in locked:del packages[name]
         host=ROOT/'node-host/node_modules'
         for manifest in host.rglob('package.json'):
             directory=manifest.parent
@@ -23,9 +29,17 @@ def pack(source, abi, target, baseline, refresh=False, add_dependencies=False):
             except (ValueError,UnicodeError):continue
             # Package roots only, not implementation fixture package.json files.
             rel=directory.relative_to(host).as_posix()
-            if data.get('name') is None:continue
+            expected=locked.get('node_modules/'+rel)
+            if data.get('name') is None or expected is None:continue
+            if data.get('version')!=expected.get('version'):raise RuntimeError('Host dependency does not match lock: '+rel)
             name=PREFIX+'node_modules/'+rel
-            if name not in packages:packages[name]=data;additions[name]=directory
+            if name not in packages or packages[name].get('version')!=data.get('version'):
+                if name in packages:replacements.add(name)
+                packages[name]=data;additions[name]=directory
+        for name,data in packages.items():
+            expected=locked.get(name[len(PREFIX):],{})
+            if expected.get('version')!=data.get('version'):
+                raise RuntimeError('Changed target-native dependency requires a target package: '+name)
     def locate(name,parent=PREFIX.rstrip('/')):
         current=parent
         while True:
@@ -98,14 +112,16 @@ def pack(source, abi, target, baseline, refresh=False, add_dependencies=False):
                 item.name=item.name.removeprefix('./')
                 if item.name=='opt/hoshino/runtime-selection.json':continue
                 if not keep(item.name):continue
+                if any(item.name==p or item.name.startswith(p+'/') for p in replacements):continue
                 if refresh and (item.name==PREFIX+'dist' or item.name.startswith(PREFIX+'dist/')):continue
+                if refresh and item.name in [PREFIX+'package.json',PREFIX+'package-lock.json']:continue
                 if item.name in restored:continue
                 data=archive.extractfile(item) if item.isfile() or item.islnk() else None
                 if item.islnk():item.type=tarfile.REGTYPE;item.linkname='';payload=data.read();item.size=len(payload);data=io.BytesIO(payload)
                 output.addfile(item,data)
                 if item.isfile():files.append({'path':item.name,'bytes':item.size});unpacked+=item.size
             if refresh:
-                # Reuse the exact musl runtime/native binaries. Add only missing locked JS packages.
+                # Keep matching musl binaries; replace changed JS with unmodified locked npm files.
                 # This avoids replacing Node just because an Alpine rolling mirror pruned its APK.
                 for name,directory in sorted(additions.items()):
                     if name not in selected:continue
@@ -113,6 +129,7 @@ def pack(source, abi, target, baseline, refresh=False, add_dependencies=False):
                         if not path.is_file() or path.is_symlink():continue
                         target_name=name+'/'+path.relative_to(directory).as_posix()
                         if not keep(target_name):continue
+                        if target_name in restored:continue
                         if path.suffix in ['.node','.so','.dll','.dylib'] or path.name=='binding.gyp':raise RuntimeError('New native dependency requires a target build: '+target_name)
                         size=path.stat().st_size;output.add(path,arcname=target_name,recursive=False);files.append({'path':target_name,'bytes':size});unpacked+=size
                 for name,payload in restored.items():
@@ -121,7 +138,9 @@ def pack(source, abi, target, baseline, refresh=False, add_dependencies=False):
                     if path.is_file():
                         name=PREFIX+'dist/'+path.relative_to(ROOT/'node-host/dist').as_posix();size=path.stat().st_size
                         output.add(path,arcname=name,recursive=False);files.append({'path':name,'bytes':size});unpacked+=size
-            manifest=json.dumps({'packages':sorted(selected),'imageProcessing':True,'upstreamSourcesModified':False}).encode()
+                for local in ['package.json','package-lock.json']:
+                    path=ROOT/'node-host'/local;output.add(path,arcname=PREFIX+local,recursive=False)
+            manifest=json.dumps({'packages':sorted(selected),'dshVersion':packages[locate('@deepseek-ai/dsh')]['version'],'imageProcessing':True,'upstreamSourcesModified':False}).encode()
             entry=tarfile.TarInfo('opt/hoshino/runtime-selection.json');entry.size=len(manifest);entry.mode=0o644;output.addfile(entry,io.BytesIO(manifest))
             unpacked+=len(manifest)
     temporary.replace(target);gztemporary.replace(baseline)

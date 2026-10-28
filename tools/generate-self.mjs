@@ -12,7 +12,7 @@ const routes=[...(await read(join(kotlin,'ui/nav/Routes.kt'))).matchAll(/const v
 const events=[...(await read(join(kotlin,'core/HarnessClient.kt'))).matchAll(/data class (\w+)\(/g)].map(m=>m[1]);
 const tokens=[...(await read(join(kotlin,'ui/theme/Theme.kt'))).split('val LightHoshinoColors')[0].matchAll(/val (\w+): Color/g)].map(m=>m[1]);
 const gradle=await read(join(root,'app/build.gradle.kts'));const pkg=JSON.parse(await read(join(root,'node-host/package.json')));
-const input={appVersion:gradle.match(/versionName = "([^"]+)"/)[1],dshVersion:pkg.dependencies['@deepseek-ai/dsh'],dshCommit:'687f282e8625c6b8d11ff58211a90524be2e4317',commit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),repository:'https://github.com/senseixiaomisensei-sudo/hoshino-harness-android',routes,tokens,events};
+const input={appVersion:gradle.match(/versionName = "([^"]+)"/)[1],dshVersion:pkg.dependencies['@deepseek-ai/dsh'],dshCommit:'f3803c96974ad4a94195fb97e5c637e9c2a3afe3',commit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),repository:'https://github.com/senseixiaomisensei-sudo/hoshino-harness-android',routes,tokens,events};
 const dist=join(root,'node-host/dist');await mkdir(dist,{recursive:true});await writeFile(join(dist,'self-input.json'),JSON.stringify(input,null,2)+'\n');
 await mkdir(join(dist,'plugins/hh-bridge'),{recursive:true});await writeFile(join(dist,'plugins/hh-bridge/index.d.ts'),await read(join(root,'plugins/hh-bridge/index.d.ts')));
 const temp=await mkdtemp(join(tmpdir(),'hoshino-self-'));

@@ -1,4 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import {readFile} from 'node:fs/promises';
+import {createRequire} from 'node:module';
 import type { Context, Provider } from '../../node-host/src/platform.js';
 import * as piAi from '@deepseek-ai/dsh-llm-pi-ai';
 import { HostConnectionService } from '@deepseek-ai/dsh-client-connection';
@@ -59,7 +61,8 @@ export async function apply(ctx: Context): Promise<void> {
     try { await reload(); res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}'); }
     catch { res.writeHead(400).end(); }
   } }));
-  ctx.provide('mobileApi', { port: ctx.webServer.port, token });
+  const dshVersion=JSON.parse(await readFile(createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json'),'utf8')).version;
+  ctx.provide('mobileApi', { port: ctx.webServer.port, token, dshVersion });
   ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/mobile/control',handler:async(req,res)=> {
     if(req.method!=='POST' || 'rejection' in ctx.connection.admit(req)){res.writeHead(403).end();return;}
     try {

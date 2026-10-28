@@ -70,7 +70,7 @@ abstract class UnavailableHarnessClient : HarnessClient {
     override val shizuku: StateFlow<ShizukuStatus> = MutableStateFlow(ShizukuStatus.NotInstalled)
     override suspend fun refreshShizuku(): Unit = throw UnsupportedOperationException("即将支持")
     override suspend fun requestShizukuPermission(): Unit = throw UnsupportedOperationException("即将支持")
-    override val kernel: StateFlow<KernelInfo> = MutableStateFlow(KernelInfo("0.2.1-rc.2","24.18.1",false,"proot + Alpine",false))
+    override val kernel: StateFlow<KernelInfo> = MutableStateFlow(KernelInfo("0.2.2-alpha.2","24.18.1",false,"proot + Alpine",false))
     override suspend fun restartKernel(): Unit = throw UnsupportedOperationException("即将支持")
     override suspend fun kernelLogs(): List<String> = throw UnsupportedOperationException("即将支持")
     override val phoneCapabilities: StateFlow<List<PhoneCapability>> = MutableStateFlow(emptyList<PhoneCapability>())

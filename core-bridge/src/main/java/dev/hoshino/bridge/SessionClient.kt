@@ -14,7 +14,7 @@ import java.io.Closeable
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-/** dsh 0.2.1-rc.2 Connection RPC envelopes and API Gateway Mux; no local agent loop. */
+/** dsh 0.2.2-alpha.2 Connection RPC envelopes and API Gateway Mux; no local agent loop. */
 class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFailure: (String) -> Unit,
                     private val onScopedFrame: (String, JSONObject) -> Unit) : Closeable {
     constructor(onFrame: (JSONObject) -> Unit,onFailure: (String) -> Unit): this(onFrame,onFailure,{ _, _ -> })

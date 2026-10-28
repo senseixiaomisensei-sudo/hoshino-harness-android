@@ -48,7 +48,7 @@ class NativeKernel(private val context: Context,
                             connected.connect(body.getInt("port"),body.getString("token"));api=connected
                             ready.complete(connected)
                             state.update { it.copy(phase="已连接",readyAt=SystemClock.elapsedRealtime()) }
-                            java.io.File(context.filesDir,"m2-runtime-health.json").writeText(JSONObject().put("phase","ready").put("startedAt",state.value.startedAt).put("readyAt",state.value.readyAt).toString())
+                            java.io.File(context.filesDir,"m2-runtime-health.json").writeText(JSONObject().put("phase","ready").put("dshVersion",body.optString("dshVersion")).put("startedAt",state.value.startedAt).put("readyAt",state.value.readyAt).toString())
                             JSONObject()
                         }
                         else -> callbackHandler(method,body)

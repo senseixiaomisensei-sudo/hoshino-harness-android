@@ -35,7 +35,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private val eventBus=MutableSharedFlow<HarnessEvent>(extraBufferCapacity=1024)
     override val events=eventBus.asSharedFlow()
     override val connection=runtime.state.map { when(it.phase) { "已连接" -> ConnectionState.Connected; "启动中", "重新连接" -> ConnectionState.Connecting; else -> ConnectionState.Disconnected } }.stateIn(scope,SharingStarted.Eagerly,ConnectionState.Disconnected)
-    override val kernel=runtime.state.map { KernelInfo("0.2.1-rc.2","24.18.1",it.phase=="已连接","proot + Alpine",it.phase=="已连接") }.stateIn(scope,SharingStarted.Eagerly,KernelInfo("0.2.1-rc.2","24.18.1",false,"proot + Alpine",false))
+    override val kernel=runtime.state.map { KernelInfo("0.2.2-alpha.2","24.18.1",it.phase=="已连接","proot + Alpine",it.phase=="已连接") }.stateIn(scope,SharingStarted.Eagerly,KernelInfo("0.2.2-alpha.2","24.18.1",false,"proot + Alpine",false))
     private val sessionRows=MutableStateFlow<List<SessionInfo>>(initialRows)
     override val sessions=sessionRows.asStateFlow()
     private val workspaceRows=MutableStateFlow(listOf(Workspace("ws-default","workspace","/root/workspace")))
@@ -382,7 +382,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun deletePreset(presetId:String){val current=m2Control("config",JSONObject().put("name","modes.json"));val rows=current.optJSONArray("modes")?:JSONArray();val next=JSONArray();for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("id")!=presetId)next.put(row)};m2Control("config",JSONObject().put("name","modes.json").put("value",JSONObject().put("modes",next)));refreshControl()}
     suspend fun refreshControl() {
         val state=control("inspect");val manifest=state.optJSONObject("manifest")
-        val built=manifest?.optJSONArray("plugins")?.rows().orEmpty().map{row->Plugin(row.getString("id"),row.getString("id"),row.optString("name"),"0.2.1-rc.2",true,PluginSource.BuiltIn,PluginCategory.Tool,"Cordis · "+row.optString("source"))}
+        val built=manifest?.optJSONArray("plugins")?.rows().orEmpty().map{row->Plugin(row.getString("id"),row.getString("id"),row.optString("name"),"0.2.2-alpha.2",true,PluginSource.BuiltIn,PluginCategory.Tool,"Cordis · "+row.optString("source"))}
         val user=state.getJSONArray("plugins").rows().map{row->Plugin(row.getString("id"),row.getString("id"),"用户 Cordis 插件","0.1.0",row.getBoolean("enabled"),PluginSource.Local,PluginCategory.Tool,if(row.optBoolean("invalid"))"加载失败，请回滚" else "可热加载的用户工具")}
         pluginRows.value=built+user
         skillRows.value=state.getJSONArray("skills").rows().map{row->Skill(row.getString("name"),row.getString("name"),row.optString("description"),true,row.optString("source"),"")}
