@@ -125,7 +125,7 @@ jobs:
       - name: Case 1 signed dual ABI build
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug :app:assembleX86DebugAndroidTest -Pkotlin.compiler.execution.strategy=in-process --console=plain
+          ./gradlew assembleDebug :app:assembleX86DebugAndroidTest :core-bridge:testDebugUnitTest --tests dev.hoshino.bridge.WorkspaceFilesTest -Pkotlin.compiler.execution.strategy=in-process --console=plain
           python3 tools/package-dsh-upgrade.py
           for apk in build/deliverables/*0.2.1-m2*.apk; do
             "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" | tee /tmp/apk-cert.txt

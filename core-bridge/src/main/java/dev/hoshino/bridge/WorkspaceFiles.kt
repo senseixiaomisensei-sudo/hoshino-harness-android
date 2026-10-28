@@ -3,6 +3,7 @@ package dev.hoshino.bridge
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
@@ -23,14 +24,22 @@ class WorkspaceFiles(private val root:File,private val trash:File) {
         val requested=rootPath.resolve(relative).normalize()
         require(requested.startsWith(rootPath)){"路径越出工作区"}
         var ancestor=requested
-        while(ancestor!=rootPath){require(!Files.isSymbolicLink(ancestor)){"工作区文件操作不跟随符号链接"};ancestor=ancestor.parent ?: error("路径越界")}
+        while(ancestor!=rootPath){require(!Files.isSymbolicLink(ancestor) || (ancestor==requested && isProotHardLink(ancestor))){"工作区文件操作不跟随符号链接"};ancestor=ancestor.parent ?: error("路径越界")}
         val target=File(root,relative).canonicalFile
         require(target.toPath().startsWith(root.canonicalFile.toPath())) {"路径或符号链接越出工作区"}
-        return target
+        // Keep the public filename: canonicalizing a PRoot hard link exposes its backing file.
+        return if(Files.isSymbolicLink(requested))requested.toFile() else target
     }
+    /** Only PRoot's same-directory, two-hop regular-file hard links are accepted. */
+    private fun isProotHardLink(path:Path):Boolean = runCatching {
+        val intermediate=path.parent.resolve(Files.readSymbolicLink(path)).normalize()
+        if(intermediate.parent!=path.parent || !intermediate.fileName.toString().matches(Regex("\\.(?:proot\\.)?l2s\\..+[0-9]{4}")) || !Files.isSymbolicLink(intermediate))return@runCatching false
+        val backing=intermediate.parent.resolve(Files.readSymbolicLink(intermediate)).normalize()
+        backing.parent==path.parent && backing.fileName.toString().matches(Regex(Regex.escape(intermediate.fileName.toString())+"\\.[0-9]{4,}")) && Files.isRegularFile(backing,NOFOLLOW_LINKS)
+    }.getOrDefault(false)
     fun publicPath(file:File)="/root/workspace"+file.relativeTo(root.canonicalFile).invariantSeparatorsPath.let {if(it.isEmpty())"" else "/$it"}
     fun list(path:String=""):List<WorkspaceEntry> = resolve(path).listFiles().orEmpty().mapNotNull { file ->
-        runCatching {val safe=resolve(publicPath(file.canonicalFile));WorkspaceEntry(publicPath(safe),file.name,safe.isDirectory,if(safe.isFile)safe.length() else 0,safe.lastModified())}.getOrNull()
+        runCatching {val safe=resolve(publicPath(file.absoluteFile));WorkspaceEntry(publicPath(safe),file.name,safe.isDirectory,if(safe.isFile)safe.length() else 0,safe.lastModified())}.getOrNull()
     }.sortedWith(compareByDescending<WorkspaceEntry> {it.directory}.thenBy {it.name.lowercase()})
     fun version(file:File):String = if(!file.exists())"absent" else MessageDigest.getInstance("SHA-256").let { digest ->
         file.inputStream().use {input->val buffer=ByteArray(65536);while(true){val n=input.read(buffer);if(n<0)break;digest.update(buffer,0,n)}}

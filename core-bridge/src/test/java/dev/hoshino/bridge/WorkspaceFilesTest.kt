@@ -31,6 +31,17 @@ class WorkspaceFilesTest {
         try{Files.createSymbolicLink(link.toPath(),outside.toPath())}catch(e:java.nio.file.FileSystemException){org.junit.Assume.assumeNoException("Host cannot create test symlink",e)}
         assertThrows(IllegalArgumentException::class.java){store.resolve("link/secret")}
     }
+    @Test fun prootHardLinksKeepTheirPublicNameAndRejectEscapes() {
+        val store=store();val root=store.resolve("").toPath()
+        val intermediate=root.resolve(".l2s.hello.tmp0001");val backing=root.resolve(".l2s.hello.tmp0001.0001")
+        Files.writeString(backing,"from kernel\n")
+        try {Files.createSymbolicLink(intermediate,backing);Files.createSymbolicLink(root.resolve("hello.txt"),intermediate)}catch(e:java.nio.file.FileSystemException){org.junit.Assume.assumeNoException("Host cannot create test symlink",e)}
+        assertEquals("from kernel\n",store.editable("hello.txt").text)
+        assertEquals("/root/workspace/hello.txt",store.publicPath(store.resolve("hello.txt")))
+        assertTrue(store.list().any{it.name=="hello.txt" && it.path=="/root/workspace/hello.txt"})
+        val outside=temporary.newFile("secret").toPath();Files.delete(intermediate);Files.createSymbolicLink(intermediate,outside)
+        assertThrows(IllegalArgumentException::class.java){store.resolve("hello.txt")}
+    }
     @Test fun largeFilesArePagedAndNeverSilentlyEditable() {
         val store=store();val large=store.resolve("large.txt");large.bufferedWriter().use{out->repeat(25000){out.write("line $it "+"x".repeat(100)+"\n")}}
         assertThrows(IllegalArgumentException::class.java){store.editable("large.txt")}

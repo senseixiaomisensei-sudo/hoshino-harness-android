@@ -16,6 +16,8 @@ try:
  test('app.hoshino.harness.DshUpgradeAcceptanceTest#realKernelChatsAndExecutesTools','case3-chat-tools')
  data=json.loads(adb('exec-out','run-as',pkg,'cat','files/dsh-upgrade-acceptance.json'));assert set(data)=={'2','3'} and all(v['passed'] for v in data.values());(out/'dsh-upgrade-acceptance.json').write_text(json.dumps(data,ensure_ascii=False,indent=2))
 finally:
+ for name,args in [('workspace-links.txt',('shell','run-as',pkg,'ls','-la','files/workspace'))]:
+  (out/name).write_bytes(adb(*args,check=False))
  partial=adb('exec-out','run-as',pkg,'cat','files/dsh-upgrade-acceptance.json',check=False)
  if partial:(out/'partial.json').write_bytes(partial)
  health=adb('exec-out','run-as',pkg,'cat','files/m2-runtime-health.json',check=False)
