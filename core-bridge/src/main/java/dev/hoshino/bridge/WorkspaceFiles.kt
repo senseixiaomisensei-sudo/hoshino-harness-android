@@ -30,14 +30,18 @@ class WorkspaceFiles(private val root:File,private val trash:File) {
         // Keep the public filename: canonicalizing a PRoot hard link exposes its backing file.
         return if(Files.isSymbolicLink(requested))root.canonicalFile.toPath().resolve(rootPath.relativize(requested)).toFile() else target
     }
+    private fun physicalWorkspacePath(path:Path):Path {
+        val logical=root.toPath().toAbsolutePath().normalize()
+        return if(path.startsWith(logical))root.canonicalFile.toPath().resolve(logical.relativize(path)) else path
+    }
     /** Accept only PRoot's two-hop regular-file hard links contained in this workspace. */
     private fun isProotHardLink(path:Path):Boolean = runCatching {
-        val intermediate=path.parent.resolve(Files.readSymbolicLink(path)).normalize()
-        val boundary=root.toPath().toAbsolutePath().normalize()
+        val intermediate=physicalWorkspacePath(path.parent.resolve(Files.readSymbolicLink(path)).normalize())
+        val boundary=root.canonicalFile.toPath()
         if(!intermediate.startsWith(boundary) || !intermediate.fileName.toString().matches(Regex("\\.(?:proot\\.)?l2s\\..+[0-9]{4}")) || !Files.isSymbolicLink(intermediate))return@runCatching false
         var parent=intermediate.parent
         while(parent!=boundary){if(Files.isSymbolicLink(parent))return@runCatching false;parent=parent.parent ?: return@runCatching false}
-        val backing=intermediate.parent.resolve(Files.readSymbolicLink(intermediate)).normalize()
+        val backing=physicalWorkspacePath(intermediate.parent.resolve(Files.readSymbolicLink(intermediate)).normalize())
         backing.parent==intermediate.parent && backing.fileName.toString().matches(Regex(Regex.escape(intermediate.fileName.toString())+"\\.[0-9]{4,}")) && Files.isRegularFile(backing,NOFOLLOW_LINKS)
     }.getOrDefault(false)
     fun publicPath(file:File)="/root/workspace"+file.relativeTo(root.canonicalFile).invariantSeparatorsPath.let {if(it.isEmpty())"" else "/$it"}

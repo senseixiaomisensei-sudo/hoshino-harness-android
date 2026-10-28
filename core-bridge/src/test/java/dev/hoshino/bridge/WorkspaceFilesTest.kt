@@ -48,4 +48,12 @@ class WorkspaceFilesTest {
         assertThrows(IllegalArgumentException::class.java){store.editable("large.txt")}
         val page=store.read("large.txt",501,500);assertTrue(page.text.startsWith("line 500 "));assertEquals(500,page.text.lines().size);assertFalse(page.eof)
     }
+    @Test fun prootHardLinksAlsoWorkThroughAndroidStyleRootAliases() {
+        val actual=temporary.newFolder("actual").toPath();val alias=temporary.root.toPath().resolve("alias")
+        val intermediate=actual.resolve(".l2s.hello0001");val backing=actual.resolve(".l2s.hello0001.0001");Files.writeString(backing,"kernel")
+        try {Files.createSymbolicLink(alias,actual);Files.createSymbolicLink(intermediate,backing);Files.createSymbolicLink(actual.resolve("hello.txt"),intermediate)}catch(e:java.nio.file.FileSystemException){org.junit.Assume.assumeNoException("Host cannot create test symlink",e)}
+        val store=WorkspaceFiles(alias.toFile(),temporary.newFolder("trash"))
+        assertEquals("kernel",store.editable("hello.txt").text)
+        assertEquals("/root/workspace/hello.txt",store.publicPath(store.resolve("hello.txt")))
+    }
 }
