@@ -15,7 +15,8 @@ export async function apply(ctx: Context): Promise<void> {
   const reload = async () => {
     const providers = await ctx.androidBridge.call<Provider[]>('providers');
     // Load only the enabled providers' local wire implementation before reporting chat-ready. No network probe.
-    await Promise.all([...new Set(providers.map(p=>p.type==='anthropic'?'anthropic':p.type==='openai-codex'?'openai-codex-responses':'openai-completions'))].map(api=>import('@earendil-works/pi-ai/api/'+api)));
+    // pi-ai exports ./api/<file>; the Anthropic wire file is anthropic-messages. Warm-up only: a failure here must never stop the kernel.
+    await Promise.all([...new Set(providers.map(p=>p.type==='anthropic'?'anthropic-messages':p.type==='openai-codex'?'openai-codex-responses':'openai-completions'))].map(api=>import('@earendil-works/pi-ai/api/'+api).catch(()=>undefined)));
     const map: Record<string, object> = {};
     for (const p of providers) {
       if (!/^[a-z][a-z0-9-]*$/.test(p.id) || !p.models.length) throw new Error('Invalid provider configuration');
@@ -40,7 +41,8 @@ export async function apply(ctx: Context): Promise<void> {
     providerFiber = ctx.plugin(piAi, { providers: map });
     await providerFiber;
   };
-  await reload();
+  // One rejected provider must never keep the whole kernel offline; start with none and let the app report the provider error.
+  await reload().catch(async()=>{console.error('hoshino: provider configuration rejected; kernel started without providers');await providerFiber?.dispose();providerFiber=ctx.plugin(piAi,{providers:{}});await providerFiber;});
   const token = randomBytes(32).toString('hex');
   let exchanged = false;
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/mobile/connect', handler: (req, res) => {

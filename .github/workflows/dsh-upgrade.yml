@@ -96,7 +96,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug :app:assembleX86DebugAndroidTest -Pkotlin.compiler.execution.strategy=in-process --console=plain
           python3 tools/package-dsh-upgrade.py
-          for apk in build/deliverables/*0.2.1-m2*.apk; do
+          for apk in build/deliverables/*0.2.1-m2.1*.apk; do
             "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" | tee /tmp/apk-cert.txt
             grep -qi 'e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1' /tmp/apk-cert.txt
           done
@@ -105,10 +105,28 @@ jobs:
         with:
           name: hoshino-dsh-upgrade
           path: |
-            build/deliverables/*0.2.1-m2*
+            build/deliverables/*0.2.1-m2.1*
             docs/dsh-upgrade-apk-sizes.json
             docs/m1-size-*.json
             app/build/outputs/apk/androidTest/x86/debug/*.apk
+  arm64-boot:
+    needs: development
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: hoshino-dsh-upgrade, path: artifacts }
+      - name: Real arm64 kernel boots with Anthropic, OpenAI-compatible and ChatGPT providers configured
+        working-directory: tools/diag
+        env:
+          PROVIDERS: '[{"id":"claude","type":"anthropic","baseURL":"https://api.anthropic.com","apiKey":"KEY_CLAUDE","models":["claude-sonnet-4-5"]},{"id":"deepseek","type":"openai-compatible","baseURL":"https://api.deepseek.com/v1","apiKey":"KEY_DS","models":["deepseek-chat"]},{"id":"openai-codex","type":"openai-codex","baseURL":"https://chatgpt.com/backend-api","apiKey":"KEY_OPENAI_CODEX","models":["gpt-5.1-codex"]}]'
+        run: |
+          mkdir -p ../../boot
+          bash boot.sh ../../artifacts/build/deliverables/Hoshino-Harness-0.2.1-m2.1-arm64-v8a-debug.apk arm64-v8a ../../boot/arm64-anthropic-boot.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: arm64-boot, path: boot }
   acceptance:
     needs: development
     runs-on: ubuntu-24.04
@@ -144,7 +162,7 @@ jobs:
             reports
             mock.log
   publish:
-    needs: [development, acceptance]
+    needs: [development, acceptance, arm64-boot]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -154,9 +172,11 @@ jobs:
         with: { name: hoshino-dsh-upgrade, path: artifacts }
       - uses: actions/download-artifact@v4
         with: { name: dsh-upgrade-acceptance, path: acceptance }
+      - uses: actions/download-artifact@v4
+        with: { name: arm64-boot, path: boot }
       - name: Publish after the three requested checks pass
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
           test "$(gh api repos/${{ github.repository }}/git/ref/heads/codex/dsh-upgrade --jq .object.sha)" = "${{ github.sha }}"
           python3 tools/dsh-upgrade-release.py
-          gh release create v0.2.1-m2-dsh-alpha.2 --target '${{ github.sha }}' --prerelease --title 'Hoshino · dsh 0.2.2-alpha.2' --notes-file build/dsh-upgrade-release.md artifacts/build/deliverables/* artifacts/docs/dsh-upgrade-apk-sizes.json acceptance/reports/dsh-upgrade-acceptance.json
+          gh release create v0.2.1-m2.1 --target '${{ github.sha }}' --prerelease --title 'Hoshino 0.2.1-m2.1 · 修复内核连接' --notes-file build/dsh-upgrade-release.md artifacts/build/deliverables/* artifacts/docs/dsh-upgrade-apk-sizes.json acceptance/reports/dsh-upgrade-acceptance.json
