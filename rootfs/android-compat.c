@@ -7,6 +7,8 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <ctype.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -26,7 +28,37 @@ int rmdir(const char *path) {
 int mkdir(const char *path, mode_t mode) {
     return syscall(SYS_mkdirat, AT_FDCWD, path, mode);
 }
+/* dsh-fs-local publishes a synced staging file with link(), then removes its
+ * staging directory. PRoot emulates that link inside the directory being
+ * removed. Recognize only this private staging layout and publish with the
+ * kernel's atomic no-replace rename instead. Existing targets remain intact;
+ * all other link() calls retain their normal behavior. No upstream code changes.
+ */
+static int dsh_staged_create(const char *from, const char *to) {
+    const char *name = strrchr(to, '/');
+    if (!name || !name[1]) return 0;
+    size_t directory = (size_t)(name - to + 1);
+    name++;
+    size_t length = strlen(name);
+    if (strncmp(from, to, directory) != 0) return 0;
+    const char *part = from + directory;
+    if (*part++ != '.' || strncmp(part, name, length) != 0) return 0;
+    part += length;
+    if (*part++ != '.' || !isdigit((unsigned char)*part)) return 0;
+    while (isdigit((unsigned char)*part)) part++;
+    if (*part++ != '.') return 0;
+    for (int i = 0; i < 36; i++) {
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            if (*part++ != '-') return 0;
+        } else if (!isxdigit((unsigned char)*part++)) return 0;
+    }
+    if (strncmp(part, ".tmpdir/", 8) != 0) return 0;
+    part += 8;
+    return strncmp(part, name, length) == 0 && strcmp(part + length, ".tmp") == 0;
+}
 int link(const char *from, const char *to) {
+    if (dsh_staged_create(from, to))
+        return syscall(SYS_renameat2, AT_FDCWD, from, AT_FDCWD, to, 1 /* RENAME_NOREPLACE */);
     return syscall(SYS_linkat, AT_FDCWD, from, AT_FDCWD, to, 0);
 }
 int symlink(const char *target, const char *path) {

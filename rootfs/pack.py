@@ -8,6 +8,10 @@ DENIED=set() # M1 enables native dsh attachments and therefore restores Sharp/li
 
 def pack(source, abi, target, baseline, refresh=False, add_dependencies=False):
     started=time.monotonic();packages={}
+    compatibility=None
+    if refresh:
+        from build_compat import build
+        compatibility=build(abi)
     with tarfile.open(source,'r:*') as archive:
         for item in archive:
             name=item.name.removeprefix('./')
@@ -111,6 +115,7 @@ def pack(source, abi, target, baseline, refresh=False, add_dependencies=False):
             for item in archive:
                 item.name=item.name.removeprefix('./')
                 if item.name=='opt/hoshino/runtime-selection.json':continue
+                if compatibility is not None and item.name=='opt/hoshino/libandroid-compat.so':continue
                 if not keep(item.name):continue
                 if any(item.name==p or item.name.startswith(p+'/') for p in replacements):continue
                 if refresh and (item.name==PREFIX+'dist' or item.name.startswith(PREFIX+'dist/')):continue
@@ -141,6 +146,8 @@ def pack(source, abi, target, baseline, refresh=False, add_dependencies=False):
                 for local in ['package.json','package-lock.json']:
                     path=ROOT/'node-host'/local;output.add(path,arcname=PREFIX+local,recursive=False)
             manifest=json.dumps({'packages':sorted(selected),'dshVersion':packages[locate('@deepseek-ai/dsh')]['version'],'imageProcessing':True,'upstreamSourcesModified':False}).encode()
+            if compatibility is not None:
+                entry=tarfile.TarInfo('opt/hoshino/libandroid-compat.so');entry.size=len(compatibility);entry.mode=0o755;output.addfile(entry,io.BytesIO(compatibility));unpacked+=len(compatibility)
             entry=tarfile.TarInfo('opt/hoshino/runtime-selection.json');entry.size=len(manifest);entry.mode=0o644;output.addfile(entry,io.BytesIO(manifest))
             unpacked+=len(manifest)
     temporary.replace(target);gztemporary.replace(baseline)

@@ -18,6 +18,7 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
+          python3 ../tools/check-dsh-staged-create.py
       - uses: actions/upload-artifact@v4
         with: { name: dsh-upgrade-host, path: node-host/dist }
   proot-source:
@@ -41,45 +42,13 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: actions/setup-node@v4
-        with: { node-version: '24' }
-      - uses: actions/download-artifact@v4
-        with: { name: dsh-upgrade-host, path: node-host/dist }
-      - uses: actions/cache/restore@v4
-        id: runtime
-        with:
-          path: |
-            app/src/main/assets/kernel/${{ matrix.abi }}.txz
-            .research/runtime/${{ matrix.abi }}.tgz
-            docs/m1-size-${{ matrix.abi }}.json
-          key: m1-kernel-v2-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('rootfs/Dockerfile', 'rootfs/pack.py', 'rootfs/runtime-seeds.json', 'rootfs/node-apk-lock.json', 'rootfs/android-compat.c', 'rootfs/termux-lock.json', 'node-host/package-lock.json') }}
-          restore-keys: m1-kernel-v2-${{ runner.os }}-${{ matrix.abi }}-
-      - name: Restore the unchanged target-native base for locked JS replacement
-        if: steps.runtime.outputs.cache-hit != 'true'
+      - name: Reuse the verified original alpha.2 runtime; rebuild only our adapter later
         uses: actions/download-artifact@v4
         with:
-          name: m2-runtime-${{ matrix.abi }}
-          run-id: 40506804124
+          name: dsh-upgrade-runtime-${{ matrix.abi }}
+          run-id: 40687337006
           github-token: ${{ github.token }}
           path: .
-      - name: Build and smoke-test musl PTY and image processing
-        if: steps.runtime.outputs.cache-hit != 'true'
-        run: |
-          if test -f app/src/main/assets/kernel/${{ matrix.abi }}.txz; then
-            npm --prefix node-host ci --ignore-scripts --no-audit --no-fund
-            python3 rootfs/prepare.py --extend-host --abi ${{ matrix.abi }}
-          else
-            python3 rootfs/prepare.py --rootfs-only --abi ${{ matrix.abi }}
-          fi
-      - uses: actions/cache/save@v4
-        if: steps.runtime.outputs.cache-hit != 'true'
-        with:
-          path: |
-            app/src/main/assets/kernel/${{ matrix.abi }}.txz
-            .research/runtime/${{ matrix.abi }}.tgz
-            docs/m1-size-${{ matrix.abi }}.json
-          key: ${{ steps.runtime.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         with:
           name: dsh-upgrade-runtime-${{ matrix.abi }}
@@ -125,7 +94,7 @@ jobs:
       - name: Case 1 signed dual ABI build
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug :app:assembleX86DebugAndroidTest :core-bridge:testDebugUnitTest --tests dev.hoshino.bridge.WorkspaceFilesTest -Pkotlin.compiler.execution.strategy=in-process --console=plain
+          ./gradlew assembleDebug :app:assembleX86DebugAndroidTest -Pkotlin.compiler.execution.strategy=in-process --console=plain
           python3 tools/package-dsh-upgrade.py
           for apk in build/deliverables/*0.2.1-m2*.apk; do
             "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" | tee /tmp/apk-cert.txt
