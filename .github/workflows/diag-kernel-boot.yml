@@ -14,5 +14,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - run: bash boot.sh "${{ matrix.url }}" "${{ matrix.abi }}"
+      - env: { PROVIDERS: '[{"id":"claude","type":"anthropic","baseURL":"https://api.anthropic.com","apiKey":"KEY_CLAUDE","models":["claude-sonnet-4-5"]}]' }
+        run: bash boot.sh "${{ matrix.url }}" "${{ matrix.abi }}"
         working-directory: tools/diag
