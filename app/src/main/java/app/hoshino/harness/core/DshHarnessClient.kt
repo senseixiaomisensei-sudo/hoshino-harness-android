@@ -193,7 +193,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val seq=event.getInt("seq");if(!seen.getOrPut(sid) { mutableSetOf() }.add(seq))return
         val id="e:$seq";val data=event.optJSONObject("data") ?: return
         cachedRecords[sid]=(cachedRecords[sid].orEmpty().filterNot{it.optInt("seq")==seq}+event).takeLast(300)
-        if(event.optString("type") in setOf("user/message","assistant/message")){val time=OriginalSessionHistory.time(event.opt("time"));sessionRows.update{rows->rows.map{if(it.id==sid)it.copy(updatedAt=maxOf(it.updatedAt,time))else it}}}
+        if(event.optString("type") in setOf("user/message","assistant/message")){val time=OriginalSessionHistory.time(event.opt("time"));sessionRows.update{rows->rows.map{if(it.id==sid)it.copy(updatedAt=time)else it}}}
         when(event.getString("type")) {
             "turn/start" -> {if(!replay)M2SafeMode.recordRunningMemory(context);tokenTurns[sid]=TurnTokens(event.optLong("time",System.currentTimeMillis()));publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
             "turn/end" -> {
@@ -298,7 +298,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     override suspend fun send(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) {
         if(runtime.state.value.phase!="已连接"){
-            val id="waiting:"+UUID.randomUUID();outbox.add(PendingKernelMessages.Pending(id,sessionId,text,attachments,options));Hoshino.store.enqueue(sessionId,QueuedMessage(id,text,attachments));persistCache();startKernel();return
+            val id="waiting:"+UUID.randomUUID();outbox.add(PendingKernelMessages.Pending(id,sessionId,text,attachments,options,workspaceRows.value.firstOrNull{it.id==sessionRows.value.firstOrNull{s->s.id==sessionId}?.workspaceId}?.path?:"/root/workspace"));Hoshino.store.enqueue(sessionId,QueuedMessage(id,text,attachments));persistCache();startKernel();return
         }
         val client=api();activeSession=sessionId
         val model=options.model ?: error("请先配置模型供应商")
@@ -333,9 +333,9 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     fun restoreWaitingMessages(){for(p in outbox.list())Hoshino.store.enqueue(p.sessionId,QueuedMessage(p.id,p.text,p.attachments))}
     private suspend fun flushOutbox(){
         if(!draining.compareAndSet(false,true))return
-        try{for(p in outbox.list()){
+        try{val pending=outbox.list();if(pending.isEmpty())return;val existing=api().rpc("session/list",JSONObject()).getJSONArray("items").rows().map{it.getString("sessionId")}.toMutableSet();for(p in pending){
             try{
-                if(metadata.getBoolean("local:${p.sessionId}",false)){val row=sessionRows.value.firstOrNull{it.id==p.sessionId};val cwd=workspaceRows.value.firstOrNull{it.id==row?.workspaceId}?.path?:"/root/workspace";api().rpc("session/create",JSONObject().put("sessionId",p.sessionId).put("cwd",cwd));metadata.edit().remove("local:${p.sessionId}").apply()}
+                if(p.sessionId !in existing){api().rpc("session/create",JSONObject().put("sessionId",p.sessionId).put("cwd",p.cwd));existing.add(p.sessionId);metadata.edit().remove("local:${p.sessionId}").apply()}
                 api().follow(p.sessionId);pendingRequestIds[p.sessionId]=p.id;send(p.sessionId,p.text,p.attachments,p.options);outbox.remove(p.id);Hoshino.store.removeQueued(p.sessionId,p.id)
             }catch(failure:Exception){publish(HarnessEvent.Notice(p.sessionId,"waiting-error:${p.id}","等待内核消息仍已保留："+describeFailure(failure)))}finally{pendingRequestIds.remove(p.sessionId)}
         }}finally{draining.set(false)}

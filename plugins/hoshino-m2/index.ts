@@ -39,7 +39,7 @@ export async function apply(ctx:Context){
  const fallbackRoutes=new Map<string,Data>();const failedRoutes=new Map<string,Set<string>>();
  ctx.on('agent/request',async(payload,next)=>{
   const id=payload.agent.id;const mode=modeFor(id);if(typeof mode.maxSteps==='number'&&payload.step>=mode.maxSteps)throw Error('Configured maximum Agent steps reached');
-  const call={...await next()};const override=fallbackRoutes.get(id)??mode.model;
+  const call={...await next()};const failed=fallbackRoutes.get(id);if(failed&&failed.turn!==payload.turn)fallbackRoutes.delete(id);const override=(failed?.turn===payload.turn?failed:undefined)??mode.model;
   if(override?.providerId&&override?.modelId){call.provider=String(override.providerId);call.model=String(override.modelId);delete call.reasoningEffort;}
   if(typeof mode.temperature==='number')call.temperature=Math.min(2,Math.max(0,mode.temperature));
   if(typeof mode.maxOutputTokens==='number')call.maxTokens=Math.max(1,Math.floor(mode.maxOutputTokens));
@@ -48,7 +48,7 @@ export async function apply(ctx:Context){
  ctx.on('agent/request-error',async(payload,next)=>{
   if(payload.signal.aborted)return next();const key=payload.agent.id+':'+payload.turn;const tried=failedRoutes.get(key)??new Set<string>();tried.add(payload.provider);failedRoutes.set(key,tried);
   const route=(config.get('routing.json').fallback??[]).find((r:Data)=>r.providerId&&r.modelId&&!tried.has(r.providerId));
-  if(!route)return next();fallbackRoutes.set(payload.agent.id,route);return {kind:'retry'};
+  if(!route)return next();fallbackRoutes.set(payload.agent.id,{...route,turn:payload.turn});return {kind:'retry'};
  });
  const promptLayers=async(sid:string)=>{
   const p=config.get('prompts.json');const mode=modeFor(sid);const layers:Data[]=[{source:'global',...(p.global??{})}];

@@ -22,7 +22,7 @@ class KernelService : Service() {
         fun notification(text:String)=Notification.Builder(this,"kernel").setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("Hoshino Harness").setContentText(text).setContentIntent(intent).addAction(Notification.Action.Builder(null,"暂停",pause).build()).addAction(Notification.Action.Builder(null,"停止",stop).build()).setOngoing(true).build()
         startForeground(1,notification("本地 dsh 内核运行中"))
         wakeLock=(getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"hoshino:kernel")
-        scope.launch{while(isActive){val running=Hoshino.client.sessions.value.count{it.running};if(running>0 && wakeLock?.isHeld!=true)wakeLock?.acquire(10*60*1000L);if(running==0 && wakeLock?.isHeld==true)wakeLock?.release();notifications.notify(1,notification(if(running>0)"$running 个会话运行中 · 已启用事件日志与恢复"else"本地内核就绪"));delay(5000)}}
+        scope.launch{while(isActive){val running=Hoshino.client.sessions.value.count{it.running};if(running>0 && wakeLock?.isHeld!=true)wakeLock?.acquire(10*60*1000L);if(running==0 && wakeLock?.isHeld==true)wakeLock?.release();notifications.notify(1,notification(if(running>0)"$running 个会话运行中 · 已启用事件日志与恢复"else if((Hoshino.client as? DshHarnessClient)?.runtime?.state?.value?.phase=="已连接")"本地内核就绪"else"正在启动或重连本地内核"));delay(5000)}}
         (Hoshino.client as? DshHarnessClient)?.startKernel()
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { if(intent?.action=="STOP"){stopSelf();return START_NOT_STICKY};if(intent?.action=="PAUSE")scope.launch{Hoshino.client.sessions.value.filter{it.running}.forEach{runCatching{Hoshino.client.stop(it.id)}}};return START_STICKY }

@@ -17,7 +17,7 @@ object OriginalSessionHistory {
             runCatching{file.bufferedReader().use{reader->
                 val header=JSONObject(reader.readLine()?:return@use null);val id=header.optString("id").takeIf{it.isNotBlank()}?:return@use null
                 var updated=0L;var title="会话 "+id.take(8);val events=ArrayDeque<JSONObject>()
-                reader.forEachLine{line->runCatching{val raw=JSONObject(line);val e=raw.optJSONObject("event")?:raw;val type=e.optString("type");if(type in setOf("user/message","assistant/message"))updated=maxOf(updated,time(e.opt("time")));if(type=="session/title")title=e.optJSONObject("data")?.optString("title",title)?:title;if(e.has("seq")&&e.has("data")){events.addLast(e);if(events.size>300)events.removeFirst()}}}
+                reader.forEachLine{line->runCatching{val raw=JSONObject(line);val e=raw.optJSONObject("event")?:raw;val type=e.optString("type");if(type in setOf("user/message","assistant/message"))updated=time(e.opt("time"));if(type=="session/title")title=e.optJSONObject("data")?.optString("title",title)?:title;if(e.has("seq")&&e.has("data")){events.addLast(e);if(events.size>300)events.removeFirst()}}}
                 Entry(id,time(header.opt("createdAt")),updated,title,header.optString("cwd","/root/workspace"),events.toList())
             }}.getOrNull()
         }.sortedByDescending{it.updated}

@@ -180,5 +180,6 @@ jobs:
       - name: Publish only after all seven acceptance groups pass
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
+          test "$(gh api repos/${{ github.repository }}/git/ref/heads/codex/m2.1 --jq .object.sha)" = "${{ github.sha }}"
           python3 tools/m21-release-notes.py
           gh release create v0.2.1-m2 --target '${{ github.sha }}' --prerelease --title 'Hoshino Harness v0.2.1-m2' --notes-file build/m21-release-notes.md artifacts/build/deliverables/* artifacts/docs/m21-apk-sizes.json acceptance/reports/m21-acceptance.json

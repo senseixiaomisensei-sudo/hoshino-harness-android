@@ -199,7 +199,9 @@ class ChatViewModel : ViewModel() {
                 _currentId.value = s.id
                 id = s.id
             }
-            if (session.value.running || store.state(id).value.running) {
+            if(client.connection.value!=app.hoshino.harness.core.ConnectionState.Connected){
+                client.send(id,trimmed,attachments,options())
+            }else if (session.value.running || store.state(id).value.running) {
                 store.enqueue(id, QueuedMessage("q${System.nanoTime()}", trimmed, attachments))
             } else {
                 client.send(id, trimmed, attachments, options())
