@@ -410,7 +410,36 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun removePlugin(pluginId:String) {require(plugins.value.none{it.id==pluginId && it.source==PluginSource.BuiltIn});control("remove-plugin",JSONObject().put("id",pluginId));refreshControl()}
     override suspend fun installPluginFromGit(spec:String):Result<Plugin> = runCatching{val result=m2Control("install-plugin",JSONObject().put("spec",spec));check(result.optBoolean("ok")){result.optString("error","插件安装失败")+"\n"+result.optString("detail")};val id=result.getString("id");control("reload",JSONObject().put("plugin",id));refreshControl();plugins.value.first{it.id==id}}
     override suspend fun linkLocalPlugin(path:String):Result<Plugin> = installPluginFromGit(path)
-    override suspend fun market(op:String,args:JSONObject):JSONObject=m2Control("market",JSONObject(args.toString()).put("op",op))
+    // 插件市场：内核（proot 里的 Node）直连读取索引；Node 不走 Android 的系统代理，失败时改由 Android 网络栈（系统代理/VPN）下载索引交给内核解析。
+    override suspend fun market(op:String,args:JSONObject):JSONObject{
+        val request=JSONObject(args.toString()).put("op",op);systemProxy()?.let{request.put("proxy",it)}
+        return try{m2Control("market",request)}catch(first:Exception){
+            val url=request.optString("url");if(url.isBlank()||op !in setOf("query","plugin","install","source-add"))throw first
+            val file=runCatching{androidDownloadIndex(url)}.getOrElse{throw IllegalStateException((first.message?:"索引读取失败")+"\n系统网络也失败："+(it.message?:it.javaClass.simpleName))}
+            m2Control("market",JSONObject().put("op","load-file").put("url",url).put("file",file))
+            request.remove("refresh");m2Control("market",request)
+        }
+    }
+    private fun systemProxy():String?{val info=runCatching{(context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).defaultProxy}.getOrNull()?:return null;val host=info.host;return if(host.isNullOrBlank()||info.port<=0)null else "http://$host:${info.port}"}
+    private suspend fun androidDownloadIndex(url:String):String=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+        val candidates=listOf(url)+if(java.net.URI(url).host=="cdn.jsdelivr.net")listOf("fastly.jsdelivr.net","gcore.jsdelivr.net","testingcf.jsdelivr.net").map{url.replaceFirst("cdn.jsdelivr.net",it)} else emptyList()
+        val hash=java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString(""){"%02x".format(it)}
+        val dir=java.io.File(context.filesDir,"hoshino/market-cache").also{it.mkdirs()};val target=java.io.File(dir,"$hash.json");val tmp=java.io.File(dir,"$hash.tmp")
+        val errors=mutableListOf<String>()
+        for(candidate in candidates){
+            try{
+                var current=java.net.URL(candidate)
+                fun open(u:java.net.URL)=(u.openConnection() as java.net.HttpURLConnection).apply{connectTimeout=15000;readTimeout=30000;instanceFollowRedirects=false;setRequestProperty("Accept","application/json");setRequestProperty("User-Agent","Hoshino-Harness/0.2 (DSH plugin market)")}
+                var conn=open(current);var hops=0
+                while(conn.responseCode in 300..399){val location=conn.getHeaderField("Location")?:error("HTTP ${conn.responseCode} 无跳转地址");check(hops++<5){"跳转次数过多"};val next=java.net.URL(current,location);conn.disconnect();check(!(current.protocol=="https"&&next.protocol!="https")){"拒绝从 https 跳转到 http"};current=next;conn=open(current)}
+                check(conn.responseCode in 200..299){"HTTP ${conn.responseCode}"}
+                conn.inputStream.use{input->tmp.outputStream().use{out->val b=ByteArray(65536);var total=0L;while(true){val n=input.read(b);if(n<0)break;total+=n;check(total<=128L*1024*1024){"索引超过 128 MiB"};out.write(b,0,n)}}}
+                conn.disconnect();check(tmp.renameTo(target)||run{target.delete();tmp.renameTo(target)}){"无法写入索引缓存"}
+                return@withContext "market-cache/$hash.json"
+            }catch(e:Exception){tmp.delete();errors+=java.net.URL(candidate).host+" "+(e.message?:e.javaClass.simpleName)}
+        }
+        error(errors.joinToString("；"))
+    }
     override suspend fun installFromMarket(source:String,name:String,version:String?):Result<Plugin> = runCatching{val args=JSONObject().put("url",source).put("name",name);if(version!=null)args.put("version",version);val result=market("install",args);check(result.optBoolean("ok")){result.optString("error","插件安装失败")+"\n"+result.optString("detail").takeLast(1200)};val id=result.getString("id");control("reload",JSONObject().put("plugin",id));refreshControl();plugins.value.firstOrNull{it.id==id}?:error("已安装，但内核未能加载 $id；可在已安装中查看或移除")}
     override suspend fun installPluginFromZip(archive:java.io.File,name:String):Result<Plugin> = runCatching{
         val id=java.util.UUID.randomUUID().toString();val root=java.io.File(context.filesDir,"hoshino/plugin-sources/$id").also{it.mkdirs()}.canonicalFile

@@ -12,7 +12,7 @@ export const DEFAULT_SOURCES=[
  {url:'https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json'},
  {url:'https://dshopen.org/index.json'},
 ];
-const MAX_BYTES=128*1024*1024;const TTL=10*60*1000;const TIMEOUT=15000;
+const MAX_BYTES=128*1024*1024;const TTL=10*60*1000;const TIMEOUT=30000;
 
 type Version={version:string;publishTimestamp:number;source:Data;engines?:Data;prerelease:boolean;compatible:boolean|null};
 type Entry={name:string;title:string;description:string;icon:string;author:string;homepage:string;repository:string;category:string;labels:string[];keywords:string[];sortKeys:Record<string,number>;versions:Version[];recommended?:Version;haystack:string;order:number};
@@ -28,15 +28,25 @@ let semver:any;let semverTried=false;
 async function satisfies(range:unknown):Promise<boolean|null>{if(range===undefined||range===null||range==='')return true;if(typeof range!=='string')return null;if(!semverTried){semverTried=true;try{semver=(await import('semver' as string)).default;}catch{semver=null;}}if(!semver)return null;try{return semver.satisfies(DSH_VERSION,range,{includePrerelease:true});}catch{return null;}}
 function cmp(a:string,b:string):number{if(semver){try{return semver.compare(a,b);}catch{}}const pa=a.split(/[.+-]/),pb=b.split(/[.+-]/);for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]??'',y=pb[i]??'';const nx=Number(x),ny=Number(y);if(!isNaN(nx)&&!isNaN(ny)&&x!==''&&y!==''){if(nx!==ny)return nx-ny;}else if(x!==y)return x<y?-1:1;}return 0;}
 
-async function download(url:string):Promise<any>{
- const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),TIMEOUT);
- try{
-  const res=await fetch(url,{redirect:'error',signal:ctl.signal,headers:{accept:'application/json'}});
+// jsDelivr is often slow or blocked on mobile networks in mainland China; its sibling CDNs serve identical files.
+function mirrors(url:string):string[]{const u=new URL(url);if(u.host==='cdn.jsdelivr.net')return ['fastly.jsdelivr.net','gcore.jsdelivr.net','testingcf.jsdelivr.net'].map(h=>{const m=new URL(url);m.host=h;return m.toString();});return [];}
+function reason(e:unknown):string{const err=e as Error&{cause?:{code?:string;message?:string}};if(err?.name==='AbortError'||err?.name==='TimeoutError')return '超时';const c=err?.cause;return [err?.message,c?.code??c?.message].filter(Boolean).join(': ');}
+async function fetchOne(url:string):Promise<any>{
+ let current=url;
+ for(let hop=0;hop<5;hop++){
+  const res=await fetch(current,{redirect:'manual',signal:AbortSignal.timeout(TIMEOUT),headers:{accept:'application/json','user-agent':'Hoshino-Harness/0.2 (DSH plugin market)'}});
+  if(res.status>=300&&res.status<400&&res.headers.get('location')){const next=new URL(res.headers.get('location')!,current);if(next.protocol!=='https:'&&new URL(current).protocol==='https:')throw Error('拒绝从 https 跳转到 http');current=next.toString();continue;}
   if(res.status<200||res.status>=300)throw Error('HTTP '+res.status);
   const reader=res.body?.getReader();if(!reader)throw Error('空响应');const parts:Uint8Array[]=[];let total=0;
   for(;;){const {done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>MAX_BYTES)throw Error('索引超过 128 MiB');parts.push(value);}
   return JSON.parse(Buffer.concat(parts).toString('utf8'));
- }catch(e){if((e as Error).name==='AbortError')throw Error('读取超时（15 秒）');throw e;}finally{clearTimeout(timer);}
+ }
+ throw Error('跳转次数过多');
+}
+async function download(url:string):Promise<any>{
+ const tried:string[]=[];
+ for(const candidate of [url,...mirrors(url)]){try{return await fetchOne(candidate);}catch(e){tried.push(new URL(candidate).host+' '+reason(e));}}
+ throw Error('索引读取失败（'+tried.join('；')+'）');
 }
 
 async function parse(url:string,raw:any):Promise<Index>{
@@ -60,6 +70,7 @@ async function parse(url:string,raw:any):Promise<Index>{
   sortKeys:list(meta.sortKeys).map(([id,v])=>({id,title:text(v?.title)||id,order:v?.order==='asc'?'asc':'desc'})),plugins,fetchedAt:Date.now()};
 }
 
+export async function loadIndexFile(url:string,path:string):Promise<Index>{url=checkUrl(url);const {readFile}=await import('node:fs/promises');const idx=await parse(url,JSON.parse(await readFile(path,'utf8')));cache.set(url,idx);errors.delete(url);return idx;}
 export async function loadIndex(url:string,force=false):Promise<Index>{
  url=checkUrl(url);const hit=cache.get(url);if(hit&&!force&&Date.now()-hit.fetchedAt<TTL)return hit;
  const running=inflight.get(url);if(running)return running;
@@ -88,7 +99,8 @@ async function saveSources(config:Configuration,list:Data[]){const m=config.get(
 export async function marketInvoke(ctx:Context,config:Configuration,op:string,args:Data):Promise<any>{
  switch(op){
   case 'sources':return {sources:await sources(config)};
-  case 'source-add':{const url=checkUrl(String(args.url));const idx=await loadIndex(url,true);const list:Data[]=(await sources(config)).filter(s=>s.url!==url);list.push({url,title:idx.title});await saveSources(config,list);return {sources:await sources(config)};}
+  case 'load-file':{const rel=String(args.file);if(!/^market-cache\/[a-f0-9]{64}\.json$/.test(rel))throw Error('Invalid index cache file');const idx=await loadIndexFile(String(args.url),join(config.root,rel));return {title:idx.title,count:idx.plugins.length};}
+  case 'source-add':{const url=checkUrl(String(args.url));const idx=await loadIndex(url);const list:Data[]=(await sources(config)).filter(s=>s.url!==url);list.push({url,title:idx.title});await saveSources(config,list);return {sources:await sources(config)};}
   case 'source-remove':{const url=String(args.url);await saveSources(config,(await sources(config)).filter(s=>s.url!==url));cache.delete(url);errors.delete(url);return {sources:await sources(config)};}
   case 'query':{
    const idx=await loadIndex(String(args.url),!!args.refresh);const q=String(args.q??'').toLowerCase().trim().split(/\s+/).filter(Boolean);
@@ -111,7 +123,9 @@ export async function marketInvoke(ctx:Context,config:Configuration,op:string,ar
    const idx=await loadIndex(String(args.url));const e=idx.plugins.find(p=>p.name===args.name);if(!e)throw Error('索引中没有这个插件');
    const v=args.version?e.versions.find(x=>x.version===args.version):e.recommended;if(!v)throw Error('没有与当前 DSH '+DSH_VERSION+' 兼容的版本');if(v.compatible===false)throw Error('该版本要求 DSH '+v.engines?.dsh+'，当前为 '+DSH_VERSION);
    if(await provided(e.name))throw Error('该插件已由 DSH 内核提供');
-   let result:Data;
+   let result:Data;const proxy=typeof args.proxy==='string'&&/^https?:\/\/[\w.-]+:\d+$/.test(args.proxy)?args.proxy:null;const saved={http:process.env.http_proxy,https:process.env.https_proxy,H:process.env.HTTP_PROXY,S:process.env.HTTPS_PROXY};
+   if(proxy){process.env.http_proxy=process.env.https_proxy=process.env.HTTP_PROXY=process.env.HTTPS_PROXY=proxy;}
+   try{
    if(v.source.type==='npm'){const flags=typeof v.source.registry==='string'&&/^https?:\/\//.test(v.source.registry)?['--registry',v.source.registry]:[];result=await installPlugin(ctx,config,e.name+'@'+v.version,flags);}
    else{
     const dir=join(config.root,'plugin-sources','git-'+randomUUID());await mkdir(dir,{recursive:true});
@@ -124,6 +138,7 @@ export async function marketInvoke(ctx:Context,config:Configuration,op:string,ar
     }catch(err){await rm(dir,{recursive:true,force:true});throw err;}
     if(!(result as Data).ok)await rm(dir,{recursive:true,force:true});
    }
+   }finally{if(proxy){const set=(k:string,v:string|undefined)=>{if(v===undefined)delete process.env[k];else process.env[k]=v;};set('http_proxy',saved.http);set('https_proxy',saved.https);set('HTTP_PROXY',saved.H);set('HTTPS_PROXY',saved.S);}}
    if((result as Data).ok){const m=config.get('market.json');await config.write('market.json',{...m,installs:{...(m.installs??{}),[e.name]:{version:v.version,source:idx.url,id:(result as Data).id,at:Date.now()}}});}
    return result;
   }
