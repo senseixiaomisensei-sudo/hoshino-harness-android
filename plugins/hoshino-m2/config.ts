@@ -19,6 +19,7 @@ export const defaults:Record<string,Data>={
  'search.json':{sources:['duckduckgo','bing','baidu','wikipedia','github','arxiv','npm','stackexchange','hackernews'],searxng:[],timeoutMs:18000,cacheSeconds:300,proxy:'system'},
  'build.json':{repository:'',workflow:'m2.yml',branch:'hoshino/self-update',allowLocal:false},
  'routing.json':{main:null,compact:null,approval:null,vision:null,fallback:[]},
+ 'market.json':{sources:[{url:'https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json'},{url:'https://dshopen.org/index.json'}],installs:{}},
  'preferences.json':{process:'collapsed',typeDefaults:{},concurrency:2},
 };
 export class Configuration {

@@ -74,12 +74,55 @@ data class SessionState(
  * 订阅 [HarnessClient.events]，按会话归约出 [SessionState]。应用级单例（见 [Hoshino]）。
  * 接入真实 dsh 时无需改动本类：只要 bridge 发出同样的事件即可。
  */
-class SessionStore(private val client: HarnessClient, scope: CoroutineScope) {
+class SessionStore(private val client: HarnessClient, private val scope: CoroutineScope) {
 
     private val states = ConcurrentHashMap<String, MutableStateFlow<SessionState>>()
 
+    // 流式增量合并：模型每个 token 都发一次 delta，逐个归约会让整条消息（含 Markdown 解析）每秒重组上百次。
+    // 这里把同一条目的连续 delta 攒起来，约每帧（32ms）提交一次；任何非 delta 事件到来前先冲刷，保证顺序不变。
+    private val pendingLock = Any()
+    private val pending = LinkedHashMap<String, Pair<HarnessEvent, StringBuilder>>()
+
     init {
-        scope.launch { client.events.collect { reduce(it) } }
+        scope.launch {
+            client.events.collect { e ->
+                when (e) {
+                    is HarnessEvent.AssistantDelta -> buffer("a|${e.sessionId}|${e.id}", e, e.delta)
+                    is HarnessEvent.ThinkingDelta -> buffer("t|${e.sessionId}|${e.id}", e, e.delta)
+                    is HarnessEvent.ToolCallOutput -> buffer("o|${e.sessionId}|${e.id}", e, e.delta)
+                    else -> synchronized(pendingLock) { flushLocked(); reduce(e) }
+                }
+            }
+        }
+    }
+
+    private var flushScheduled = false
+
+    private fun buffer(key: String, e: HarnessEvent, delta: String) = synchronized(pendingLock) {
+        val hit = pending[key]
+        if (hit == null) {
+            // 新条目的第一个 delta 立即提交，首字不等待。
+            if (pending.isEmpty() && !flushScheduled) {
+                reduce(e)
+                flushScheduled = true
+                scope.launch { kotlinx.coroutines.delay(32); synchronized(pendingLock) { flushScheduled = false; flushLocked() } }
+                return@synchronized
+            }
+            pending[key] = e to StringBuilder(delta)
+        } else hit.second.append(delta)
+    }
+
+    private fun flushLocked() {
+        if (pending.isEmpty()) return
+        val batch = pending.values.toList(); pending.clear()
+        for ((e, text) in batch) reduce(
+            when (e) {
+                is HarnessEvent.AssistantDelta -> e.copy(delta = text.toString())
+                is HarnessEvent.ThinkingDelta -> e.copy(delta = text.toString())
+                is HarnessEvent.ToolCallOutput -> e.copy(delta = text.toString())
+                else -> e
+            },
+        )
     }
 
     private fun flow(sessionId: String): MutableStateFlow<SessionState> =

@@ -83,6 +83,7 @@ fun PluginsScreen(vm: ConfigViewModel, onBack: () -> Unit) {
     var installing by remember { mutableStateOf(false) }
     var configFor by remember { mutableStateOf<Plugin?>(null) }
     var removeFor by remember { mutableStateOf<Plugin?>(null) }
+    var tab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
     CollectToasts(vm)
     val context = androidx.compose.ui.platform.LocalContext.current
     val zipPicker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
@@ -108,7 +109,7 @@ fun PluginsScreen(vm: ConfigViewModel, onBack: () -> Unit) {
             (query.isBlank() || it.name.contains(query, true) || it.pkg.contains(query, true))
     }
 
-    PageScaffold("插件", onBack, actions = {
+    PageScaffold("插件", onBack, scrollable = tab == 0, actions = {
         Box {
             var menu by remember { mutableStateOf(false) }
             IconBtn(HIcons.Plus, "安装插件", { menu = true })
@@ -119,6 +120,8 @@ fun PluginsScreen(vm: ConfigViewModel, onBack: () -> Unit) {
             }
         }
     }) {
+        Segmented(listOf(0, 1), tab, { if (it == 0) "已安装" else "发现" }, { tab = it }, Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp).fillMaxWidth())
+        if (tab == 1) PluginMarketTab(vm) else {
         AnimatedVisibility(restart) {
             Row(
                 Modifier.padding(16.dp).fillMaxWidth().hairlineCard(c.warning.copy(alpha = 0.08f), c.warning.copy(alpha = 0.4f)).padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
@@ -144,6 +147,7 @@ fun PluginsScreen(vm: ConfigViewModel, onBack: () -> Unit) {
                 if (i > 0) Hairline()
                 PluginRow(p, onToggle = { on -> vm.run { setPluginEnabled(p.id, on) } }, onConfig = { configFor = p }, onRemove = { removeFor = p })
             }
+        }
         }
     }
 

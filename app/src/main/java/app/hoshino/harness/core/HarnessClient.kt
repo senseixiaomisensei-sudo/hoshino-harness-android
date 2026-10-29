@@ -87,6 +87,9 @@ interface HarnessClient {
     suspend fun linkLocalPlugin(path: String): Result<Plugin>
     /** 从本地 ZIP 导入插件（package.json 或 index.js 在根目录或唯一子目录）。 */
     suspend fun installPluginFromZip(archive: java.io.File, name: String): Result<Plugin> = Result.failure(UnsupportedOperationException("即将支持"))
+    /** 插件市场（与电脑版 DSH「发现」相同的 format 1 插件索引）：sources / source-add / source-remove / query / plugin。 */
+    suspend fun market(op: String, args: org.json.JSONObject = org.json.JSONObject()): org.json.JSONObject = throw UnsupportedOperationException("插件市场需要真实内核")
+    suspend fun installFromMarket(source: String, name: String, version: String?): Result<Plugin> = Result.failure(UnsupportedOperationException("插件市场需要真实内核"))
     suspend fun removePlugin(pluginId: String)
     suspend fun readPluginConfig(pluginId: String): String
     suspend fun writePluginConfig(pluginId: String, content: String)

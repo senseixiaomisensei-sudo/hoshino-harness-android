@@ -410,6 +410,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun removePlugin(pluginId:String) {require(plugins.value.none{it.id==pluginId && it.source==PluginSource.BuiltIn});control("remove-plugin",JSONObject().put("id",pluginId));refreshControl()}
     override suspend fun installPluginFromGit(spec:String):Result<Plugin> = runCatching{val result=m2Control("install-plugin",JSONObject().put("spec",spec));check(result.optBoolean("ok")){result.optString("error","插件安装失败")+"\n"+result.optString("detail")};val id=result.getString("id");control("reload",JSONObject().put("plugin",id));refreshControl();plugins.value.first{it.id==id}}
     override suspend fun linkLocalPlugin(path:String):Result<Plugin> = installPluginFromGit(path)
+    override suspend fun market(op:String,args:JSONObject):JSONObject=m2Control("market",JSONObject(args.toString()).put("op",op))
+    override suspend fun installFromMarket(source:String,name:String,version:String?):Result<Plugin> = runCatching{val args=JSONObject().put("url",source).put("name",name);if(version!=null)args.put("version",version);val result=market("install",args);check(result.optBoolean("ok")){result.optString("error","插件安装失败")+"\n"+result.optString("detail").takeLast(1200)};val id=result.getString("id");control("reload",JSONObject().put("plugin",id));refreshControl();plugins.value.firstOrNull{it.id==id}?:error("已安装，但内核未能加载 $id；可在已安装中查看或移除")}
     override suspend fun installPluginFromZip(archive:java.io.File,name:String):Result<Plugin> = runCatching{
         val id=java.util.UUID.randomUUID().toString();val root=java.io.File(context.filesDir,"hoshino/plugin-sources/$id").also{it.mkdirs()}.canonicalFile
         try{

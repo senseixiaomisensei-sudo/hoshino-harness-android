@@ -4,7 +4,7 @@ android {
     compileSdk { version = release(37) { minorApiLevel = 0 } }
     defaultConfig {
         applicationId = "dev.hoshino.app"; minSdk = 29; targetSdk = 37
-        versionCode = 206; versionName = "0.2.1-m2"
+        versionCode = 207; versionName = "0.2.1-m2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -12,6 +12,16 @@ android {
         getByName("debug") {
             storeFile = file(System.getenv("HOSHINO_SIGNING_STORE") ?: "${System.getProperty("user.home")}/.android/debug.keystore")
             storePassword = "android"; keyAlias = "androiddebugkey"; keyPassword = "android"
+        }
+    }
+    buildTypes {
+        // 发给用户的 arm64 安装包：与 debug 同签名、同数据，可直接覆盖安装；关闭 debuggable 让 ART 用 AOT/基线配置，界面明显更流畅。
+        create("fast") {
+            initWith(getByName("debug"))
+            isDebuggable = false
+            isJniDebuggable = false
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug")
         }
     }
     flavorDimensions += "abi"

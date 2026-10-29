@@ -6,6 +6,7 @@ import {Configuration,modes,defaults,interpolate,treeStamp,atomic,type Data} fro
 import {approval} from './approval.js';
 import {fetchPage,search,webUrl} from './web.js';
 import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,installPluginZip,gitOperation,ensureTools,exportBackup,restoreBackup,selfSnapshot,command} from './operations.js';
+import {marketInvoke} from './market.js';
 import {UI_SCHEMA,validateOverrides} from '../hoshino-self/overrides.js';
 import {workspacePath} from '../android-policy/paths.js';
 import type {} from '@deepseek-ai/dsh-goal';
@@ -76,7 +77,7 @@ export async function apply(ctx:Context){
   const tolerate=(target:Data)=>{if(!target||typeof target!=='object')return;const vars=(target.variables??={}) as Record<string,string>;for(const item of [...(target.sections??[]),...(target.contexts??[])] as Data[]){if(item?.interpolate===false||typeof item?.text!=='string')continue;for(const m of item.text.matchAll(/\{\{([a-z][a-z0-9_]*)\}\}/g))if(!Object.hasOwn(vars,m[1]))vars[m[1]]='{{'+m[1]+'}}';}};
   tolerate(assembly as Data);const result=await next();tolerate(result as Data);return result;
  });
- ctx.on('tools/pre-execute',async(exec,next)=>{const mode=modeFor(exec.agent?.id??'');if(Array.isArray(mode.tools)&&!mode.tools.includes(exec.name))return {kind:'deny',reason:'Tool excluded by Agent mode'};if(mode.readOnly&&!['read','read_image','get_device_info','self_read','self_inspect','self_doctor','self_diff','skill','self_config_read'].includes(exec.name))return {kind:'deny',reason:'Read-only mode'};return next();});
+ ctx.on('tools/pre-execute',async(exec,next)=>{const mode=modeFor(exec.agent?.id??'');if(Array.isArray(mode.tools)&&!mode.tools.includes(exec.name))return {kind:'deny',reason:'Tool excluded by Agent mode'};if(mode.readOnly&&!['read','read_image','get_device_info','self_read','self_inspect','self_doctor','self_diff','skill','self_config_read','plugin_market'].includes(exec.name))return {kind:'deny',reason:'Read-only mode'};return next();});
  let stamp='';let checking=false;let backgroundReady=false;void ctx.androidBridge.whenReady.then(async()=>{stamp=await treeStamp(root);backgroundReady=true;}).catch(()=>{});
  const timer=setInterval(()=>{if(!backgroundReady||checking)return;checking=true;void(async()=>{const current=await treeStamp(root);if(current!==stamp){const previous=stamp;stamp=current;await refresh();if(!safe){const control=ctx.get('hoshinoControl');if(control){await control.invoke('reload',{plugin:'skills'});const disabled=JSON.parse(await readFile(join(root,'config/disabled-plugins.json'),'utf8').catch(()=>'[]'));for(const entry of await readdir(join(root,'plugins'),{withFileTypes:true}).catch(()=>[])){if(!entry.isDirectory()||disabled.includes(entry.name))continue;const prefix=join(root,'plugins',entry.name);if(current.split('\n').filter(s=>s.startsWith(prefix)).join('\n')!==previous.split('\n').filter(s=>s.startsWith(prefix)).join('\n'))await control.invoke('reload',{plugin:entry.name}).catch(()=>{});}}}await originalCall('self-changed',{});}})().catch(()=>{}).finally(()=>{checking=false;});},1500).unref();
  ctx.effect(()=>()=>clearInterval(timer));
@@ -125,6 +126,8 @@ export async function apply(ctx:Context){
    case 'deliver':{const path=await workspacePath(workspace,String(args.path));const s=await lstat(path);if(!s.isFile())throw Error('Deliver a regular workspace file');return bridge('file.deliver',{sessionId:args.sessionId,path,name:args.name??path.split('/').at(-1),bytes:s.size});}
    case 'ensure-tools':return ensureTools(String(args.group),workspace);
    case 'install-plugin':return installPlugin(ctx,config,String(args.spec));
+   case 'market':return marketInvoke(ctx,config,String(args.op),args);
+   case 'plugin-market':{const src=(config.get('market.json').sources??[])[0]?.url;const url=String(args.source??src??'');if(!url)throw Error('No plugin index source configured');return args.name?marketInvoke(ctx,config,'plugin',{url,name:args.name}):marketInvoke(ctx,config,'query',{url,q:args.query??'',limit:args.limit??20});}
    case 'install-plugin-zip':return installPluginZip(ctx,config,String(args.dir),String(args.name??''));
    case 'plugin-search':return fetchPage('https://registry.npmjs.org/-/v1/search?text='+encodeURIComponent(String(args.query??'dsh-plugin'))+'&size=20',config.get('search.json'));
    case 'git':return gitOperation(workspace,String(args.operation),args);
@@ -180,6 +183,7 @@ export async function apply(ctx:Context){
   ['ask_user','Ask the user a question with optional choices; the card and notification remain outside process folding.',{question:{type:'string',required:true},options:{type:'array',items:{type:'string'}}},'question'],
   ['deliver_file','Deliver a generated workspace file as a native file card.',{path:{type:'string',required:true},name:{type:'string'}},'deliver'],
   ['ensure_tools','Install optional free local media/document/speech/git/native-build tools on demand.',{group:{type:'string',required:true}},'ensure-tools'],
+  ['plugin_market','Read-only: search the configured DSH plugin index (Plugins → Discover) or show one listed plugin with its versions and install source.',{query:{type:'string'},name:{type:'string'},source:{type:'string'},limit:{type:'number'}},'plugin-market'],
   ['plugin_install','Install an original Cordis/dsh plugin from npm, git, local directory or tgz.',{spec:{type:'string',required:true}},'install-plugin'],
  ];
  for(const [tool,description,parameters,action]of tools)ctx.tools.register(defineTool({name:tool,description,parameters:parameters as any,output:{schema:{type:'string'},render:(_,value)=>[{type:'text',text:value}]},async execute(args,exec){return JSON.stringify(await invoke(action,{...args,sessionId:exec.agent?.id}));}}));
