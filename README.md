@@ -1,6 +1,23 @@
 # Hoshino Harness · Android
 
-## M2（2026-10-27）
+开源原生 Android AI Agent：Kotlin Compose 界面 + 原版 DeepSeek Harness（DSH）/ Cordis 内核，本地运行，使用你自己的模型 API Key。MIT。
+
+## 最新版本：0.2.1-m2.6（2026-10-29）
+
+包名 `dev.hoshino.app`，versionCode 208，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
+
+- [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.6/Hoshino-Harness-0.2.1-m2.6-arm64-v8a.apk)（非调试 fast 构建）
+- [全部产物与 SHA256](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.6)
+
+主要内容：
+
+- **DSH 内核升级**到与电脑版一致的版本，兼容电脑版 DSH 插件与配置，提示词变量（如 `{{cwd}}`）兼容。
+- **插件市场**：插件 → 发现，读取与电脑版 DSH 相同的 `format: 1` 索引；默认源 Awesome DSH Plugin 与开放插件市场（dshopen.org）；搜索、分类、排序、版本、兼容性，npm / Git（固定提交、子目录）安装，可更新提示，自定义索引源；Agent 可用只读 `plugin_market` 工具。
+- **网络兼容**：内核读取索引失败时自动改用 Android 系统网络（系统代理 / VPN），jsDelivr 自动切换镜像；npm / git 安装使用系统代理。
+- **流畅度**：arm64 发布非调试构建（接近正式版的 ART 编译），流式输出按帧合并，市场列表懒加载与图标缓存。
+- 构建与发布：推送 `codex/dsh-upgrade` 触发 `.github/workflows/dsh-upgrade.yml`，含 arm64 真内核启动、x86_64 覆盖安装 + 聊天 + 工具调用验收后自动发布。
+
+## M2（2026-10-27，历史）
 
 M2 版本为 **0.2.0-m2**，包名 `dev.hoshino.app`，保持原证书。APK 由 GitHub Actions 构建。保留旧 M1 记录供追溯；M2 的实现、未完成项和验证以 [M2 报告](docs/m2-report.md) 为准，不把原型页面或 boot 成功算作全量验收。
 
