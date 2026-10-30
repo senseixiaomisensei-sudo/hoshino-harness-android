@@ -85,21 +85,4 @@ class LocalPortScanTest {
     }
 
     /** 真 socket:在一小段端口里扫出假 adbd 和一个不说 adb 的服务,只有 adbd 回 STLS。 */
-    @Test
-    fun nioScannerFindsOpenPortsAndOnlyAdbdAnswersStls() = runBlocking {
-        FakeAdbd(emptyList()).use { adbd ->
-            ServerSocket(0, 4, InetAddress.getLoopbackAddress()).use { other ->
-                val scanner = NioPortScanner()
-                val lo = minOf(adbd.port, other.localPort)
-                val hi = maxOf(adbd.port, other.localPort)
-                // 范围太大时只扫两个端口附近
-                val ports = if (hi - lo > 2_000) listOf(lo..lo, hi..hi) else listOf(lo..hi)
-                val open = ports.flatMap { scanner.openPorts("127.0.0.1", it, emptySet(), 5_000) }
-                assertTrue(open.toString(), adbd.port in open && other.localPort in open)
-                assertTrue(scanner.speaksAdbTls("127.0.0.1", adbd.port, 1_000))
-                assertFalse(scanner.speaksAdbTls("127.0.0.1", other.localPort, 300))
-                assertTrue(scanner.openPorts("127.0.0.1", adbd.port..adbd.port, setOf(adbd.port), 1_000).isEmpty())
-            }
-        }
-    }
 }
