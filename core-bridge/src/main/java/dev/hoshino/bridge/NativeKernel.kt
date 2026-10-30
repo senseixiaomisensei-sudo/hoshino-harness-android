@@ -46,6 +46,12 @@ class NativeKernel(private val context: Context,
                             try{JSONObject().put("value",ChatGptAuth.get(context).accessToken(body.optBoolean("fresh",false))).put("source","chatgpt-sign-in")}
                             catch(failure:dev.hoshino.bridge.chatgpt.ChatGptAccessException){JSONObject().put("value","").put("source","chatgpt-sign-in").put("error",failure.message)}
                         } else JSONObject().put("value",store.resolve(body.getString("ref")) ?: "").put("source","android-keystore")
+                        "web-search-capability" -> {
+                            // What a real model request proved about hosted search (plugins/android-api/hosted-search.ts). A user's Off stays Off.
+                            val method=body.getString("method");require(method.length<=200&&method.matches(Regex("[a-z]+(:[A-Za-z0-9_.:/-]+)?")))
+                            store.updateModel(body.getString("provider"),body.getString("model")) { if(it.optString("webSearchMode","auto")!="off")it.put("webSearchMethod",method) }
+                            JSONObject()
+                        }
                         "device-info" -> JSONObject().put("model","${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}").put("androidVersion",android.os.Build.VERSION.RELEASE).put("battery",(context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
                         "ready" -> {
                             check(current==generation.get())
