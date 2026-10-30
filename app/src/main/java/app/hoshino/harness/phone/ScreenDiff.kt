@@ -72,6 +72,9 @@ data class ScreenDelta(
     val unchanged: Int,
     /** The difference is too large (or the app changed): send the full screen instead. */
     val full: Boolean,
+    /** Dominant content shift (scrolling) in 0..999 units; elements that only moved with it are unchanged. */
+    val shiftX: Int = 0,
+    val shiftY: Int = 0,
 ) {
     val empty: Boolean get() = added.isEmpty() && removed.isEmpty() && changed.isEmpty()
 }
@@ -87,16 +90,33 @@ object ScreenDiff {
         val after = b.associateBy { it.ref }
         val added = b.filter { it.ref !in before }
         val removed = a.filter { it.ref !in after }
-        val changed = b.mapNotNull { e -> before[e.ref]?.takeIf { differs(it, e) }?.let { it to e } }
+        val (sx, sy) = shift(b.mapNotNull { e -> before[e.ref]?.let { (e.cx - it.cx) to (e.cy - it.cy) } })
+        val changed = b.mapNotNull { e -> before[e.ref]?.takeIf { differs(it, e, sx, sy) }?.let { it to e } }
         val unchanged = b.size - added.size - changed.size
         val churn = added.size + removed.size + changed.size
         val full = churn > FULL_RATIO * maxOf(a.size, b.size, 1) || prev.overlayPackages != cur.overlayPackages
-        return ScreenDelta(added, removed, changed, unchanged, full)
+        return ScreenDelta(added, removed, changed, unchanged, full, sx, sy)
     }
 
-    fun differs(a: UiElement, b: UiElement): Boolean =
-        a.name != b.name || a.checked != b.checked || a.focused != b.focused || a.enabled != b.enabled || a.selected != b.selected ||
-            abs(a.cx - b.cx) > MOVED || abs(a.cy - b.cy) > MOVED
+    /** The shift most moved elements share (a scroll), or 0,0 when there is no clear majority. */
+    fun shift(all: List<Pair<Int, Int>>): Pair<Int, Int> {
+        val moves = all.filter { (dx, dy) -> abs(dx) > MOVED || abs(dy) > MOVED }
+        if (moves.size < 2) return 0 to 0
+        val groups = moves.groupBy { (dx, dy) -> (dx / 8) to (dy / 8) }
+        val (_, top) = groups.maxByOrNull { it.value.size } ?: return 0 to 0
+        if (top.size * 2 <= moves.size) return 0 to 0
+        return top.map { it.first }.sorted()[top.size / 2] to top.map { it.second }.sorted()[top.size / 2]
+    }
+
+    fun differs(a: UiElement, b: UiElement, sx: Int = 0, sy: Int = 0): Boolean =
+        a.name != b.name || a.checked != b.checked || a.focused != b.focused || a.enabled != b.enabled || a.selected != b.selected || moved(a, b, sx, sy)
+
+    /** Moved on its own: neither still in place nor moved together with the scrolled content. */
+    fun moved(a: UiElement, b: UiElement, sx: Int, sy: Int): Boolean {
+        val still = abs(a.cx - b.cx) <= MOVED && abs(a.cy - b.cy) <= MOVED
+        val withScroll = abs(a.cx + sx - b.cx) <= MOVED && abs(a.cy + sy - b.cy) <= MOVED
+        return !still && !withScroll
+    }
 
     /**
      * Render for the model: the full compressed screen when [delta] says so, otherwise only the changes.
@@ -106,18 +126,19 @@ object ScreenDiff {
         if (delta.full) return ScreenCompressor.render(cur)
         if (delta.empty) return "screen ${cur.packageName ?: "unknown"} unchanged (${delta.unchanged} items, refs still valid)"
         val head = "screen ${cur.packageName ?: "unknown"} update: +${delta.added.size} -${delta.removed.size} ~${delta.changed.size}, ${delta.unchanged} unchanged (refs still valid)" +
+            (if (delta.shiftX != 0 || delta.shiftY != 0) " · scrolled content shifted by ${delta.shiftX},${delta.shiftY}" else "") +
             (if (cur.keyboardShown != prev?.keyboardShown) if (cur.keyboardShown) " · keyboard shown" else " · keyboard hidden" else "")
         val lines = mutableListOf(head)
         delta.added.take(ScreenCompressor.MAX_LINES).forEach { lines += "+ " + ScreenCompressor.line(it) }
         delta.removed.take(40).forEach { lines += "- ${it.ref}" + if (it.name.isNotBlank()) " \"${it.name.take(ScreenCompressor.MAX_NAME)}\"" else "" }
-        delta.changed.take(ScreenCompressor.MAX_LINES).forEach { (o, n) -> lines += "~ " + ScreenCompressor.line(n) + describe(o, n) }
+        delta.changed.take(ScreenCompressor.MAX_LINES).forEach { (o, n) -> lines += "~ " + ScreenCompressor.line(n) + describe(o, n, delta) }
         return lines.joinToString("\n")
     }
 
-    private fun describe(o: UiElement, n: UiElement): String {
+    private fun describe(o: UiElement, n: UiElement, d: ScreenDelta): String {
         val parts = buildList {
             if (o.name != n.name) add("was \"${o.name.take(30)}\"")
-            if (abs(o.cx - n.cx) > MOVED || abs(o.cy - n.cy) > MOVED) add("moved from @${o.cx},${o.cy}")
+            if (moved(o, n, d.shiftX, d.shiftY)) add("moved from @${o.cx},${o.cy}")
         }
         return if (parts.isEmpty()) "" else " (" + parts.joinToString(", ") + ")"
     }
