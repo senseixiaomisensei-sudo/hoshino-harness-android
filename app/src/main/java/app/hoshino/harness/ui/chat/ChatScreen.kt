@@ -103,7 +103,13 @@ fun ChatScreen(
     val workspaces by vm.workspaces.collectAsStateWithLifecycle()
     val currentId by vm.currentId.collectAsStateWithLifecycle()
     val current by vm.current.collectAsStateWithLifecycle()
-    val state by vm.session.collectAsStateWithLifecycle()
+    // 会话状态在流式输出时每帧更新：这里只持有 State 对象，不在 ChatScreen 本体里读取它，
+    // 否则顶栏、输入框等整屏每帧重组。需要的字段用 derivedStateOf 取出，值不变就不触发重组；消息列表在自己的作用域里读取。
+    val sessionState = vm.session.collectAsStateWithLifecycle()
+    val running by remember { derivedStateOf { sessionState.value.running } }
+    val queued by remember { derivedStateOf { sessionState.value.queued } }
+    val contextUsage by remember { derivedStateOf { sessionState.value.contextUsage } }
+    val sessionEmpty by remember { derivedStateOf { sessionState.value.turns.isEmpty() } }
     val composer by vm.composer.collectAsStateWithLifecycle()
     val presets by vm.presets.collectAsStateWithLifecycle()
     val providers by vm.providers.collectAsStateWithLifecycle()
@@ -241,9 +247,9 @@ fun ChatScreen(
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         val s = current
                         val entries = listOf(
-                            MenuEntry("复制整个会话为 Markdown",HIcons.Copy) {app.hoshino.harness.ui.components.copyToClipboard(ctx,state.items.joinToString("\n\n"){it.markdownText()})},
+                            MenuEntry("复制整个会话为 Markdown",HIcons.Copy) {app.hoshino.harness.ui.components.copyToClipboard(ctx,sessionState.value.items.joinToString("\n\n"){it.markdownText()})},
                             MenuEntry("截当前屏幕",HIcons.Image) {scope.launch {runCatching{app.hoshino.harness.core.AppSurface.capture()}.onSuccess{app.hoshino.harness.ui.tools.CaptureRequests.selection.value=app.hoshino.harness.ui.tools.CaptureSelection(screen=it);navigate(Routes.SCREENSHOT)}.onFailure{vm.toast(it.message ?: "截图失败")}}},
-                            MenuEntry("会话长图",HIcons.Image) {app.hoshino.harness.ui.tools.CaptureRequests.selection.value=app.hoshino.harness.ui.tools.CaptureSelection(items=state.items.toList());navigate(Routes.SCREENSHOT)},
+                            MenuEntry("会话长图",HIcons.Image) {app.hoshino.harness.ui.tools.CaptureRequests.selection.value=app.hoshino.harness.ui.tools.CaptureSelection(items=sessionState.value.items.toList());navigate(Routes.SCREENSHOT)},
                             MenuEntry(stringResource(R.string.menu_rename), HIcons.Edit) { s?.let { renameTarget = it } },
                             MenuEntry(stringResource(R.string.menu_fork), HIcons.Fork) { s?.let { vm.fork(it.id) } },
                             MenuEntry(stringResource(R.string.menu_export), HIcons.Download) { s?.let { vm.export(it.id) } },
@@ -275,12 +281,12 @@ fun ChatScreen(
                     value = input,
                     onValueChange = { input = it },
                     state = composer,
-                    running = state.running,
-                    queued = state.queued,
+                    running = running,
+                    queued = queued,
                     presets = presets,
                     tier = tier,
                     modelLabel = modelLabel,
-                    contextFraction = state.contextUsage.fraction,
+                    contextFraction = contextUsage.fraction,
                     slashCommands = slash,
                     fileSuggestions = files,
                     onFileQuery = { vm.searchFiles(it) },
@@ -302,7 +308,7 @@ fun ChatScreen(
                 }
             }
 
-            val isHero = currentId == null && state.items.isEmpty()
+            val isHero = currentId == null && sessionEmpty
             Box(Modifier.fillMaxWidth().weight(1f).imePadding()) {
                 if (isHero) {
                     Hero(
@@ -324,10 +330,8 @@ fun ChatScreen(
                     )
                 } else {
                     Column(Modifier.fillMaxSize()) {
-                        MessageList(
-                            chatItems = state.items,
-                            sessionId = currentId.orEmpty(),
-                            actions = MessageActions(
+                        val messageActions = remember(vm) {
+                            MessageActions(
                                 onApprove = { id, d -> vm.respondApproval(id, d) },
                                 onAnswer = { id, a -> vm.answer(id, a) },
                                 onDiff = { id, a -> vm.resolveDiff(id, a) },
@@ -335,7 +339,12 @@ fun ChatScreen(
                                 onOpenGoals = { navigate(Routes.GOALS) },
                                 onOpenSchedules = { navigate(Routes.SCHEDULES) },
                                 onScreenshot = {app.hoshino.harness.ui.tools.CaptureRequests.selection.value=app.hoshino.harness.ui.tools.CaptureSelection(items=listOf(it));navigate(Routes.SCREENSHOT)},
-                            ),
+                            )
+                        }
+                        SessionMessages(
+                            session = sessionState,
+                            sessionId = currentId.orEmpty(),
+                            actions = messageActions,
                             modifier = Modifier.fillMaxWidth().weight(1f),
                         )
                         composerUi(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp, bottom = 10.dp).navigationBarsPadding())
@@ -378,8 +387,8 @@ fun ChatScreen(
             onDismiss = { showModel = false },
         )
     }
-    if (showContext) ContextUsageSheet(state.contextUsage, onCompact = { vm.compact() }, onDismiss = { showContext = false })
-    if (showStats) SessionStatsDialog(state.stats, onDismiss = { showStats = false })
+    if (showContext) ContextUsageSheet(contextUsage, onCompact = { vm.compact() }, onDismiss = { showContext = false })
+    if (showStats) SessionStatsDialog(sessionState.value.stats, onDismiss = { showStats = false })
     openTask?.let { SubTaskSheet(it, onDismiss = { openTask = null }) }
     renameTarget?.let { s ->
         TextInputDialog(
@@ -470,33 +479,61 @@ private fun Hero(
     }
 }
 
-/** 消息流：reverseLayout 保证流式输出时锚定底部；右侧轮次刻度；回到底部浮钮。 */
+/** 过程组显示配置（来自 UI 覆盖 DSL）；包成不可变类型，避免 JSONObject/Map 参数让每一行都无法跳过重组。 */
+@androidx.compose.runtime.Immutable
+data class ProcessDisplay(val display: String = "collapsed", val types: Map<String, Boolean> = emptyMap())
+
+/** 测试钩子：每次某一行实际重组时回调该行 key（生产环境为 null，零开销）。 */
+val LocalRecomposeProbe = androidx.compose.runtime.staticCompositionLocalOf<((String) -> Unit)?> { null }
+
+/** 在自己的重组作用域里读取会话状态：流式更新只重组消息列表，不牵动 ChatScreen 其余部分。 */
 @Composable
-fun MessageList(chatItems: List<app.hoshino.harness.core.ChatItem>, actions: MessageActions, modifier: Modifier = Modifier,sessionId:String="") {
+private fun SessionMessages(session: androidx.compose.runtime.State<app.hoshino.harness.core.SessionState>, actions: MessageActions, modifier: Modifier = Modifier, sessionId: String = "") {
+    MessageList(state = session.value, actions = actions, modifier = modifier, sessionId = sessionId)
+}
+
+/** 兼容入口：只读视图传入扁平条目。 */
+@Composable
+fun MessageList(chatItems: List<app.hoshino.harness.core.ChatItem>, actions: MessageActions, modifier: Modifier = Modifier, sessionId: String = "") {
+    val state = remember(chatItems) { app.hoshino.harness.core.SessionState.of(chatItems) }
+    MessageList(state = state, actions = actions, modifier = modifier, sessionId = sessionId)
+}
+
+/**
+ * 消息流：reverseLayout 保证流式输出时锚定底部；右侧轮次刻度；回到底部浮钮。
+ *
+ * 每轮拆成多行（用户消息 / 过程组 / 动作卡 / 回答 / 文件卡 / 用量），每行一个 LazyColumn item，带稳定 key 与 contentType。
+ * [TurnPresenter] 按轮次实例缓存：流式更新只重算当前轮，已完成轮次的行对象不变，Compose 直接跳过。
+ * 交付文件卡渲染在产生它的那一轮的回答下面（不再常驻列表底部）。
+ */
+@Composable
+fun MessageList(state: app.hoshino.harness.core.SessionState, actions: MessageActions, modifier: Modifier = Modifier, sessionId: String = "") {
     val c = HoshinoTheme.colors
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val reversed = remember(chatItems) { presentTurns(chatItems).asReversed() }
+    val presenter = remember(sessionId) { TurnPresenter() }
+    val collapse by ChatDisplayPrefs.collapseApprovals.collectAsStateWithLifecycle()
+    val turns = remember(presenter, state.turns, state.deliveries, state.turnMarks, collapse) { presenter.present(state, collapse) }
+    val rows = remember(turns) { flattenRowsReversed(turns) }
     val custom by Hoshino.client.uiCustomization.collectAsStateWithLifecycle()
+    val processDisplay = remember(custom) {
+        val process = custom.raw.optJSONObject("process")
+        val types = process?.optJSONObject("types")
+        ProcessDisplay(process?.optString("display", "collapsed") ?: "collapsed", types?.keys()?.asSequence()?.associateWith { types.optBoolean(it, false) }.orEmpty())
+    }
     val atBottom by remember { derivedStateOf { listState.firstVisibleItemIndex <= 1 } }
 
     Box(modifier) {
-        LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize()) {
-            item(key = "bottom-spacer") { Spacer(Modifier.height(8.dp)) }
-            if(sessionId.isNotBlank())item(key="delivered-files"){DeliveredFiles(sessionId)}
-            items(reversed, key = { it.id }) { turn ->
-                Column {
-                    turn.user?.let{ChatItemView(it,actions)}
-                    ProcessTimeline(turn.process,actions,custom.raw.optJSONObject("process")?.optString("display","collapsed")?:"collapsed",custom.raw.optJSONObject("process")?.optJSONObject("types"),turn.actions.any{it is app.hoshino.harness.core.ChatItem.Approval && it.decision==null})
-                    turn.actions.forEach{ChatItemView(it,actions)}
-                    turn.finalItems.forEach{ChatItemView(it,actions)}
-                }
+        androidx.compose.runtime.CompositionLocalProvider(LocalChatSessionId provides sessionId) {
+            LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize()) {
+                item(key = "bottom-spacer", contentType = "spacer") { Spacer(Modifier.height(8.dp)) }
+                items(rows, key = { it.key }, contentType = { it.contentType }) { row -> ChatRowView(row, actions, processDisplay) }
+                item(key = "top-spacer", contentType = "spacer") { Spacer(Modifier.height(12.dp)) }
             }
-            item(key = "top-spacer") { Spacer(Modifier.height(12.dp)) }
         }
 
-        // 轮次导航刻度（≥3 轮时显示）
-        val userIdx = reversed.mapIndexedNotNull { i, it -> if (it.user!=null) i + if(sessionId.isBlank())1 else 2 else null }
+        // 轮次导航刻度（≥3 轮时显示）；+1 是底部占位行。
+        val userIdx = remember(rows) { rows.mapIndexedNotNull { i, r -> if (r is ChatRow.UserRow) i + 1 else null } }
         if (userIdx.size >= 3) {
             Column(
                 Modifier.align(Alignment.CenterEnd).padding(end = 2.dp),
@@ -527,5 +564,16 @@ fun MessageList(chatItems: List<app.hoshino.harness.core.ChatItem>, actions: Mes
                 HIcon(HIcons.ArrowDown, size = 18.dp, tint = c.text)
             }
         }
+    }
+}
+
+@Composable
+private fun ChatRowView(row: ChatRow, actions: MessageActions, process: ProcessDisplay) {
+    LocalRecomposeProbe.current?.let { probe -> androidx.compose.runtime.SideEffect { probe(row.key) } }
+    when (row) {
+        is ChatRow.UserRow -> ChatItemView(row.item, actions)
+        is ChatRow.ProcessRow -> ProcessTimeline(row, actions, process.display, process.types)
+        is ChatRow.ItemRow -> ChatItemView(row.item, actions)
+        is ChatRow.FilesRow -> DeliveredFiles(row.files)
     }
 }

@@ -39,85 +39,7 @@ import app.hoshino.harness.ui.theme.HoshinoShapes
 import app.hoshino.harness.ui.theme.HoshinoTheme
 import app.hoshino.harness.ui.theme.MonoFamily
 
-/** 轻量 Markdown：标题、段落、有序/无序列表、引用、代码块（带复制）、表格、行内 `code` / **粗体** / *斜体*。 */
-sealed interface MdBlock {
-    data class Heading(val level: Int, val text: String) : MdBlock
-    data class Paragraph(val text: String) : MdBlock
-    data class ListItem(val ordered: Boolean, val marker: String, val text: String) : MdBlock
-    data class Quote(val text: String) : MdBlock
-    data class Code(val lang: String, val code: String) : MdBlock
-    data class Table(val header: List<String>, val rows: List<List<String>>) : MdBlock
-    data object Rule : MdBlock
-}
-
-fun parseMarkdown(src: String): List<MdBlock> {
-    val out = mutableListOf<MdBlock>()
-    val lines = src.lines()
-    var i = 0
-    val para = StringBuilder()
-    fun flush() {
-        if (para.isNotBlank()) out += MdBlock.Paragraph(para.toString().trim())
-        para.clear()
-    }
-    while (i < lines.size) {
-        val line = lines[i]
-        val trimmed = line.trim()
-        when {
-            trimmed.startsWith("```") -> {
-                flush()
-                val lang = trimmed.removePrefix("```").trim()
-                val sb = StringBuilder()
-                i++
-                while (i < lines.size && !lines[i].trim().startsWith("```")) {
-                    if (sb.isNotEmpty()) sb.append('\n')
-                    sb.append(lines[i])
-                    i++
-                }
-                out += MdBlock.Code(lang, sb.toString())
-            }
-            trimmed.startsWith("#") -> {
-                flush()
-                val level = trimmed.takeWhile { it == '#' }.length.coerceIn(1, 4)
-                out += MdBlock.Heading(level, trimmed.drop(level).trim())
-            }
-            trimmed == "---" || trimmed == "***" -> {
-                flush(); out += MdBlock.Rule
-            }
-            trimmed.startsWith("|") && i + 1 < lines.size && lines[i + 1].trim().matches(Regex("^\\|?\\s*:?-{2,}.*")) -> {
-                flush()
-                fun cells(l: String) = l.trim().trim('|').split('|').map { it.trim() }
-                val header = cells(trimmed)
-                i += 2
-                val rows = mutableListOf<List<String>>()
-                while (i < lines.size && lines[i].trim().startsWith("|")) {
-                    rows += cells(lines[i]); i++
-                }
-                out += MdBlock.Table(header, rows)
-                continue
-            }
-            trimmed.startsWith("- ") || trimmed.startsWith("* ") -> {
-                flush(); out += MdBlock.ListItem(false, "•", trimmed.drop(2))
-            }
-            Regex("^\\d+[.)] .*").matches(trimmed) -> {
-                flush()
-                val marker = trimmed.substringBefore(' ')
-                out += MdBlock.ListItem(true, marker, trimmed.substringAfter(' '))
-            }
-            trimmed.startsWith(">") -> {
-                flush(); out += MdBlock.Quote(trimmed.removePrefix(">").trim())
-            }
-            trimmed.isEmpty() -> flush()
-            else -> {
-                if (para.isNotEmpty()) para.append(' ')
-                para.append(trimmed)
-            }
-        }
-        i++
-    }
-    flush()
-    return out
-}
-
+/** 轻量 Markdown 渲染：块结构见 [MdBlock]/[parseMarkdown]（MarkdownParser.kt）；行内 `code` / **粗体** / *斜体*。 */
 fun inlineMarkdown(text: String, c: HoshinoColors): AnnotatedString = buildAnnotatedString {
     var i = 0
     while (i < text.length) {
@@ -146,40 +68,49 @@ fun inlineMarkdown(text: String, c: HoshinoColors): AnnotatedString = buildAnnot
     }
 }
 
+/**
+ * 渲染 Markdown。流式回答传入 [StreamText]：[IncrementalMarkdown] 只重解析最后一个变化块，
+ * 已稳定的块是同一实例/相等的不可变数据，对应的子组合直接跳过重组。
+ */
 @Composable
-fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
+fun MarkdownText(markdown: CharSequence, modifier: Modifier = Modifier) {
+    val parser = remember { IncrementalMarkdown() }
+    val parsed = remember(markdown) { parser.update(markdown) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        parsed.stable.forEachIndexed { i, b -> key("s$i") { MdBlockView(b) } }
+        parsed.tail.forEachIndexed { i, b -> key("t$i") { MdBlockView(b) } }
+    }
+}
+
+@Composable
+private fun MdBlockView(b: MdBlock) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
-    val blocks = remember(markdown) { parseMarkdown(markdown) }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        blocks.forEach { b ->
-            when (b) {
-                is MdBlock.Heading -> Text(
-                    inlineMarkdown(b.text, c),
-                    style = when (b.level) {
-                        1 -> t.headline
-                        2 -> t.title
-                        else -> t.bodyMedium
-                    },
-                    color = c.text,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-                is MdBlock.Paragraph -> Text(inlineMarkdown(b.text, c), style = t.body, color = c.text)
-                is MdBlock.ListItem -> Row {
-                    Text(b.marker, style = t.body, color = c.text2, modifier = Modifier.widthIn(min = 18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(inlineMarkdown(b.text, c), style = t.body, color = c.text)
-                }
-                is MdBlock.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
-                    VHairline(Modifier.padding(vertical = 2.dp), color = c.text3)
-                    Spacer(Modifier.width(10.dp))
-                    Text(inlineMarkdown(b.text, c), style = t.body, color = c.text2)
-                }
-                is MdBlock.Code -> CodeBlock(b.code, b.lang)
-                is MdBlock.Table -> MdTable(b)
-                MdBlock.Rule -> Hairline()
-            }
+    when (b) {
+        is MdBlock.Heading -> Text(
+            remember(b, c) { inlineMarkdown(b.text, c) },
+            style = when (b.level) {
+                1 -> t.headline
+                2 -> t.title
+                else -> t.bodyMedium
+            },
+            color = c.text,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        is MdBlock.Paragraph -> Text(remember(b, c) { inlineMarkdown(b.text, c) }, style = t.body, color = c.text)
+        is MdBlock.ListItem -> Row {
+            Text(b.marker, style = t.body, color = c.text2, modifier = Modifier.widthIn(min = 18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(remember(b, c) { inlineMarkdown(b.text, c) }, style = t.body, color = c.text)
         }
+        is MdBlock.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
+            VHairline(Modifier.padding(vertical = 2.dp), color = c.text3)
+            Spacer(Modifier.width(10.dp))
+            Text(remember(b, c) { inlineMarkdown(b.text, c) }, style = t.body, color = c.text2)
+        }
+        is MdBlock.Code -> CodeBlock(b.code, b.lang)
+        is MdBlock.Table -> MdTable(b)
+        MdBlock.Rule -> Hairline()
     }
 }
 
