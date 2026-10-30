@@ -1,0 +1,85 @@
+{
+  "_comment": "PL1 依赖许可证门的策略。AGENTS.md：不引入任何闭源依赖、Google Play Services、Firebase；mika-gap.md PL1：ML Kit 及其传递依赖 datatransport 不得进 APK。改这个文件要在 PR 里写明理由。",
+  "deniedMavenGroups": [
+    "com.google.mlkit",
+    "com.google.android.gms",
+    "com.google.firebase",
+    "com.google.android.datatransport",
+    "com.google.android.play",
+    "com.google.android.odml",
+    "com.crashlytics.sdk.android",
+    "io.fabric.sdk.android",
+    "com.google.android.ump",
+    "com.google.ads"
+  ],
+  "deniedClassPrefixes": [
+    "com/google/mlkit/",
+    "com/google/android/gms/",
+    "com/google/firebase/",
+    "com/google/android/datatransport/",
+    "com/google/android/play/core/",
+    "com/google/android/odml/",
+    "com/crashlytics/"
+  ],
+  "deniedManifestStrings": [
+    "com.google.firebase",
+    "com.google.android.gms",
+    "com.google.android.datatransport",
+    "com.google.mlkit",
+    "firebaselogging.googleapis.com"
+  ],
+  "deniedNpmNames": [
+    "firebase",
+    "@firebase/",
+    "@google-cloud/",
+    "google-analytics",
+    "@sentry/",
+    "posthog-node",
+    "mixpanel",
+    "@amplitude/"
+  ],
+  "allowedLicensePatterns": [
+    "apache",
+    "\\bmit\\b",
+    "bsd",
+    "\\bisc\\b",
+    "0bsd",
+    "blueoak",
+    "unlicense",
+    "cc0",
+    "cc-by-4\\.0",
+    "python-2\\.0",
+    "psf",
+    "zlib",
+    "eclipse public license|\\bepl-",
+    "mozilla public license|\\bmpl-",
+    "gnu lesser general public license|\\blgpl",
+    "common development and distribution license|\\bcddl",
+    "the json license",
+    "public domain",
+    "bouncy castle",
+    "unicode",
+    "classpath exception",
+    "linking exception"
+  ],
+  "deniedLicensePatterns": [
+    "proprietary",
+    "commercial",
+    "unlicensed",
+    "see license in",
+    "ml kit terms",
+    "android software development kit license",
+    "google apis terms",
+    "\\bgpl-[23]\\.0(?!.*(classpath|linking) exception)",
+    "gnu general public license(?!.*(classpath|linking) exception)",
+    "\\bagpl",
+    "\\bsspl",
+    "business source"
+  ],
+  "_allowedCoordinatesComment": "POM 里查不到许可证、但确认开源的坐标（group:artifact），每条写清出处。",
+  "allowedCoordinates": {
+    "org.jetbrains:annotations": "Apache-2.0 (https://github.com/JetBrains/java-annotations)",
+    "org.jetbrains.kotlin:kotlin-stdlib-common": "Apache-2.0 (Kotlin)",
+    "org.jetbrains.kotlinx:atomicfu": "Apache-2.0 (Kotlin)"
+  }
+}
