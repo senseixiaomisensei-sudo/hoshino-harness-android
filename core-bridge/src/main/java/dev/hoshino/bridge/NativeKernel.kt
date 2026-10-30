@@ -40,7 +40,12 @@ class NativeKernel(private val context: Context,
                 callback=AndroidCallbackServer(scope,::diagnostic) { method,body ->
                     when(method) {
                         "providers" -> JSONArray(store.list().filter { it.metadata.optBoolean("enabled",true) }.map { store.runtimeJson(it) })
-                        "credential" -> JSONObject().put("value",if(body.getString("ref")=="KEY_OPENAI_CODEX")ChatGptAuth.get(context).accessToken()else store.resolve(body.getString("ref")) ?: "").put("source","android-keystore")
+                        "credential" -> if(body.getString("ref")==ChatGptAuth.CREDENTIAL_REF) {
+                            // Plan token per request; "fresh" asks for a refresh after the API answered 401. A failure yields an empty
+                            // value (dsh reports a missing credential) plus a people-facing reason, never a token.
+                            try{JSONObject().put("value",ChatGptAuth.get(context).accessToken(body.optBoolean("fresh",false))).put("source","chatgpt-sign-in")}
+                            catch(failure:dev.hoshino.bridge.chatgpt.ChatGptAccessException){JSONObject().put("value","").put("source","chatgpt-sign-in").put("error",failure.message)}
+                        } else JSONObject().put("value",store.resolve(body.getString("ref")) ?: "").put("source","android-keystore")
                         "device-info" -> JSONObject().put("model","${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}").put("androidVersion",android.os.Build.VERSION.RELEASE).put("battery",(context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
                         "ready" -> {
                             check(current==generation.get())

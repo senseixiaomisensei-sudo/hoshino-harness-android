@@ -63,8 +63,12 @@ class ProviderStore(private val context: Context) {
         return provider.json().put("headers",headers)
     }
     fun redact(text: String): String {
-        return redactCredentials(text,encrypted.all.keys.mapNotNull { ref -> runCatching { resolve(ref) }.getOrNull() })
+        // Structured secrets (the ChatGPT session JSON) are redacted field by field as well as whole.
+        return redactCredentials(text,encrypted.all.keys.mapNotNull { ref -> runCatching { resolve(ref) }.getOrNull() }.flatMap { value -> listOf(value)+secretFields(value) })
     }
+    private fun secretFields(value: String): List<String> = if (!value.startsWith("{")) emptyList() else runCatching {
+        val o=JSONObject(value);o.keys().asSequence().mapNotNull { o.opt(it) as? String }.filter { it.length>=16 }.toList()
+    }.getOrDefault(emptyList())
     @Synchronized fun resolve(ref: String): String? {
         val value = encrypted.getString(ref, null) ?: return null
         val bytes = Base64.decode(value, Base64.NO_WRAP)
