@@ -1,0 +1,74 @@
+name: WP9-A eval, metrics and dependency gates
+# 评测与度量底座（m2.9 WP9-A）的检查：评测题集与打分、OB3/OB5 度量、EV4 架构守卫、EV3 提示词金样、PL1 依赖许可证门。
+# 不签名、不打包、不发版，不需要运行时资产；只用公开的源码与依赖。
+on:
+  pull_request:
+    branches: [codex/m2]
+  push:
+    branches: ['feat/m2.9-eval']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wp9a-eval-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  tools:
+    name: Python tools (license gate, eval compare) and npm license gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests for tools/license-gate.py and tools/eval/compare.py
+        run: python3 -m unittest discover -s tools/tests -v
+      - name: PL1 license gate — Node host lockfile (shipped inside the runtime)
+        run: python3 tools/license-gate.py npm node-host/package-lock.json
+
+  jvm:
+    name: JVM unit tests, androidTest compile, PL1 Gradle dependency gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+          log-accepted-android-sdk-licenses: false
+      - name: core-bridge unit tests (EV1 task set, EV2 scoring/report, OB3/OB5 metrics, EV4 Kotlin guard); app compile + unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew :core-bridge:testDebugUnitTest :app:compileArm64DebugKotlin :app:testArm64DebugUnitTest :app:compileArm64DebugAndroidTestKotlin \
+            -x verifyKernelAssets -x stageRuntimeAssets -Pkotlin.compiler.execution.strategy=in-process --console=plain
+      - name: PL1 license gate — Gradle runtime classpaths of every shipped variant
+        run: |
+          mkdir -p build/license-gate
+          for c in arm64DebugRuntimeClasspath arm64FastRuntimeClasspath x86DebugRuntimeClasspath x86FastRuntimeClasspath; do
+            ./gradlew -q :app:dependencies --configuration "$c" --console=plain > "build/license-gate/$c.txt"
+          done
+          python3 tools/license-gate.py deps build/license-gate/*.txt --gradle-cache ~/.gradle/caches/modules-2/files-2.1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wp9a-jvm-reports
+          path: |
+            core-bridge/build/reports/tests
+            app/build/reports/tests
+            build/license-gate
+          if-no-files-found: ignore
+
+  node:
+    name: EV4 plugin guard and EV3 prompt golden (original dsh with mock model)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
+      - name: Build host and plugins, run guards
+        working-directory: node-host
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          node --test test/architecture.test.mjs
