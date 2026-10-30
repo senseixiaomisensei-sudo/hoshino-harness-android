@@ -5,9 +5,11 @@ export function createMockLlm() {
   const server = createServer(async (req, res) => {
     const path = new URL(req.url, 'http://127.0.0.1').pathname;
     if (req.method === 'GET' && path === '/health') { res.writeHead(200, {'Content-Type':'application/json'}).end(JSON.stringify({requests:requests.length,paths:requests.map(r=>r.path),requestOptions:requests.map(r=>({model:r.body.model,effort:r.body.reasoning_effort??r.body.output_config?.effort,maxTokens:r.body.max_tokens??r.body.max_completion_tokens,maxTokensField:r.body.max_tokens!==undefined?'max_tokens':'max_completion_tokens',thinkingType:r.body.thinking?.type})),benchmarkRequests:requests.filter(r=>r.benchmark).length,promptClasses:requests.map(r=>r.promptClass)})); return; }
-    if (req.method !== 'POST' || !['/v1/messages', '/v1/chat/completions'].includes(path)) { res.writeHead(404).end(); return; }
+    if (req.method === 'GET' && path === '/v1/models') { res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({object:'list',data:[{id:'gpt-6.1-terra',object:'model'},{id:'text-embedding-3-small',object:'model'}]})); return; }
+    if (req.method !== 'POST' || !['/v1/messages', '/v1/chat/completions', '/v1/responses'].includes(path)) { res.writeHead(404).end(); return; }
     let raw = ''; for await (const chunk of req) raw += chunk;
-    const body = JSON.parse(raw); requests.push({ path, body });
+    const body = JSON.parse(raw); requests.push({ path, body, authorization: req.headers.authorization });
+    if (path === '/v1/responses') { await responses(body, res); return; }
     const anthropic = path === '/v1/messages';
     const messages = body.messages;
     const userTexts = messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : m.content?.filter?.(c => c.type === 'text').map(c => c.text).join(' ') ?? '');
@@ -63,6 +65,40 @@ export function createMockLlm() {
     res.end();
   });
   return {server, requests};
+}
+/**
+ * OpenAI Responses fixture with model-hosted web search. A request carrying a web_search(_preview) tool streams a
+ * web_search_call item, url_citation annotations and a cited answer. Models named *preview-only* refuse `web_search`
+ * (accepting `web_search_preview`); *no-hosted* refuses every hosted tool, so callers must fall back to their own tool.
+ */
+async function responses(body, res) {
+  const hosted = (body.tools ?? []).map(t => t?.type).find(t => t === 'web_search' || t === 'web_search_preview');
+  const refuse = hosted && (/no-hosted/.test(body.model) || (/preview-only/.test(body.model) && hosted === 'web_search'));
+  if (refuse) { res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:{type:'invalid_request_error',code:'unsupported_tool',param:'tools',message:`Tool type ${hosted} is not supported for this model.`}})); return; }
+  if (!body.stream || body.store !== false || !Array.isArray(body.input)) { res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:{message:'Expected stateless streaming Responses request'}})); return; }
+  res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache'});
+  let seq = 0; const send = async (type, value) => { res.write(`event: ${type}\ndata: ${JSON.stringify({type,sequence_number:seq++,...value})}\n\n`); await pause(5); };
+  const id = 'resp_mock_search'; let index = 0; const output = [];
+  await send('response.created',{response:{id,object:'response',status:'in_progress',output:[]}});
+  if (hosted) {
+    const call = {id:'ws_mock_1',type:'web_search_call',status:'completed',action:{type:'search',query:'hoshino mock query',sources:[{type:'url',url:'https://example.com/source-a'},{type:'url',url:'https://example.org/source-b'}]}};
+    await send('response.output_item.added',{output_index:index,item:{...call,status:'in_progress',action:{type:'search'}}});
+    await send('response.web_search_call.in_progress',{output_index:index,item_id:call.id});
+    await send('response.web_search_call.searching',{output_index:index,item_id:call.id});
+    await send('response.web_search_call.completed',{output_index:index,item_id:call.id});
+    await send('response.output_item.done',{output_index:index,item:call}); output.push(call); index++;
+  }
+  const text = hosted ? 'Hoshino mock answer from the web (example.com).' : 'Hoshino mock answer without hosted search.';
+  const annotations = hosted ? [{type:'url_citation',start_index:31,end_index:42,url:'https://example.com/source-a',title:'Example Source A'}] : [];
+  const message = {id:'msg_mock_1',type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text,annotations}]};
+  await send('response.output_item.added',{output_index:index,item:{...message,status:'in_progress',content:[]}});
+  await send('response.content_part.added',{item_id:message.id,output_index:index,content_index:0,part:{type:'output_text',text:'',annotations:[]}});
+  await send('response.output_text.delta',{item_id:message.id,output_index:index,content_index:0,delta:text});
+  for (const [i, annotation] of annotations.entries()) await send('response.output_text.annotation.added',{item_id:message.id,output_index:index,content_index:0,annotation_index:i,annotation});
+  await send('response.output_text.done',{item_id:message.id,output_index:index,content_index:0,text});
+  await send('response.output_item.done',{output_index:index,item:message}); output.push(message);
+  await send('response.completed',{response:{id,object:'response',status:'completed',model:body.model,output,usage:{input_tokens:21,output_tokens:9,input_tokens_details:{cached_tokens:0},output_tokens_details:{reasoning_tokens:0}}}});
+  res.end();
 }
 if (process.argv[1] && import.meta.url === new URL(`file:///${process.argv[1].replaceAll('\\','/').replace(/^\//,'')}`).href) {
   const {server} = createMockLlm(); server.listen(Number(process.env.PORT ?? 8099), '127.0.0.1');
