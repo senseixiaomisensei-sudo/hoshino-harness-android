@@ -9,7 +9,16 @@ import {validateOverrides} from '../dist/plugins/hoshino-self/overrides.js';
 import {search} from '../dist/plugins/hoshino-m2/web.js';
 import {exportBackup,checkpoint,restoreCheckpoint,selfSnapshot} from '../dist/plugins/hoshino-m2/operations.js';
 import {approval} from '../dist/plugins/hoshino-m2/approval.js';
+import {deliverRequest} from '../dist/plugins/hoshino-m2/deliver.js';
 
+test('deliver_file forwards the dsh tool call id so the file card follows its turn',()=>{
+ const withCall=deliverRequest({sessionId:'s1',callId:'call_42'},'/workspace/out/report.md',12);
+ assert.deepEqual(withCall,{sessionId:'s1',path:'/workspace/out/report.md',name:'report.md',bytes:12,callId:'call_42'});
+ const legacy=deliverRequest({sessionId:'s1',name:'R.md'},'/workspace/out/report.md',3);
+ assert.equal('callId' in legacy,false);assert.equal(legacy.name,'R.md');
+ assert.equal('callId' in deliverRequest({sessionId:'s1',callId:''},'/w/a',1),false);
+ assert.equal('callId' in deliverRequest({sessionId:'s1',callId:'x'.repeat(500)},'/w/a',1),false);
+});
 test('UI schema accepts slot/page/token DSL and points at a malformed nested node',()=>{
  const dsl={version:1,sidebarColumns:2,process:{display:'collapsed'},tokens:{colors:{accent:'#445566'}},slots:{topbar:{type:'row',children:[{type:'battery'}]}},pages:[{route:'diy/about',title:'My page',root:{type:'text',text:'Hi'}}]};
  assert.equal(validateOverrides(dsl).slots.topbar.children[0].type,'battery');

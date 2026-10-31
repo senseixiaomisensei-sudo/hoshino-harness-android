@@ -48,7 +48,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private val approvals=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<ApprovalDecision>>()
     private val questions=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<String>>()
     private val seen=mutableMapOf<String,MutableSet<Int>>()
-    private data class Live(val id: String,val started: Long=android.os.SystemClock.elapsedRealtime(),var text: String="",var thinking: String="")
+    // 流式累积用 StringBuilder：旧实现 text+=delta 每个 token 复制整段，O(n²)。
+    private data class Live(val id: String,val started: Long=android.os.SystemClock.elapsedRealtime(),val text: StringBuilder=StringBuilder(),val thinking: StringBuilder=StringBuilder())
     private val live=mutableMapOf<String,Live>()
     private val calls=mutableMapOf<String,String>()
     private val capacities=java.util.concurrent.ConcurrentHashMap<String,Int>()
@@ -69,12 +70,15 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val uiCustomization=MutableStateFlow(UiCustomization())
     override val uiCustomizationError=MutableStateFlow<String?>(null)
     override val configurationRollbackSupported=true
-    val m2=M2Runtime(context){systemShell.installApk(it)}
+    // M2.7：交付文件归属轮次。currentTurn = 正在运行的 dsh 轮次（turn/start 事件 id），callTurn = 工具调用所在轮次。
+    private val currentTurn=java.util.concurrent.ConcurrentHashMap<String,String>()
+    private val callTurn=java.util.concurrent.ConcurrentHashMap<String,String>()
+    val m2=M2Runtime(context,turnOf={sid,callId->callId?.let{callTurn["$sid:$it"]}?:currentTurn[sid]},onDelivered={file->publish(HarnessEvent.FileDelivered(file.sessionId,file))}){systemShell.installApk(it)}
     override val presets=MutableStateFlow(listOf("chat" to "聊天","standard" to "Agent","plan" to "Plan","ask" to "Ask","research" to "Research","review" to "Review","goal" to "Goal","auto" to "Auto","orchestrator" to "Orchestrator").map{(id,name)->AgentPreset(id,name,"",true,"",emptyList(),null,PermissionTier.WorkspaceWrite)})
     val files=dev.hoshino.bridge.WorkspaceFiles(java.io.File(context.filesDir,"workspace"),java.io.File(context.filesDir,"hoshino-trash"))
     private val restartAfter=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     override val preferredSessionId:String? get()=metadata.getString("last-active-session",null)
-    override fun activateSession(sessionId:String) { activeSession=sessionId;metadata.edit().putString("last-active-session",sessionId).apply();if(runtime.state.value.phase=="已连接")scope.launch{runCatching{api().follow(sessionId)}} }
+    private fun activateSessionInternal(sessionId:String) { activeSession=sessionId;metadata.edit().putString("last-active-session",sessionId).apply();if(runtime.state.value.phase=="已连接")scope.launch{runCatching{api().follow(sessionId)}} }
 
     init {
         val saved=cachedData?.optJSONObject("events")
@@ -82,7 +86,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         else diskHistory.firstOrNull{it.id==preferredSessionId}?.let{cachedRecords[it.id]=it.events}
         scope.launch { runtime.frames.collect { (stream,frame) ->
             try {
-                if(stream.startsWith("session:"))accept(stream.removePrefix("session:"),frame)
+                drainHousekeeping()
+                if(stream.startsWith("session:")){val sid=stream.removePrefix("session:");if(sid !in released)accept(sid,frame)}
                 else if(stream.startsWith("terminal:"))acceptTerminal(stream.removePrefix("terminal:"),frame)
             }
             catch(failure: Exception) { runtime.diagnostic("mapping: ${failure.javaClass.simpleName}") }
@@ -169,6 +174,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                 val pending=metadata.getBoolean("pending:$sid",false)
                 val records=frame.getJSONArray("records").rows()
                 records.forEach { record -> durable(sid,record.getJSONObject("event"),true) }
+                publishDeliveries(sid)
                 if(pending){val last=records.map{it.getJSONObject("event")}.lastOrNull{it.optString("type") in setOf("turn/start","turn/end")};if(last?.optString("type")=="turn/end"&&last.optJSONObject("data")?.optJSONObject("reason")?.optString("kind")=="completed")metadata.edit().remove("pending:$sid").apply()}
                 frame.optJSONObject("projections")?.optJSONObject("values")?.let{publishContext(sid,it)}
             }
@@ -180,8 +186,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                     "chunk" -> {
                         val l=live.getOrPut(sid) { Live("a:${f.getString("attemptId")}") };val chunk=f.getJSONObject("chunk");val delta=chunk.optString("text")
                         when(chunk.optString("type")) {
-                            "text-delta" -> { l.text+=delta;publish(HarnessEvent.AssistantDelta(sid,l.id,delta)) }
-                            "reasoning-delta" -> { l.thinking+=delta;publish(HarnessEvent.ThinkingDelta(sid,"r:${l.id}",delta)) }
+                            "text-delta" -> { l.text.append(delta);publish(HarnessEvent.AssistantDelta(sid,l.id,delta)) }
+                            "reasoning-delta" -> { l.thinking.append(delta);publish(HarnessEvent.ThinkingDelta(sid,"r:${l.id}",delta)) }
                         }
                     }
                     "end" -> live[sid]?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) }
@@ -195,9 +201,10 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         cachedRecords[sid]=(cachedRecords[sid].orEmpty().filterNot{it.optInt("seq")==seq}+event).takeLast(300)
         if(event.optString("type") in setOf("user/message","assistant/message")){val time=OriginalSessionHistory.time(event.opt("time"));sessionRows.update{rows->rows.map{if(it.id==sid)it.copy(updatedAt=time)else it}}}
         when(event.getString("type")) {
-            "turn/start" -> {if(!replay)M2SafeMode.recordRunningMemory(context);tokenTurns[sid]=TurnTokens(event.optLong("time",System.currentTimeMillis()));publish(HarnessEvent.TurnStarted(sid,id));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
+            "turn/start" -> {if(!replay)M2SafeMode.recordRunningMemory(context);tokenTurns[sid]=TurnTokens(event.optLong("time",System.currentTimeMillis()));currentTurn[sid]=id;publish(HarnessEvent.TurnStarted(sid,id,OriginalSessionHistory.time(event.opt("time")).takeIf{it>0}?:System.currentTimeMillis()));sessionRows.update { list -> list.map { if(it.id==sid)it.copy(running=true) else it } } }
             "turn/end" -> {
                 if(!replay)metadata.edit().remove("pending:$sid").apply()
+                currentTurn.remove(sid);callTurn.keys.removeIf{it.startsWith("$sid:")}
                 tokenTurns.remove(sid)?.takeIf{it.reported}?.let{u->publish(HarnessEvent.UsageReported(sid,id,Usage(u.input,u.output,u.cache,u.reasoning,(event.optLong("time",System.currentTimeMillis())-u.start).coerceAtLeast(0))))}
                 live.remove(sid)?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) }
                 val reason=data.optJSONObject("reason")
@@ -227,13 +234,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                     if(reasoning.isNotEmpty()) {publish(HarnessEvent.ThinkingDelta(sid,"r:$id",reasoning));publish(HarnessEvent.ThinkingDone(sid,"r:$id",0))}
                     if(text.isNotEmpty()) {publish(HarnessEvent.AssistantDelta(sid,id,text));publish(HarnessEvent.AssistantDone(sid,id))}
                 } else {
-                    if(text.startsWith(l.text) && text.length>l.text.length)publish(HarnessEvent.AssistantDelta(sid,l.id,text.drop(l.text.length)))
+                    if(text.length>l.text.length && text.startsWith(l.text))publish(HarnessEvent.AssistantDelta(sid,l.id,text.substring(l.text.length)))
                     if(text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id))
                     if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started))
                 }
             }
             "request/context" -> {data.optInt("contextWindow").takeIf{it>0}?.let{capacities[sid]=it;publish(HarnessEvent.ContextUsageChanged(sid,ContextUsage(0,it,emptyList())))}}
-            "tool/call" -> { val call=data.getString("callId");calls["$sid:$call"]=id;val name=data.getString("name");publish(HarnessEvent.ToolCallStarted(sid,id,name,name,data.getString("arguments"),when(name){"bash","terminal" -> ToolKind.Bash;"write","edit" -> ToolKind.Edit;else -> ToolKind.Generic}));if(name=="bash")appendAgentTerminal(sid,"$ "+JSONObject(data.getString("arguments")).optString("command"),TerminalStream.Input) }
+            "tool/call" -> { val call=data.getString("callId");calls["$sid:$call"]=id;currentTurn[sid]?.let{callTurn["$sid:$call"]=it};val name=data.getString("name");publish(HarnessEvent.ToolCallStarted(sid,id,name,name,data.getString("arguments"),when(name){"bash","terminal" -> ToolKind.Bash;"write","edit" -> ToolKind.Edit;else -> ToolKind.Generic},callId=call));if(name=="bash")appendAgentTerminal(sid,"$ "+JSONObject(data.getString("arguments")).optString("command"),TerminalStream.Input) }
             "tool/result" -> {
                 val result=data.getJSONObject("message");val callId=calls["$sid:${result.getString("toolCallId")}"] ?: return
                 publish(HarnessEvent.ToolCallOutput(sid,callId,content(result.optJSONArray("content"),"text")))
@@ -328,7 +335,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         try{client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",pendingRequestIds[sessionId]?:UUID.randomUUID().toString()).put("mode","queue").put("content",content))}catch(failure:Exception){metadata.edit().remove("pending:$sessionId").apply();throw failure}
     }
     private fun persistCache(){runCatching{val keep=preferredSessionId?:activeSession;nativeCache.save(sessionRows.value,cachedRecords.filterKeys{it==keep},vault::redact)}}
-    fun restoreVisibleCache(){runBlocking{withTimeout(2000){eventBus.subscriptionCount.first{it>0}};for((id,records)in cachedRecords.toMap())for(event in records)runCatching{durable(id,event,true)}}}
+    fun restoreVisibleCache(){runBlocking{withTimeout(2000){eventBus.subscriptionCount.first{it>0}};for((id,records)in cachedRecords.toMap()){for(event in records)runCatching{durable(id,event,true)};publishDeliveries(id)}}}
     fun cancelWaiting(id:String){if(id.startsWith("waiting:"))outbox.remove(id)}
     fun restoreWaitingMessages(){for(p in outbox.list())Hoshino.store.enqueue(p.sessionId,QueuedMessage(p.id,p.text,p.attachments))}
     private suspend fun flushOutbox(){
@@ -500,6 +507,43 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         }
     }
     private fun appendAgentTerminal(sid:String,text:String,stream:TerminalStream) {val id="agent:$sid";terminalRows.update{list->val row=list.firstOrNull{it.id==id} ?: TerminalSession(id,"Agent · 只读",emptyList());list.filterNot{it.id==id}+row.copy(lines=(row.lines+TerminalLine(vault.redact(text),stream)).takeLast(2000))}}
+    // ---------------------------------------------------------------- M2.7 会话内存保留与按需读取
+
+    /** dsh 会话日志可完整重放：SessionStore 只在内存保留最近几个会话。 */
+    override val sessionRestoreSupported=true
+    /** 已被 SessionStore 淘汰的会话：其事件帧直接丢弃，直到再次被需要。 */
+    private val released=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** 需要在事件处理协程里执行的清理（seen/live/calls 只在该协程里读写）。 */
+    private val housekeeping=java.util.concurrent.ConcurrentLinkedQueue<()->Unit>()
+    private fun drainHousekeeping(){while(true){val task=housekeeping.poll()?:break;runCatching{task()}}}
+    private fun forgetSession(sid:String){seen.remove(sid);live.remove(sid);tokenTurns.remove(sid);calls.keys.removeAll{it.startsWith("$sid:")}}
+    override fun releaseSession(sessionId:String){
+        released.add(sessionId)
+        callTurn.keys.removeIf{it.startsWith("$sessionId:")}
+        if(sessionId!=preferredSessionId)cachedRecords.remove(sessionId)
+        housekeeping.add{if(sessionId in released)forgetSession(sessionId)}
+        if(runtime.state.value.phase=="已连接")scope.launch{runCatching{withTimeout(5000){api()}.cancelStream("session:$sessionId")}}
+    }
+    override fun retainSession(sessionId:String){
+        if(!released.remove(sessionId))return
+        housekeeping.add{forgetSession(sessionId)}
+        // 先取消再订阅，确保内核重新发送完整快照。
+        if(runtime.state.value.phase=="已连接")scope.launch{runCatching{val client=withTimeout(5000){api()};client.cancelStream("session:$sessionId");client.follow(sessionId)}}
+    }
+    override fun activateSession(sessionId:String){retainSession(sessionId);activateSessionInternal(sessionId)}
+    private suspend fun publishDeliveries(sid:String){for(file in m2.deliveries.value)if(file.sessionId==sid)publish(HarnessEvent.FileDelivered(sid,file))}
+    /** 在 dsh 会话日志里找到这次调用的 tool/result，把完整文本写入可分享的缓存文件。 */
+    override suspend fun fullToolOutput(sessionId:String,callId:String):java.io.File?=withContext(Dispatchers.IO){
+        val root=java.io.File(context.filesDir,"dsh-home/sessions");if(!root.isDirectory)return@withContext null
+        val log=root.walkTopDown().filter{it.isFile&&it.name.matches(Regex("session(?:\\.v[0-9]+)?\\.jsonl"))}.filter{f->runCatching{f.bufferedReader().use{JSONObject(it.readLine()?:"{}").optString("id")==sessionId}}.getOrDefault(false)}
+            .maxByOrNull{Regex("\\.v([0-9]+)\\.").find(it.name)?.groupValues?.get(1)?.toIntOrNull()?:0}?:return@withContext null
+        var text:String?=null
+        log.bufferedReader().useLines{lines->for(line in lines){if(!line.contains(callId)||!line.contains("tool/result"))continue;val raw=runCatching{JSONObject(line)}.getOrNull()?:continue;val e=raw.optJSONObject("event")?:raw;if(e.optString("type")!="tool/result")continue;val message=e.optJSONObject("data")?.optJSONObject("message")?:continue;if(message.optString("toolCallId")!=callId)continue;text=content(message.optJSONArray("content"),"text")}}
+        val value=text?:return@withContext null
+        val dir=java.io.File(context.cacheDir,"share").apply{mkdirs()}
+        dir.listFiles{f->f.name.startsWith("full-output-")}?.sortedByDescending{it.lastModified()}?.drop(4)?.forEach{it.delete()}
+        java.io.File(dir,"full-output-${callId.filter{it.isLetterOrDigit()}.take(40)}.txt").also{it.writeText(value)}
+    }
     override suspend fun fetchModels(provider: Provider): List<ModelInfo> {
         require(provider.protocol!=ProviderProtocol.OpenAIResponses) { "OpenAI Responses 即将支持" }
         val stored=vault.list().firstOrNull { it.id==provider.id }

@@ -13,67 +13,135 @@ import androidx.compose.ui.unit.dp
 import app.hoshino.harness.core.*
 import app.hoshino.harness.ui.components.*
 import app.hoshino.harness.ui.theme.HoshinoTheme
-import kotlinx.coroutines.delay
 
-internal data class TurnPresentation(val id:String,val user:ChatItem.User?,val process:List<ChatItem>,val finalItems:List<ChatItem>,val actions:List<ChatItem>)
-internal fun presentTurns(items:List<ChatItem>):List<TurnPresentation>{
-    val groups=mutableListOf<MutableList<ChatItem>>()
-    for(item in items){if(item is ChatItem.User || groups.isEmpty())groups.add(mutableListOf());groups.last().add(item)}
-    return groups.map{group->
-        val user=group.firstOrNull() as? ChatItem.User
-        val final=group.filterIsInstance<ChatItem.Assistant>().lastOrNull()
-        val actions=group.filter{it is ChatItem.Approval || it is ChatItem.Question || it is ChatItem.Diff && it.state==DiffState.Pending}
-        val finals=group.filter{it===final || it is ChatItem.UsageFooter}
-        TurnPresentation(user?.id?:group.first().id,user,group.filter{it!==user && it !in finals && it !in actions},finals,actions)
-    }
+/** 过程组里每个条目展示用的原始文本（不走 Markdown 解析，长输出只读内存里的尾部）。 */
+internal fun ChatItem.processText(): String = when (this) {
+    is ChatItem.Thinking -> text
+    is ChatItem.Tool -> "参数\n$input\n\n结果\n$output"
+    is ChatItem.Terminal -> "$ $command\n$output"
+    else -> plainText()
 }
 
+private fun ChatItem.processLength(): Long = when (this) {
+    is ChatItem.Thinking -> content.length.toLong()
+    is ChatItem.Tool -> input.length.toLong() + output.length
+    is ChatItem.Terminal -> command.length.toLong() + output.length
+    else -> 0L
+}
+
+/**
+ * 每轮一个折叠的过程组。参数是不可变的 [ChatRow.ProcessRow]：已完成轮次的行是同一实例，整卡跳过重组；
+ * 运行中的计时只让标题里的时长文字每秒重组（[ElapsedLabel]）。已处理的审批（「审批后折叠」开启时）在这里只留一行小字。
+ */
 @Composable
-internal fun ProcessTimeline(items:List<ChatItem>,actions:MessageActions,display:String="collapsed",types:org.json.JSONObject?=null,waiting:Boolean=false){
-    if(items.isEmpty())return
-    val c=HoshinoTheme.colors
-    val context=androidx.compose.ui.platform.LocalContext.current
-    val running=items.any{it is ChatItem.Thinking && it.running || it is ChatItem.Tool && it.status==ToolStatus.Running || it is ChatItem.Terminal && it.status==ToolStatus.Running}
-    val failed=items.any{it is ChatItem.Tool && it.status==ToolStatus.Failed || it is ChatItem.Terminal && it.status==ToolStatus.Failed}
-    val started=items.filterIsInstance<ChatItem.Thinking>().minOfOrNull{it.startedAt}
-    var now by remember{mutableLongStateOf(System.currentTimeMillis())}
-    LaunchedEffect(running){while(running){now=System.currentTimeMillis();delay(1000)}}
-    val duration=items.filterIsInstance<ChatItem.Thinking>().sumOf{if(it.running)(now-it.startedAt).coerceAtLeast(0)else it.durationMs}
-    var expanded by rememberSaveable(items.first().id,display){mutableStateOf(display!="collapsed")}
-    val tools=items.count{it is ChatItem.Tool || it is ChatItem.Terminal}
-    val files=items.filterIsInstance<ChatItem.Diff>().map{it.path}.distinct().size
-    val current=items.lastOrNull()
-    val action=when(current){is ChatItem.Tool->current.name;is ChatItem.Terminal->current.command.lineSequence().firstOrNull().orEmpty().take(60);is ChatItem.Thinking->"思考中";else->"处理任务"}
-    val status=if(waiting)"等待审批"else if(running)"运行中"else if(failed)"失败"else "已完成"
-    val title=if(running)"$action · $tools 步 · ${formatDuration(duration)} · $status" else "已运行 $tools 步 · ${formatDuration(duration)}${if(files>0)" · 改了 $files 个文件"else""} · $status"
-    Column(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp).hairlineCard(c.surface,c.line)){
-        Row(Modifier.fillMaxWidth().clickable{expanded=!expanded}.padding(12.dp)){
-            Text(if(expanded)"▾ 过程"else"▸ 过程",style=HoshinoTheme.type.bodyMedium,color=c.text,modifier=Modifier.width(64.dp))
-            Text(title,style=HoshinoTheme.type.caption,color=if(failed)c.danger else c.text2)
+internal fun ProcessTimeline(row: ChatRow.ProcessRow, actions: MessageActions, display: String = "collapsed", types: Map<String, Boolean> = emptyMap()) {
+    val items = row.items
+    if (items.isEmpty()) return
+    val c = HoshinoTheme.colors
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val summary = remember(row) { ProcessSummary.of(items, row.waiting) }
+    var expanded by rememberSaveable(row.turnKey, display) { mutableStateOf(display != "collapsed") }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).hairlineCard(c.surface, c.line)) {
+        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(12.dp)) {
+            Text(if (expanded) "▾ 过程" else "▸ 过程", style = HoshinoTheme.type.bodyMedium, color = c.text, modifier = Modifier.width(64.dp))
+            if (summary.runningSince != null) {
+                ElapsedLabel(summary.runningSince, 1000) { _ ->
+                    val ms = summary.finishedMs + (System.currentTimeMillis() - summary.runningSince).coerceAtLeast(0)
+                    Text(summary.title(ms), style = HoshinoTheme.type.caption, color = if (summary.failed) c.danger else c.text2)
+                }
+            } else {
+                Text(summary.title(summary.finishedMs), style = HoshinoTheme.type.caption, color = if (summary.failed) c.danger else c.text2)
+            }
         }
-        if(expanded){
-            items.forEachIndexed{index,item->
-                val type=when(item){is ChatItem.Thinking->"thinking";is ChatItem.Terminal->"terminal";is ChatItem.Diff->"diff";else->"tool"}
-                var open by rememberSaveable(item.id,display){mutableStateOf(types?.optBoolean(type,false)==true || display=="expanded" || display=="current"&&index==items.lastIndex)}
-                var full by remember{mutableStateOf(false)}
-                val label=when(item){is ChatItem.Thinking->"思考";is ChatItem.Tool->item.name;is ChatItem.Terminal->"终端 · "+item.command.take(70);is ChatItem.Diff->item.path;is ChatItem.Assistant->"中间回复";else->"事件 ${index+1}"}
-                Column(Modifier.padding(start=10.dp,end=6.dp,bottom=4.dp)){
-                    Text("${if(open)"▾"else"▸"} ${index+1}. $label",style=HoshinoTheme.type.caption,color=c.text2,modifier=Modifier.fillMaxWidth().clickable{open=!open}.padding(8.dp))
-                    if(if(display=="current")index==items.lastIndex else open){
-                        if(item.plainText().length>12000){
-                            var output by rememberSaveable(item.id){mutableStateOf(false)}
-                            Text("${if(output)"▾"else"▸"} 长输出 · ${item.plainText().length} 字符",color=c.text3,modifier=Modifier.clickable{output=!output}.padding(8.dp))
-                            if(output)SelectionContainer{Text(item.plainText().take(12000),style=HoshinoTheme.type.code,color=c.text)}
-                            HButton("查看全部",{full=true},compact=true)
-                        }else if(item is ChatItem.Thinking || item is ChatItem.Tool || item is ChatItem.Terminal)SelectionContainer{Text(item.plainText(),style=HoshinoTheme.type.code,color=c.text,modifier=Modifier.padding(8.dp))}else ChatItemView(item,actions)
-                    }
+        if (expanded) {
+            val steps = remember(row) { items.filterNot { it is ChatItem.Approval } }
+            val stepIndex = remember(row) { HashMap<String, Int>().apply { steps.forEachIndexed { i, it -> put(it.id, i) } } }
+            items.forEach { item ->
+                if (item is ChatItem.Approval) {
+                    Text(
+                        TurnPresenter.approvalLine(item),
+                        style = HoshinoTheme.type.caption,
+                        color = if (item.decision == ApprovalDecision.Deny) c.danger else c.text3,
+                        modifier = Modifier.padding(start = 18.dp, end = 12.dp, top = 2.dp, bottom = 6.dp),
+                    )
+                    return@forEach
                 }
-                if(full)HSheet(onDismiss={full=false},title="查看全部"){
-                    HButton("复制全文",{copyToClipboard(context,item.plainText())})
-                    SelectionContainer{Text(item.plainText(),style=HoshinoTheme.type.code,color=c.text,modifier=Modifier.heightIn(max=640.dp).verticalScroll(rememberScrollState()).padding(12.dp))}
-                }
+                val index = stepIndex[item.id] ?: 0
+                key(item.id) { ProcessStep(item, index, index == steps.lastIndex, actions, display, types, context) }
             }
         }
     }
 }
 
+@Composable
+private fun ProcessStep(item: ChatItem, index: Int, last: Boolean, actions: MessageActions, display: String, types: Map<String, Boolean>, context: android.content.Context) {
+    val c = HoshinoTheme.colors
+    val type = when (item) { is ChatItem.Thinking -> "thinking"; is ChatItem.Terminal -> "terminal"; is ChatItem.Diff -> "diff"; else -> "tool" }
+    var open by rememberSaveable(item.id, display) { mutableStateOf(types[type] == true || display == "expanded" || display == "current" && last) }
+    var full by remember { mutableStateOf(false) }
+    val label = when (item) { is ChatItem.Thinking -> "思考"; is ChatItem.Tool -> item.name; is ChatItem.Terminal -> "终端 · " + item.command.take(70); is ChatItem.Diff -> item.path; is ChatItem.Assistant -> "中间回复"; else -> "事件 ${index + 1}" }
+    Column(Modifier.padding(start = 10.dp, end = 6.dp, bottom = 4.dp)) {
+        Text("${if (open) "▾" else "▸"} ${index + 1}. $label", style = HoshinoTheme.type.caption, color = c.text2, modifier = Modifier.fillMaxWidth().clickable { open = !open }.padding(8.dp))
+        if (if (display == "current") last else open) {
+            val length = item.processLength()
+            if (length > 12000) {
+                var output by rememberSaveable(item.id) { mutableStateOf(false) }
+                Text("${if (output) "▾" else "▸"} 长输出 · $length 字符", color = c.text3, modifier = Modifier.clickable { output = !output }.padding(8.dp))
+                if (output) SelectionContainer { Text(remember(item) { item.processText().take(12000) }, style = HoshinoTheme.type.code, color = c.text) }
+                HButton("查看全部", { full = true }, compact = true)
+                val callId = (item as? ChatItem.Tool)?.callId ?: (item as? ChatItem.Terminal)?.callId
+                val truncated = (item as? ChatItem.Tool)?.outputTruncated == true || (item as? ChatItem.Terminal)?.outputTruncated == true
+                if (truncated) TruncatedNote("内存仅保留末尾 64 KiB", callId)
+            } else if (item is ChatItem.Thinking || item is ChatItem.Tool || item is ChatItem.Terminal) {
+                SelectionContainer { Text(remember(item) { item.processText() }, style = HoshinoTheme.type.code, color = c.text, modifier = Modifier.padding(8.dp)) }
+            } else ChatItemView(item, actions)
+        }
+    }
+    if (full) HSheet(onDismiss = { full = false }, title = "查看全部") {
+        val text = remember(item) { item.processText() }
+        HButton("复制全文", { copyToClipboard(context, text) })
+        SelectionContainer { Text(text, style = HoshinoTheme.type.code, color = c.text, modifier = Modifier.heightIn(max = 640.dp).verticalScroll(rememberScrollState()).padding(12.dp)) }
+    }
+}
+
+/** 过程组标题的静态部分；只依赖不可变的条目列表，按行缓存。 */
+@Immutable
+internal data class ProcessSummary(
+    val tools: Int,
+    val files: Int,
+    val approvals: Int,
+    val action: String,
+    val running: Boolean,
+    val failed: Boolean,
+    val waiting: Boolean,
+    val finishedMs: Long,
+    val runningSince: Long?,
+) {
+    fun title(durationMs: Long): String {
+        val status = if (waiting) "等待审批" else if (running) "运行中" else if (failed) "失败" else "已完成"
+        val approvalsText = if (approvals > 0) " · 审批 $approvals" else ""
+        return if (running) "$action · $tools 步 · ${formatDuration(durationMs)} · $status"
+        else "已运行 $tools 步 · ${formatDuration(durationMs)}${if (files > 0) " · 改了 $files 个文件" else ""}$approvalsText · $status"
+    }
+
+    companion object {
+        fun of(items: List<ChatItem>, waiting: Boolean): ProcessSummary {
+            val running = items.any { it is ChatItem.Thinking && it.running || it is ChatItem.Tool && it.status == ToolStatus.Running || it is ChatItem.Terminal && it.status == ToolStatus.Running }
+            val failed = items.any { it is ChatItem.Tool && it.status == ToolStatus.Failed || it is ChatItem.Terminal && it.status == ToolStatus.Failed }
+            val thinking = items.filterIsInstance<ChatItem.Thinking>()
+            val current = items.lastOrNull { it !is ChatItem.Approval }
+            val action = when (current) { is ChatItem.Tool -> current.name; is ChatItem.Terminal -> current.command.lineSequence().firstOrNull().orEmpty().take(60); is ChatItem.Thinking -> "思考中"; else -> "处理任务" }
+            return ProcessSummary(
+                tools = items.count { it is ChatItem.Tool || it is ChatItem.Terminal },
+                files = items.filterIsInstance<ChatItem.Diff>().map { it.path }.distinct().size,
+                approvals = items.count { it is ChatItem.Approval },
+                action = action,
+                running = running,
+                failed = failed,
+                waiting = waiting,
+                finishedMs = thinking.filter { !it.running }.sumOf { it.durationMs },
+                runningSince = thinking.filter { it.running }.minOfOrNull { it.startedAt },
+            )
+        }
+    }
+}

@@ -7,6 +7,7 @@ import {approval} from './approval.js';
 import {fetchPage,search,webUrl} from './web.js';
 import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,installPluginZip,gitOperation,ensureTools,exportBackup,restoreBackup,selfSnapshot,command} from './operations.js';
 import {marketInvoke} from './market.js';
+import {deliverRequest} from './deliver.js';
 import {UI_SCHEMA,validateOverrides} from '../hoshino-self/overrides.js';
 import {workspacePath} from '../android-policy/paths.js';
 import type {} from '@deepseek-ai/dsh-goal';
@@ -123,7 +124,7 @@ export async function apply(ctx:Context){
    case 'fetch':return fetchPage(String(args.url),{...config.get('search.json'),workspace});
    case 'render':webUrl(String(args.url));return bridge('web.render',args);
    case 'question':return originalCall('question',args);
-   case 'deliver':{const path=await workspacePath(workspace,String(args.path));const s=await lstat(path);if(!s.isFile())throw Error('Deliver a regular workspace file');return bridge('file.deliver',{sessionId:args.sessionId,path,name:args.name??path.split('/').at(-1),bytes:s.size});}
+   case 'deliver':{const path=await workspacePath(workspace,String(args.path));const s=await lstat(path);if(!s.isFile())throw Error('Deliver a regular workspace file');return bridge('file.deliver',deliverRequest(args,path,s.size));}
    case 'ensure-tools':return ensureTools(String(args.group),workspace);
    case 'install-plugin':return installPlugin(ctx,config,String(args.spec));
    case 'market':return marketInvoke(ctx,config,String(args.op),args);
@@ -186,7 +187,7 @@ export async function apply(ctx:Context){
   ['plugin_market','Read-only: search the configured DSH plugin index (Plugins → Discover) or show one listed plugin with its versions and install source.',{query:{type:'string'},name:{type:'string'},source:{type:'string'},limit:{type:'number'}},'plugin-market'],
   ['plugin_install','Install an original Cordis/dsh plugin from npm, git, local directory or tgz.',{spec:{type:'string',required:true}},'install-plugin'],
  ];
- for(const [tool,description,parameters,action]of tools)ctx.tools.register(defineTool({name:tool,description,parameters:parameters as any,output:{schema:{type:'string'},render:(_,value)=>[{type:'text',text:value}]},async execute(args,exec){return JSON.stringify(await invoke(action,{...args,sessionId:exec.agent?.id}));}}));
+ for(const [tool,description,parameters,action]of tools)ctx.tools.register(defineTool({name:tool,description,parameters:parameters as any,output:{schema:{type:'string'},render:(_,value)=>[{type:'text',text:value}]},async execute(args,exec){return JSON.stringify(await invoke(action,{...args,sessionId:exec.agent?.id,...(action==='deliver'?{callId:exec.rootCallId??exec.callId}:{})}));}}));
 }
 
 

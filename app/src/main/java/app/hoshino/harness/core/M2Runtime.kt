@@ -20,14 +20,20 @@ import java.net.URL
 import java.security.MessageDigest
 import java.util.UUID
 
-data class DeliveredFile(val id:String,val sessionId:String,val path:String,val name:String,val bytes:Long)
-
 /** Android capabilities only: no Agent loop or model decisions live here. */
-class M2Runtime(private val context:Context,private val silentInstall:suspend(File)->JSONObject) {
+class M2Runtime(
+    private val context:Context,
+    /** 交付发生时所属的轮次（sessionId, callId）→ turnId；由宿主客户端提供。 */
+    private val turnOf:(String,String?)->String? = {_,_->null},
+    /** 新文件交付后通知（宿主据此发出 HarnessEvent.FileDelivered）。 */
+    private val onDelivered:suspend(DeliveredFile)->Unit = {},
+    private val silentInstall:suspend(File)->JSONObject,
+) {
     val deliveries=MutableStateFlow<List<DeliveredFile>>(emptyList())
     private val vault=ProviderStore(context)
     private val records=File(context.filesDir,"hoshino-deliveries.json")
-    init {runCatching {val a=JSONArray(records.readText());deliveries.value=(0 until a.length()).map {val r=a.getJSONObject(it);DeliveredFile(r.getString("id"),r.getString("sessionId"),r.getString("path"),r.getString("name"),r.getLong("bytes"))}}}
+    // 旧记录（M2.6 及以前）没有 turnId/deliveredAt：用文件修改时间作为交付时间，界面据此归到最近的轮次。
+    init {runCatching {deliveries.value=DeliveredFileCodec.decode(records.readText()){path->runCatching{workspaceFile(path).lastModified()}.getOrDefault(0L)}}}
     fun workspaceFile(path:String):File {
         val root=File(context.filesDir,"workspace").canonicalFile
         val relative=path.removePrefix("/root/workspace/").removePrefix("/workspace/")
@@ -47,9 +53,11 @@ class M2Runtime(private val context:Context,private val silentInstall:suspend(Fi
                 JSONObject().put("providers",JSONArray(vault.list().map{it.json()})).put("preferences",prefs)
             }
             "file.deliver" -> {
-                val file=workspaceFile(args.getString("path"));val row=DeliveredFile(UUID.randomUUID().toString(),args.optString("sessionId"),args.getString("path"),args.optString("name",file.name).take(180),file.length())
+                val file=workspaceFile(args.getString("path"));val sessionId=args.optString("sessionId");val callId=args.optString("callId").takeIf{it.isNotBlank()}
+                val row=DeliveredFile(UUID.randomUUID().toString(),sessionId,args.getString("path"),args.optString("name",file.name).take(180),file.length(),turnId=turnOf(sessionId,callId),deliveredAt=System.currentTimeMillis(),callId=callId)
                 deliveries.update {(it+row).takeLast(500)}
-                withContext(Dispatchers.IO){records.writeText(JSONArray(deliveries.value.map{JSONObject().put("id",it.id).put("sessionId",it.sessionId).put("path",it.path).put("name",it.name).put("bytes",it.bytes)}).toString())}
+                withContext(Dispatchers.IO){records.writeText(DeliveredFileCodec.encode(deliveries.value))}
+                onDelivered(row)
                 JSONObject().put("delivered",true).put("id",row.id).put("name",row.name).put("bytes",row.bytes)
             }
             "file.share" -> withContext(Dispatchers.Main){AppMedia(context).shareFile(workspaceFile(args.getString("path")));JSONObject().put("opened",true)}
