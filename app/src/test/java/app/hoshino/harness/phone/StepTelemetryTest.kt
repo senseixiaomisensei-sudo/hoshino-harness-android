@@ -83,7 +83,7 @@ class StepTelemetryTest {
         val j = t.summary()
         assertEquals(50, j.getInt("steps"))
         assertEquals(1, j.getInt("failed"))
-        assertEquals(48, j.getJSONObject("total").getInt("n"))
+        assertEquals(49, j.getJSONObject("total").getInt("n")) // 50 kept: 48 taps + 1 failed tap + 1 open_app; the failure is left out
         assertTrue(j.getJSONObject("act").getLong("max") < 99_999)
         assertEquals(1_250L, j.getJSONObject("open_app").getLong("p50"))
         assertEquals(1, j.getJSONObject("open_app").getInt("n"))
