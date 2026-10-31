@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test APK only (dev.hoshino.app.test): fixtures for PhoneBenchTest (WP-0). Never part of the app APK. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Delayed-render fixture: a tap swaps the page only after 600 / 1200 ms. LAUNCHER so the phone helper can start it on the agent display. -->
+        <activity
+            android:name="app.hoshino.harness.bench.DelayedRenderActivity"
+            android:exported="true"
+            android:label="Hoshino 延迟渲染夹具"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

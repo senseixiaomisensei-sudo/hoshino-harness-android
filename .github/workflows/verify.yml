@@ -39,12 +39,14 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
       - name: Compile Kotlin and run JVM unit tests (no runtime assets, no APK)
+        # 另编译仪器测试源码（不运行）：PhoneBenchTest 等真机测试至少保证能编译。
         # verifyKernelAssets / stageRuntimeAssets 需要 rootfs/prepare.py 产出的内核归档，只影响打包，不影响编译与单测。
         run: |
           chmod +x gradlew
           ./gradlew --console=plain -Pkotlin.compiler.execution.strategy=in-process \
             -x verifyKernelAssets -x stageRuntimeAssets \
-            :app:compileArm64DebugKotlin :app:testArm64DebugUnitTest :core-bridge:testDebugUnitTest
+            :app:compileArm64DebugKotlin :app:testArm64DebugUnitTest :core-bridge:testDebugUnitTest \
+            :app:compileArm64DebugAndroidTestKotlin
       - uses: actions/upload-artifact@v4
         if: always()
         with:
