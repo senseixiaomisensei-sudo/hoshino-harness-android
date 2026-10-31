@@ -14,6 +14,7 @@ object Routes {
     const val SECURITY = "settings/security"
     const val SHIZUKU = "settings/shizuku"
     const val PHONE = "settings/phone"
+    const val PHONE_SETUP = "settings/phone-setup"
     const val KERNEL = "settings/kernel"
     const val DATA = "settings/data"
     const val CREDENTIALS = "settings/credentials"

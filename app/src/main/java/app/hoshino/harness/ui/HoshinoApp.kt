@@ -118,6 +118,7 @@ fun HoshinoApp() {
             composable(Routes.SECURITY) { SecurityScreen(viewModel(), app, back, go) }
             composable(Routes.SHIZUKU) { ShizukuScreen(viewModel(), back) }
             composable(Routes.PHONE) { PhoneCapabilitiesScreen(viewModel(), back) }
+            composable(Routes.PHONE_SETUP) { app.hoshino.harness.ui.settings.PhoneSetupScreen(back) }
             composable(Routes.KERNEL) { KernelScreen(viewModel(), back) }
             composable(Routes.DATA) { DataPrivacyScreen(viewModel(), back) }
             composable(Routes.CREDENTIALS) { CredentialsScreen(viewModel(), back) }

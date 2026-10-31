@@ -341,6 +341,7 @@ fun ChatScreen(
                         composerUi(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp, bottom = 10.dp).navigationBarsPadding())
                     }
                 }
+                PhonePip()
             }
         }
     }
