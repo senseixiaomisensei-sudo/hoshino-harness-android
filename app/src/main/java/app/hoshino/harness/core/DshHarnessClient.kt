@@ -30,6 +30,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val shizuku=shizukuConnection.state.map { ShizukuStatus.valueOf(it.name) }.stateIn(scope,SharingStarted.Eagerly,ShizukuStatus.valueOf(shizukuConnection.state.value.name))
     override suspend fun refreshShizuku(){shizukuConnection.refresh()}
     override suspend fun requestShizukuPermission()=withContext(Dispatchers.Main){shizukuConnection.requestPermission()}
+    // m2.8.1: full-access / system_shell also run through the built-in wireless-debugging helper when Shizuku is absent.
+    private val phoneServices get()=dev.hoshino.bridge.phone.shell.PhoneServices.of(context)
+    private val builtinSystemShell=dev.hoshino.bridge.phone.shell.BuiltinSystemShell({ command -> phoneServices.builtin.run(command) },java.io.File(context.filesDir,"workspace"))
+    private fun builtinReady():Boolean=runCatching{phoneServices.supported() && phoneServices.builtin.engine.paired && phoneServices.hub.shell.value!=null}.getOrDefault(false)
+    private fun currentSystemAccess():SystemAccessRoute=SystemAccess.route(shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready,runCatching{phoneServices.builtin.engine.paired}.getOrDefault(false),runCatching{phoneServices.hub.shell.value!=null}.getOrDefault(false))
+    override val systemAccess:StateFlow<SystemAccessRoute> = combine(shizukuConnection.state,phoneServices.hub.shell){_,_->currentSystemAccess()}.stateIn(scope,SharingStarted.Eagerly,currentSystemAccess())
+    override suspend fun refreshSystemAccess():SystemAccessRoute{shizukuConnection.refresh();return currentSystemAccess()}
     /** Resolved on each use so a debug test fixture installed later (ChatGptAuth.installForTest) is the one in effect. */
     val chatGptAuth:dev.hoshino.bridge.ChatGptAuth get()=dev.hoshino.bridge.ChatGptAuth.get(context)
     val runtime=NativeKernel(context,callbackHandler=::callback)
@@ -137,15 +144,12 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private suspend fun publish(event: HarnessEvent)=eventBus.emit(event)
     private suspend fun callback(method: String,body: JSONObject): Any {
         when(method) {
-            "system-access" -> {shizukuConnection.refresh();return JSONObject().put("authorized",shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready)}
-            "system-shell" -> {
-                shizukuConnection.refresh()
-                check(shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready){"Shizuku 尚未运行或授权已失效"}
-                val sid=body.getString("sessionId")
-                check(sessionRows.value.firstOrNull{it.id==sid}?.tier==PermissionTier.FullAccess){"系统命令仅允许在已授权的完全访问会话中执行"}
-                return systemShell.execute(body.getString("id"),sid,body.getString("command"),body.optInt("timeout",120000)) { text -> appendAgentTerminal(sid,text,TerminalStream.Output) }
+            "system-access" -> {val route=refreshSystemAccess();return JSONObject().put("authorized",SystemAccess.authorized(route)).put("route",route.name.lowercase())}
+            "system-shell" -> return systemShellCallback(body)
+            "system-shell-cancel" -> {
+                val id=body.getString("id");val sid=body.getString("sessionId")
+                runCatching{builtinSystemShell.cancel(id,sid)};systemShell.cancel(id,sid);return JSONObject()
             }
-            "system-shell-cancel" -> {systemShell.cancel(body.getString("id"),body.getString("sessionId"));return JSONObject()}
             "terminal-output" -> {appendAgentTerminal(body.getString("sessionId"),body.getString("text"),if(body.optString("stream")=="stderr")TerminalStream.Error else TerminalStream.Output);return JSONObject()}
             "ui-action" -> return withContext(Dispatchers.Main) {
                 AppSurface.activity()
@@ -351,8 +355,38 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         if(hits.any{hit->sessionRows.value.none{it.id==hit.sessionId}})refreshSessions()
         return SessionSearchResults(hits,value.optBoolean("hasMore"))
     }
+    /**
+     * system_shell: Shizuku when it is ready, else (or when Shizuku cannot even bind) the built-in helper.
+     * The kernel already applied the tier gate and the approval policy; the session tier it reports is authoritative
+     * over the local row, which is re-synced here (m2.8.1: a stale row made every call fail with a bare 500).
+     */
+    private suspend fun systemShellCallback(body: JSONObject): JSONObject {
+        val sid=body.getString("sessionId")
+        val local=sessionRows.value.firstOrNull{it.id==sid}?.tier
+        val kernelTier=body.optString("tier").ifEmpty{null}
+        check(SystemAccess.sessionAllowsSystemShell(local,kernelTier)){SystemAccess.SESSION_NOT_FULL_ACCESS}
+        if(local!=PermissionTier.FullAccess && kernelTier==PermissionTier.FullAccess.key)syncLocalTier(sid,PermissionTier.FullAccess)
+        shizukuConnection.refresh()
+        val id=body.getString("id");val command=body.getString("command");val timeout=body.optInt("timeout",120000)
+        val echo:(String)->Unit={ text -> appendAgentTerminal(sid,text,TerminalStream.Output) }
+        val order=SystemAccess.executors(shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready,builtinReady())
+        for(route in order) when(route) {
+            SystemAccessRoute.Shizuku -> try { return systemShell.execute(id,sid,command,timeout,echo).put("host","shizuku") }
+                catch(failure: dev.hoshino.bridge.ShizukuUnavailable) { if(!builtinReady())throw IllegalStateException(SystemAccess.UNAVAILABLE+"（Shizuku："+failure.message+"）") }
+            SystemAccessRoute.Builtin -> {
+                val result=builtinSystemShell.execute(id,sid,command,timeout,echo)
+                runCatching{app.hoshino.harness.phone.PhoneConsent.of(context).audit("system_shell builtin exit=${result.optInt("exitCode")} timedOut=${result.optBoolean("timedOut")} cancelled=${result.optBoolean("cancelled")}")}
+                return result
+            }
+            SystemAccessRoute.None -> Unit
+        }
+        error(SystemAccess.UNAVAILABLE)
+    }
+    private fun syncLocalTier(sessionId:String,tier:PermissionTier){
+        sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(tier=tier) else it } };metadata.edit().putString("tier:$sessionId",tier.key).apply()
+    }
     override suspend fun createSession(workspaceId: String,presetId: String,tier: PermissionTier): SessionInfo {
-        require(tier!=PermissionTier.FullAccess || shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready) { "请先启动 Shizuku 并授权 Hoshino Harness" }
+        require(tier!=PermissionTier.FullAccess || SystemAccess.authorized(refreshSystemAccess())) { SystemAccess.ENABLE_FIRST }
         val path=workspaceRows.value.firstOrNull { it.id==workspaceId }?.path ?: "/root/workspace"
         val id=UUID.randomUUID().toString()
         val connected=runtime.state.value.phase=="已连接"
@@ -365,9 +399,9 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun renameSession(sessionId: String,title: String) { val value=api().rpc("session/rename",JSONObject().put("sessionId",sessionId).put("title",title));sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(title=value.getString("title")) else it } } }
     override suspend fun forkSession(sessionId: String): SessionInfo { val id=api().rpc("session/fork",JSONObject().put("sessionId",sessionId)).getString("sessionId");refreshSessions();return sessionRows.value.first { it.id==id } }
     override suspend fun setSessionTier(sessionId: String,tier: PermissionTier) {
-        require(tier!=PermissionTier.FullAccess || shizukuConnection.state.value==dev.hoshino.bridge.ShizukuConnectionState.Ready) { "请先启动 Shizuku 并授权 Hoshino Harness" }
+        require(tier!=PermissionTier.FullAccess || SystemAccess.authorized(refreshSystemAccess())) { SystemAccess.ENABLE_FIRST }
         control("session-options",JSONObject().put("sessionId",sessionId).put("tier",tier.key))
-        sessionRows.update { list -> list.map { if(it.id==sessionId)it.copy(tier=tier) else it } };metadata.edit().putString("tier:$sessionId",tier.key).apply()
+        syncLocalTier(sessionId,tier)
     }
     override suspend fun send(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) {
         if(runtime.state.value.phase!="已连接"){
@@ -384,6 +418,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             upsertProvider(provider.copy(models=provider.models.map{if(it.id==model.modelId)it.copy(reasoning=true,defaultEffort=options.effort,maxOutput=maxBudget) else it}))
         require(attachments.none{it.kind==AttachmentKind.Image || it.kind==AttachmentKind.Camera} || modelInfo.vision){"当前模型未开启视觉，请在模型设置开启或切换模型"}
         control("session-options",JSONObject().put("sessionId",sessionId).put("tier",options.tier.key).put("planMode",options.planMode).put("mode",options.presetId).put("model",model.modelId))
+        // The kernel now holds this turn's tier; keep the local row in step so system-shell callbacks agree with it.
+        if(sessionRows.value.firstOrNull{it.id==sessionId}?.tier!=options.tier)syncLocalTier(sessionId,options.tier)
         // A relay model whose hosted search was detected on Responses is served by its "<id>--responses" route (plugins/android-api/routes.ts).
         val route=if(provider.protocol==ProviderProtocol.OpenAICompatible&&provider.id!="openai-codex"&&modelInfo.webSearchMode!="off"&&modelInfo.webSearchMethod.startsWith("responses:"))provider.id+"--responses" else model.providerId
         // First use of a model whose hosted search is unknown: one small capability probe in the background.

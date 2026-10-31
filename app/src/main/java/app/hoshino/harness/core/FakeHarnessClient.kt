@@ -741,6 +741,9 @@ client.send(sessionId, "你好", emptyList(), options)
 
     private val _shizuku = MutableStateFlow(ShizukuStatus.NotRunning)
     override val shizuku: StateFlow<ShizukuStatus> = _shizuku.asStateFlow()
+    private val _systemAccess = MutableStateFlow(SystemAccessRoute.None)
+    override val systemAccess: StateFlow<SystemAccessRoute> = _systemAccess.asStateFlow()
+    override suspend fun refreshSystemAccess(): SystemAccessRoute { _systemAccess.value = SystemAccess.route(_shizuku.value == ShizukuStatus.Ready, false, false); return _systemAccess.value }
 
     override suspend fun refreshShizuku() {
         delay(500)
@@ -752,6 +755,7 @@ client.send(sessionId, "你好", emptyList(), options)
     override suspend fun requestShizukuPermission() {
         delay(700)
         if (_shizuku.value == ShizukuStatus.NotAuthorized) _shizuku.value = ShizukuStatus.Ready
+        refreshSystemAccess()
     }
 
     private val _kernel = MutableStateFlow(KernelInfo("dsh 0.9.4", "Node.js v22.11.0 (arm64)", true, "proot · Alpine 3.20", true))

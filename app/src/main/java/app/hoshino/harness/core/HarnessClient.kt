@@ -151,6 +151,10 @@ interface HarnessClient {
     val shizuku: StateFlow<ShizukuStatus>
     suspend fun refreshShizuku()
     suspend fun requestShizukuPermission()
+    /** Executor for full-access / system_shell: Shizuku or the built-in wireless-debugging helper (m2.8.1). */
+    val systemAccess: StateFlow<SystemAccessRoute> get() = NO_SYSTEM_ACCESS
+    /** Re-checks both executors (Shizuku state is refreshed) and returns the current route. */
+    suspend fun refreshSystemAccess(): SystemAccessRoute = systemAccess.value
 
     val kernel: StateFlow<KernelInfo>
     suspend fun restartKernel()
@@ -244,3 +248,5 @@ sealed interface HarnessEvent {
     /** deliver_file 交付的文件；归入 [DeliveredFile.turnId] 对应的轮次（旧记录按 deliveredAt 归到最近轮次）。 */
     data class FileDelivered(override val sessionId: String, val file: DeliveredFile) : HarnessEvent
 }
+
+private val NO_SYSTEM_ACCESS: StateFlow<SystemAccessRoute> = kotlinx.coroutines.flow.MutableStateFlow(SystemAccessRoute.None)
