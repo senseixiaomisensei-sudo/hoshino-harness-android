@@ -331,8 +331,33 @@ private fun ModelEditSheet(
             HTextField(id, { id = it }, label = "模型 ID", placeholder = "claude-sonnet-4-5", mono = true)
             HTextField(display, { display = it }, label = "显示名", placeholder = "Claude Sonnet 4.5")
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HTextField(ctx, { ctx = it.filter(Char::isDigit) }, Modifier.weight(1f), label = "上下文长度", mono = true, keyboardType = KeyboardType.Number)
-                HTextField(maxOut, { maxOut = it.filter(Char::isDigit) }, Modifier.weight(1f), label = "最大输出", mono = true, keyboardType = KeyboardType.Number)
+                HTextField(ctx, { ctx = it.filter(Char::isDigit).take(9) }, Modifier.weight(1f), label = "上下文窗口", mono = true, keyboardType = KeyboardType.Number)
+                HTextField(maxOut, { maxOut = it.filter(Char::isDigit).take(9) }, Modifier.weight(1f), label = "最大输出", mono = true, keyboardType = KeyboardType.Number)
+            }
+            val ctxValue = ctx.toIntOrNull()
+            val outValue = maxOut.toIntOrNull()
+            val limitError = runCatching {
+                dev.hoshino.bridge.chatgpt.ChatGptModels.validateLimit("上下文窗口", ctxValue ?: 0)
+                dev.hoshino.bridge.chatgpt.ChatGptModels.validateLimit("最大输出", outValue ?: 0)
+                require(outValue!! < ctxValue!!) { "最大输出需要小于上下文窗口" }
+            }.exceptionOrNull()?.message
+            val limitWarning = listOfNotNull(
+                ctxValue?.let { dev.hoshino.bridge.chatgpt.ChatGptModels.limitWarning(it, model.defaultContextLength) }?.let { "上下文：$it" },
+                outValue?.let { dev.hoshino.bridge.chatgpt.ChatGptModels.limitWarning(it, model.defaultMaxOutput) }?.let { "输出：$it" },
+            ).joinToString("\n")
+            limitError?.let { Text(it, style = t.caption, color = c.danger) }
+            if (limitError == null && limitWarning.isNotEmpty()) Text(limitWarning, style = t.caption, color = c.warning)
+            if (model.defaultContextLength != null || model.defaultMaxOutput != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "模型默认：${model.defaultContextLength?.let(::formatTokens) ?: "—"} 上下文 · 最大输出 ${model.defaultMaxOutput?.let(::formatTokens) ?: "—"}。修改后刷新模型列表也会保留，压缩阈值随上下文窗口变化。",
+                        style = t.caption, color = c.text3, modifier = Modifier.weight(1f),
+                    )
+                    HButton("恢复默认", {
+                        model.defaultContextLength?.let { ctx = it.toString() }
+                        model.defaultMaxOutput?.let { maxOut = it.toString() }
+                    }, style = BtnStyle.Ghost, compact = true, enabled = ctxValue != model.defaultContextLength || outValue != model.defaultMaxOutput)
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("支持图片", style = t.body, color = c.text, modifier = Modifier.weight(1f))
@@ -377,12 +402,13 @@ private fun ModelEditSheet(
                                 id.trim(), display.trim().ifBlank { id.trim() },
                                 ctx.toIntOrNull() ?: 0, maxOut.toIntOrNull() ?: 0, vision, reasoning, effort,
                                 searchMode.key, if (id.trim() == probedId) searchMethod else "",
+                                model.defaultContextLength, model.defaultMaxOutput,
                             ),
                         )
                     },
                     Modifier.weight(1f),
                     style = BtnStyle.Primary,
-                    enabled = id.isNotBlank(),
+                    enabled = id.isNotBlank() && limitError == null,
                 )
             }
             Spacer(Modifier.height(4.dp))

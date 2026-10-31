@@ -90,6 +90,61 @@ object ChatGptModels {
         return out
     }
 
+    /** Smallest context window / output limit a user override may set (tokens). */
+    const val MIN_LIMIT = 4096
+    /** Hard ceiling for any override (tokens); above the model's own limit is allowed but flagged by [limitWarning]. */
+    const val MAX_LIMIT = 10_000_000
+
+    /**
+     * Carry the user's per-model context/output overrides from [previous] (the stored rows) onto freshly listed or merged
+     * [rows], so refreshing the plan's model list never overwrites them. Each row keeps the model's own limits in
+     * `officialContextLength` / `officialMaxOutput`; an override lives in `userContextLength` / `userMaxOutput` and becomes
+     * the effective `contextLength` / `maxOutput` (what the kernel reads for contextWindow / maxTokens and compaction).
+     * The per-model hosted-search override (`webSearchMode`) is carried the same way. Rows are edited in place and returned.
+     */
+    fun applyUserLimits(rows: JSONArray, previous: JSONArray?): JSONArray {
+        val old = previous?.let { p -> (0 until p.length()).mapNotNull { p.optJSONObject(it) }.associateBy { it.optString("id") } }.orEmpty()
+        for (i in 0 until rows.length()) {
+            val row = rows.optJSONObject(i) ?: continue
+            val officialCtx = row.positiveInt("officialContextLength") ?: row.positiveInt("contextLength") ?: 128000
+            val officialOut = row.positiveInt("officialMaxOutput") ?: row.positiveInt("maxOutput") ?: 32000
+            row.put("officialContextLength", officialCtx).put("officialMaxOutput", officialOut)
+            val prior = old[row.optString("id")]
+            prior?.str("webSearchMode")?.let { row.put("webSearchMode", it) }
+            val userCtx = prior?.positiveInt("userContextLength") ?: row.positiveInt("userContextLength")
+            val userOut = prior?.positiveInt("userMaxOutput") ?: row.positiveInt("userMaxOutput")
+            if (userCtx != null) row.put("userContextLength", userCtx) else row.remove("userContextLength")
+            if (userOut != null) row.put("userMaxOutput", userOut) else row.remove("userMaxOutput")
+            row.put("contextLength", userCtx ?: officialCtx).put("maxOutput", userOut ?: officialOut)
+        }
+        return rows
+    }
+
+    /**
+     * Set (or clear, when equal to the model's own limit or null) the user's override on one stored row.
+     * Throws [IllegalArgumentException] with a people-facing message when a value is out of range.
+     */
+    fun setUserLimits(row: JSONObject, contextLength: Int?, maxOutput: Int?) {
+        validateLimit("上下文窗口", contextLength); validateLimit("最大输出", maxOutput)
+        if (contextLength != null && maxOutput != null) require(maxOutput < contextLength) { "最大输出需要小于上下文窗口" }
+        val officialCtx = row.positiveInt("officialContextLength") ?: row.positiveInt("contextLength") ?: 128000
+        val officialOut = row.positiveInt("officialMaxOutput") ?: row.positiveInt("maxOutput") ?: 32000
+        row.put("officialContextLength", officialCtx).put("officialMaxOutput", officialOut)
+        if (contextLength == null || contextLength == officialCtx) row.remove("userContextLength") else row.put("userContextLength", contextLength)
+        if (maxOutput == null || maxOutput == officialOut) row.remove("userMaxOutput") else row.put("userMaxOutput", maxOutput)
+        row.put("contextLength", row.positiveInt("userContextLength") ?: officialCtx).put("maxOutput", row.positiveInt("userMaxOutput") ?: officialOut)
+    }
+
+    fun validateLimit(label: String, value: Int?) {
+        if (value == null) return
+        require(value >= MIN_LIMIT) { "${label}不能小于 $MIN_LIMIT tokens" }
+        require(value <= MAX_LIMIT) { "${label}不能大于 $MAX_LIMIT tokens" }
+    }
+
+    /** A caution when an override goes above the model's own limit (allowed; the plan may reject or truncate). */
+    fun limitWarning(value: Int, official: Int?): String? =
+        if (official != null && official > 0 && value > official) "超过模型官方上限 $official，套餐服务端可能拒绝或截断" else null
+
     private fun effortName(level: String) = when (level.lowercase()) {
         "none", "minimal" -> "Off"; "low" -> "Low"; "medium" -> "Medium"; "high" -> "High"; "xhigh" -> "XHigh"; "max" -> "Max"; else -> null
     }

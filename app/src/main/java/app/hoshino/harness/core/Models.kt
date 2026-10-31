@@ -155,6 +155,10 @@ data class ModelInfo(
     val webSearchMode: String = "auto",
     /** Detected hosted-search method id, "none", or "" when not yet known (see dev.hoshino.bridge.WebSearchMethods). */
     val webSearchMethod: String = "",
+    /** The model's own context window when known (ChatGPT plan models); null for user-defined models. Used for "恢复默认". */
+    val defaultContextLength: Int? = null,
+    /** The model's own max output when known (ChatGPT plan models); null for user-defined models. */
+    val defaultMaxOutput: Int? = null,
 )
 
 data class Provider(

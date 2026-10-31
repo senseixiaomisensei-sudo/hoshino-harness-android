@@ -546,7 +546,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     private fun readProviders(): List<Provider> = vault.list().map { p ->
         val m=p.metadata;val configured=m.optJSONArray("models")?.rows()?.associateBy { it.getString("id") }.orEmpty()
-        Provider(p.id,m.optString("name",p.id),m.optString("catalogId",p.id),if(p.type=="anthropic")ProviderProtocol.Anthropic else ProviderProtocol.OpenAICompatible,p.baseURL,if(vault.hasSecret(p.credentialRef)||p.type=="openai-codex"&&chatGptAuth.state.value.signedIn)"••••••••" else "",m.optJSONArray("headerRefs")?.rows()?.map { it.getString("name") to "••••••••" }.orEmpty(),m.optBoolean("enabled",true),p.models.map { id -> val d=configured[id];ModelInfo(id,d?.optString("displayName",id) ?: id,d?.optInt("contextLength",128000) ?: 128000,d?.optInt("maxOutput",4096) ?: 4096,d?.optBoolean("vision",false) ?: false,d?.optBoolean("reasoning",p.type=="anthropic") ?: (p.type=="anthropic"),runCatching { ReasoningEffort.valueOf(d?.optString("defaultEffort") ?: if(p.type=="anthropic")"Medium" else "Off") }.getOrDefault(ReasoningEffort.Off),d?.optString("webSearchMode","auto")?.ifBlank{"auto"} ?: "auto",d?.optString("webSearchMethod","").orEmpty()) })
+        Provider(p.id,m.optString("name",p.id),m.optString("catalogId",p.id),if(p.type=="anthropic")ProviderProtocol.Anthropic else ProviderProtocol.OpenAICompatible,p.baseURL,if(vault.hasSecret(p.credentialRef)||p.type=="openai-codex"&&chatGptAuth.state.value.signedIn)"••••••••" else "",m.optJSONArray("headerRefs")?.rows()?.map { it.getString("name") to "••••••••" }.orEmpty(),m.optBoolean("enabled",true),p.models.map { id -> val d=configured[id];ModelInfo(id,d?.optString("displayName",id) ?: id,d?.optInt("contextLength",128000) ?: 128000,d?.optInt("maxOutput",4096) ?: 4096,d?.optBoolean("vision",false) ?: false,d?.optBoolean("reasoning",p.type=="anthropic") ?: (p.type=="anthropic"),runCatching { ReasoningEffort.valueOf(d?.optString("defaultEffort") ?: if(p.type=="anthropic")"Medium" else "Off") }.getOrDefault(ReasoningEffort.Off),d?.optString("webSearchMode","auto")?.ifBlank{"auto"} ?: "auto",d?.optString("webSearchMethod","").orEmpty(),d?.optInt("officialContextLength",0)?.takeIf{it>0},d?.optInt("officialMaxOutput",0)?.takeIf{it>0}) })
     }
     private fun priorModel(prior: StoredProvider?, id: String) = prior?.metadata?.optJSONArray("models")?.rows()?.firstOrNull { it.optString("id")==id }
     private fun chatGptOfflineModels()=JSONArray(context.assets.open("codex-models.json").bufferedReader().use{it.readText()})
@@ -554,9 +554,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private fun saveChatGptProvider(enabled:Boolean,models:JSONArray?=null){
         val stored=vault.list().firstOrNull{it.id=="openai-codex"}
         val rows=models ?: stored?.takeIf{it.baseURL==chatGptAuth.endpoints.apiBase}?.metadata?.optJSONArray("models")?.takeIf{it.length()>0} ?: chatGptOfflineModels()
-        val previous=stored?.metadata?.optJSONArray("models")?.rows()?.associateBy{it.optString("id")}.orEmpty()
-        // Keep the user's per-model hosted-search override across model list refreshes.
-        for(row in rows.rows())previous[row.optString("id")]?.let{old->row.put("webSearchMode",old.optString("webSearchMode","auto"))}
+        // Keep the user's per-model hosted-search and context/output overrides across model list refreshes.
+        dev.hoshino.bridge.chatgpt.ChatGptModels.applyUserLimits(rows,stored?.metadata?.optJSONArray("models"))
         val metadata=JSONObject().put("name","ChatGPT").put("catalogId","openai-codex").put("enabled",enabled).put("models",rows)
         vault.save(StoredProvider("openai-codex","openai-codex",chatGptAuth.endpoints.apiBase,rows.rows().map{it.getString("id")},metadata),"")
     }
@@ -578,9 +577,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         if(provider.id=="openai-codex") {
             val stored=vault.list().firstOrNull{it.id==provider.id}?:error("请通过 ChatGPT 入口启用")
             val metadata=JSONObject(stored.metadata.toString()).put("enabled",provider.enabled)
-            // Only the per-model hosted-search override is editable here; the model list comes from the plan.
-            val modes=provider.models.associate{it.id to it.webSearchMode}
-            metadata.optJSONArray("models")?.rows()?.forEach{row->modes[row.optString("id")]?.let{row.put("webSearchMode",it)}}
+            // The model list comes from the plan; per model, the hosted-search mode and the context window / max output
+            // overrides are editable (kept across list refreshes, sent to the kernel as contextWindow / maxTokens).
+            val edits=provider.models.associateBy{it.id}
+            metadata.optJSONArray("models")?.rows()?.forEach{row->edits[row.optString("id")]?.let{m->
+                row.put("webSearchMode",m.webSearchMode)
+                dev.hoshino.bridge.chatgpt.ChatGptModels.setUserLimits(row,m.contextLength,m.maxOutput)
+            }}
             vault.save(stored.copy(metadata=metadata),"");providerRows.value=readProviders();if(runtime.state.value.phase=="已连接")api().reloadProviders();return
         }
 

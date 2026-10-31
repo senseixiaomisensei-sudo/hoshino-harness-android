@@ -80,4 +80,53 @@ class ChatGptModelsTest {
         assertEquals(listOf("none", "low", "medium", "high", "xhigh", "max"), terra.getJSONArray("reasoningLevels").let { a -> (0 until a.length()).map { a.getString(it) } })
         JSONObject(terra.toString())
     }
+
+    @Test fun refreshKeepsUserContextAndOutputOverrides() {
+        // Stored rows: the user raised terra's output and lowered its window, and set search off.
+        val stored = ChatGptModels.applyUserLimits(ChatGptModels.merge(null, offline), null)
+        val terraRow = (0 until stored.length()).map { stored.getJSONObject(it) }.first { it.getString("id") == "gpt-6.1-terra" }
+        ChatGptModels.setUserLimits(terraRow, 400000, 64000)
+        terraRow.put("webSearchMode", "off")
+        assertEquals(400000, terraRow.getInt("contextLength"))
+        assertEquals(1050000, terraRow.getInt("officialContextLength"))
+
+        // A fresh /v1/models listing (which states its own context window) is merged and saved over the stored rows.
+        val fresh = ChatGptModels.merge(ChatGptModels.parse("""{"data":[{"id":"gpt-6.1-terra","context_window":1050000},{"id":"gpt-7-nova"}]}"""), offline)
+        val saved = ChatGptModels.applyUserLimits(fresh, stored)
+        val terra = saved.getJSONObject(0)
+        assertEquals("user window survives the refresh", 400000, terra.getInt("contextLength"))
+        assertEquals("user output survives the refresh", 64000, terra.getInt("maxOutput"))
+        assertEquals(1050000, terra.getInt("officialContextLength"))
+        assertEquals(128000, terra.getInt("officialMaxOutput"))
+        assertEquals("off", terra.getString("webSearchMode"))
+        val nova = saved.getJSONObject(1)
+        assertEquals("models without an override keep their own limits", 128000, nova.getInt("contextLength"))
+        assertFalse(nova.has("userContextLength"))
+
+        // Saving again with the stored rows themselves is stable.
+        val again = ChatGptModels.applyUserLimits(JSONArray(saved.toString()), saved)
+        assertEquals(400000, again.getJSONObject(0).getInt("contextLength"))
+    }
+
+    @Test fun restoringTheDefaultClearsTheOverride() {
+        val row = JSONObject().put("id", "gpt-6.1-terra").put("contextLength", 1050000).put("maxOutput", 128000)
+        ChatGptModels.setUserLimits(row, 200000, 128000)
+        assertEquals(200000, row.getInt("userContextLength"))
+        assertFalse("an output equal to the model's own limit is not stored as an override", row.has("userMaxOutput"))
+        ChatGptModels.setUserLimits(row, 1050000, 128000)
+        assertFalse(row.has("userContextLength"))
+        assertEquals(1050000, row.getInt("contextLength"))
+        // Above the official limit is allowed (with a warning in the UI).
+        ChatGptModels.setUserLimits(row, 2000000, 128000)
+        assertEquals(2000000, row.getInt("contextLength"))
+        assertTrue(ChatGptModels.limitWarning(2000000, 1050000) != null)
+    }
+
+    @Test fun limitsBelowTheFloorAreRejected() {
+        val row = JSONObject().put("id", "gpt-6.1-terra").put("contextLength", 1050000).put("maxOutput", 128000)
+        try { ChatGptModels.setUserLimits(row, 2048, 1024); fail() } catch (e: IllegalArgumentException) { assertTrue(e.message!!.contains("4096")) }
+        try { ChatGptModels.setUserLimits(row, 8192, 8192); fail() } catch (e: IllegalArgumentException) { assertTrue(e.message!!.contains("小于")) }
+        assertEquals(1050000, row.getInt("contextLength"))
+    }
+
 }
