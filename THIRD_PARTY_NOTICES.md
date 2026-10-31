@@ -57,6 +57,12 @@ Copyright 2026 wangzan101
   - `app/ui/AgentPip.kt`、`PipPhysics.kt` → `app/src/main/java/app/hoshino/harness/ui/chat/PhonePip.kt`
   - 没有移植：`core/cap/phone/{GesturePacing,TypingPacing,AppPacing}.kt`、`core/uistate/IdleScroll.kt`（规避式拟人，mika-gap §2 PL4）；`core/shell/WirelessDebuggingAutoOn.kt` 的静默开启与 `RecoveryPermissions` 的静默授权改为向导里逐项同意（PL3）；ML Kit 的 `PhoneOcr` 换成下面的开源 OCR（PL1）。
 
+### 首配提速与自愈（分支 feat/m2.9-wp9-setup）
+
+- 使用方式：参照 Mika 的思路重新实现，不是逐行移植；自愈改为用户勾选后才生效，并在用户自己关闭无障碍时暂停。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `core-bridge/src/main/java/dev/hoshino/bridge/phone/shell/SelfHeal.kt` ← Mika `core/.../shell/AccessibilityRepair.kt`（等待/去掉再加回/最多 2 次/逐次拉长间隔）、`core/.../shell/RecoveryPolicy.kt`（退避与停止条件）、`app/.../cap/phone/setup/BuiltinShellRecovery.kt`（App 有 WRITE_SECURE_SETTINGS 时直接写系统设置）
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy

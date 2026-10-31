@@ -6,6 +6,11 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import dev.hoshino.bridge.phone.IHoshinoPhoneShell
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +20,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -77,6 +83,71 @@ class PhoneServices private constructor(context: Context) {
     }
 
     fun supported() = Build.VERSION.SDK_INT >= BuiltinShellManager.MIN_SDK
+
+    // ---- Self-heal (WP-9 / mika-gap D-3). Opt-in: SelfHealState.consent() is false until the user ticks it. ----
+
+    @Volatile private var heal: AccessibilityHeal? = null
+    private val _observation = MutableStateFlow(SelfHeal.Observation(listed = false, connected = false))
+    /** Hoshino's accessibility entry and binding as seen by this process (setup page and self-heal). */
+    val accessibilityObservation: StateFlow<SelfHeal.Observation> = _observation.asStateFlow()
+    /** Last self-heal outcome (in memory), for the setup page. */
+    val lastHeal: StateFlow<HealOutcome?> get() = heal?.last ?: MutableStateFlow<HealOutcome?>(null)
+
+    /**
+     * Starts watching the accessibility service. [connected] is the app's service instance flow. The helper gets
+     * the user's choice through the handoff token ([HelperHub.healWanted]) and repairs after a force-stop; this
+     * process repairs a listed-but-unbound service. Both only when [state] allows it.
+     */
+    @Synchronized
+    fun startSelfHeal(connected: StateFlow<Boolean>, state: SelfHealState) {
+        if (heal != null) return
+        val me = accessibilityComponent(app)
+        val h = AccessibilityHeal(state, ::canWriteAccessibility, { gap -> restartAccessibility(me, gap) }, SystemClock::elapsedRealtime)
+        heal = h
+        hub.healWanted = { state.consent() && !state.userDisabled && state.everConnected }
+        hub.onHelperHealed = { n -> h.helperHealed(n) }
+        val cr = app.contentResolver
+        fun listed() = SelfHeal.contains(runCatching { Settings.Secure.getString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) }.getOrNull(), me)
+        fun push() {
+            val o = SelfHeal.Observation(listed(), connected.value)
+            synchronized(h) { if (o != _observation.value) { h.observe(o); _observation.value = o } }
+        }
+        cr.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), false, object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) = push()
+        })
+        scope.launch { connected.collect { push() } }
+        scope.launch { _observation.conflate().collect { h.maybeRepair { _observation.value } } }
+        // A helper that comes back while the service is stuck: re-evaluate (conflated, so no double repair).
+        scope.launch { shell.collect { if (it != null) push() } }
+    }
+
+    private fun canWriteAccessibility(): Boolean = shell.value != null || holdsWriteSecureSettings()
+
+    private fun holdsWriteSecureSettings() = app.checkSelfPermission(PermissionCommands.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
+
+    /** Remove-then-add our entry: through the helper or Shizuku (shell uid) when running, else directly with WRITE_SECURE_SETTINGS. */
+    private suspend fun restartAccessibility(me: String, gapMs: Long): Boolean = withContext(Dispatchers.IO) {
+        val s = this@PhoneServices.shell.value
+        val cr = app.contentResolver
+        if (s != null) {
+            val current = runCatching { s.runCommand(PermissionCommands.READ_ACCESSIBILITY)?.getString("output") }.getOrNull()?.trim()
+            val script = SelfHeal.commands(current, me, readd = true, gapMs = gapMs).joinToString("; ")
+            return@withContext runCatching { s.runCommand(script)?.getInt("exitCode") == 0 }.getOrDefault(false)
+        }
+        if (!holdsWriteSecureSettings()) return@withContext false
+        runCatching {
+            val current = Settings.Secure.getString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            if (SelfHeal.contains(current, me)) {
+                val rest = SelfHeal.without(current, me)
+                Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, rest.ifEmpty { null })
+                kotlinx.coroutines.delay(gapMs)
+            }
+            val list = PermissionCommands.withService(Settings.Secure.getString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), me)
+            if (list != null) Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, list)
+            Settings.Secure.putInt(cr, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+            true
+        }.getOrDefault(false)
+    }
 
     companion object {
         const val ACCESSIBILITY_CLASS = "app.hoshino.harness.phone.PhoneAccessibilityService"
