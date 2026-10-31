@@ -151,3 +151,19 @@
   - 交接（`phone_handoff`）由用户点「处理好了 / 跳过」，与审批档无关。
 - **审批折叠与胶囊一致**：聊天审批卡、通知、胶囊三处都用同一个 `approvalChoices(oneShot)`：一次性审批（`phone_irreversible`，以及剪贴板/分享/应用截图这些 `onceOnly` 工具）只给「允许一次 / 拒绝」，其余给「允许一次 / 本会话总是允许 / 拒绝」，标签一致；Android 对一次性审批返回 `remember=false`。在任一处处理后发 `ApprovalResolved`，聊天按 m2.7 规则把已处理的审批折叠进过程组，胶囊同时移除。手机不可逆审批卡标题为「手机不可逆操作」，通知显示插件给的摘要。
 - 测试：`node-host/test/phone.test.mjs`（各审批档对 phone_irreversible 的结果、无审批端到端放行且审计不含屏上文字、付款不进审批口子、其他会话仍弹卡）；`StepRunnerTest`（付款授权无效、验证码/人机验证在「全部批准」下仍停）；`SessionStorePerformanceTest`（一次性审批三处选项一致并照常折叠）；`ApprovalSessionsTest`（风险说明含手机边界）。
+
+## 2026-10-31 m2.8.1 打开 App 不再要求 Shizuku；完全访问认内置无线调试助手
+
+背景：小米 15S Pro（m2.8）上让 AI「打开抖音」，模型回答「没有授权的完全访问会话，配置 Shizuku 后我再试」；用户没装也不想依赖 Shizuku。另一张截图里完全访问 + 无审批会话执行 `system_shell monkey -p com.ss.android.ugc.aweme 1`，0 秒失败，只有 `Android callback failed (500)`。
+
+决定：
+- **打开 / 操作 App 一律走 `phone_*`**（`phone_launch_app`、`phone_do_steps` 等），不需要 Shizuku、system_shell 或完全访问。`android-phone` 系统提示、`phone_launch_app` / `phone_status` 描述、`android-policy` 对 system_shell 的拒绝原因（`SYSTEM_SHELL_DENY_REASON`）、`android-shizuku` 的描述与报错都写明这一点：未完成手机操作设置时调用 `phone_status`，引导用户到「设置 → 设置手机操作」，不要让用户去配 Shizuku。
+- **非完全访问会话不暴露 system_shell**：`hoshino-m2` 的 `syncTools` 在模式白名单之外再叠加 `tierHiddenTools(tier)`（纯函数 `sessionToolDeny`）；`hoshino-self` 的 `session-options` 切换档位后已会调用 `syncTools`。运行时 tier gate 仍然拒绝，双保险。
+- **完全访问的系统执行器 = Shizuku 或 内置无线调试助手**：`system-access` 回调在 Shizuku Ready 或 内置助手「已配对且 helper 运行」时 `authorized=true`（纯函数 `SystemAccess.route`）。`system-shell` 回调先试 Shizuku；Shizuku 未 Ready、或绑定/超时（新 `ShizukuUnavailable`，表示一条命令都没执行，可安全换执行器）时回退到 `BuiltinSystemShell`（经 `BuiltinShellManager.run` → helper `runCommand`）；两者都不可用时报「Shizuku 未运行/未授权，且内置无线调试助手未就绪：请到 设置 → 设置手机操作」。
+  - 内置路径保留超时（toybox `timeout -s KILL`，受 helper 单条 15 s 上限约束，钳到 14 s 并在结果里注明）、取消（pid 文件 + `pkill -P`/`kill -9`，只能由同一会话取消）、输出截断（预览 32 KiB，完整输出写入工作区文件，helper 本身最多 64 KiB）、终端回显和本地审计行（只记 exit/timedOut/cancelled，不记命令和输出）。stdout/stderr 在 helper 里合并，结果标 `stderrMerged`。
+  - 审批不变：system_shell 仍走用户的审批档；完全访问仍须在会话中手动确认风险，不能设为预设默认；不自动开启无线调试，同意项默认不勾选；付款 / 密码 / 验证码仍交给用户。
+- **会话档位以内核为准**：`send()` 每轮把输入框的档位发给内核，但本地 `sessionRows` 不更新，导致 system-shell 回调里的 `tier==FullAccess` 校验失败（截图里的 0 秒 500）。现在插件在 system-shell 请求里带上内核已验证的 `tier`，Android 以它为准（`SystemAccess.sessionAllowsSystemShell`：内核报告的档位优先；内核报告其他档位一律拒绝；旧内核不带时退回本地行），并在 `send()` / `setSessionTier` / 回调后同步本地行。
+- **回调错误不再丢失**：`AndroidCallbackServer` 500 时返回 `{"error": 脱敏后的 failure.message}`（`ProviderStore.redact` → `redactCredentials`，最多 2000 字，空消息退回异常类名；诊断日志仍只记类名）；`node-host/src/platform.ts` 的 `callbackError` 读出后抛 `Android callback failed (500): <message>`。
+- `phone_*` 失败时（`code` 为 helper / accessibility / unsupported）错误文本带「设置 → 设置手机操作」和「Shizuku 与完全访问都不需要」（`phoneError`）；UI（权限弹层、风险确认、引导弹层、设置页、预设页、`PermissionTier.FullAccess` 描述）改为「需要 Shizuku 或 内置无线调试助手」，引导弹层首推「去设置手机操作」。
+
+测试：`node-host/test/m281.test.mjs`（tier gate 文案、system_shell 隐藏、phoneError、手机提示词、callbackError 及端到端 500 消息）；`SystemAccessTest`（执行器判定、内核档位优先、回退顺序）；`BuiltinSystemShellTest`（命令包装/引号、超时钳制、结果形状、执行写文件、取消）；`AndroidCallbackServerTest`（500 带脱敏 JSON 错误）。未真机验证：内置助手执行 system_shell、取消杀进程、Shizuku 绑定超时回退。
