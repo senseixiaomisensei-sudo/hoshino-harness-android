@@ -11,6 +11,7 @@ export function createContextLoopMock() {
   const requests = [];
   const counters = new Map();
   let previousMain = '';
+  let overflowLength;
   const bump = key => { const n = (counters.get(key) ?? 0) + 1; counters.set(key, n); return n; };
   const server = createServer(async (req, res) => {
     const path = new URL(req.url, 'http://127.0.0.1').pathname;
@@ -54,7 +55,10 @@ export function createContextLoopMock() {
       } else if (human.includes('fatal-fixture')) {
         json(401, { error: { message: 'Incorrect API key provided' } }); return;
       } else if (human.includes('overflow-fixture')) {
-        if (!all.includes('<compacted-summary>') && bump('overflow') <= 2) { json(400, { error: { message: "This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens." } }); return; }
+        // Overflow until the history actually shrinks (a compaction during this turn); earlier turns may already carry a
+        // <compacted-summary>, so its mere presence is not evidence that this overflow was recovered.
+        overflowLength ??= messages.length;
+        if (messages.length >= overflowLength && bump('overflow') <= 2) { json(400, { error: { message: "This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens." } }); return; }
         reply = '压缩后继续完成。';
       } else if (human.includes('notdone-fixture')) {
         if (!hasResult) { tool = 'end_not_done'; args = { message: '设置里没有这个开关 notpossible-verdict', subtype: 'route_failed' }; } else reply = '没办成。';
