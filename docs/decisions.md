@@ -131,3 +131,8 @@
 - **与 M0 决定的关系**：M0 第 9 条「每个模型请求也逐次审批」是 M0 权限最小化阶段的决定，被 M2.1 取代。README「模型网络请求与 Agent 写操作默认审批」一句随之过时，待主代理发版时更新。
 - **测试**：`node-host/test/kernel.test.mjs` 原断言「出现 network 审批」自 M2.1 起一直失败（基线失败）。改为断言当前设计：普通模型请求**不**出现 `kind: network` 审批，同时**仍**出现 `write` 工具审批。没有删除断言。Android 侧 `DshHarnessClient` 里处理 `kind=network` 审批卡的分支保留（兼容旧插件/第三方插件仍可能发起该类审批）。
 
+## 2026-10-31 M2.3 第三方 Anthropic 兼容端点用通用 Messages 形状（补记）
+
+- **事实**：M2.3 提交 `064eaa0`（fix: send plain Anthropic Messages requests to third-party Anthropic-compatible endpoints (relay 502)）新增 `plugins/android-api/anthropic-compat.ts`：对 `api.anthropic.com` 以外的 Anthropic 兼容地址，去掉 pi-ai 的 Claude 专用字段（`output_config`、adaptive thinking、beta 头、工具 eager streaming 等），推理档换算成显式 `thinking.budget_tokens`（max=16000）。官方地址不改。文件头写明了理由（中转站/DeepSeek 等对这些字段回 4xx/502），当时没有在本文件记录。
+- **测试**：`kernel.test.mjs` 的 claude-max 断言仍按官方形状（`output_config.effort=max`、`thinking.type=adaptive`）检查发往本机 mock 的请求；本机 mock 属于「第三方兼容端点」，因此自 M2.3 起该断言不成立，只是被前面 M2.1 的 network 断言失败挡住、一直没跑到。改为断言当前设计：无 `output_config`、`thinking.type=enabled`、`budget_tokens=16000`；其余 max 预算断言（`max_tokens>=32768`）不变。官方形状没有离线可测的端点，未覆盖，如需覆盖应给 `sanitizeAnthropicBody`/地址判定单独写单测。
+

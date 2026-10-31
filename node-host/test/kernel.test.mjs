@@ -111,7 +111,9 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
     await rpc('session/prompt',{sessionId,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text:'你好'}]});
     await wait(()=>frames.slice(before).some(f=>f.value?.event?.type==='turn/end'));turns++;
     const request=mock.requests.at(-1).body;
-    if(provider==='claude-max') {assert.equal(request.output_config.effort,'max');assert.equal(request.thinking.type,'adaptive');}
+    // M2.3（064eaa0）起，非 api.anthropic.com 的 Anthropic 兼容端点（本测试的本机 mock 即是）收到的是通用 Messages 形状：
+    // 去掉 output_config/adaptive，max 档换算成显式 thinking 预算（anthropic-compat.ts BUDGET.max=16000）。见 docs/decisions.md。
+    if(provider==='claude-max') {assert.equal(request.output_config,undefined,'Third-party Anthropic endpoints get no Claude-only output_config');assert.equal(request.thinking.type,'enabled');assert.equal(request.thinking.budget_tokens,16000,'max effort maps to the largest explicit thinking budget');}
     else {assert.equal(request.reasoning_effort,'max');if(provider==='deepseek-max'){assert.equal(request.thinking.type,'enabled');assert.ok(request.max_tokens>=32768);}}
     assert.ok(request.max_tokens>=32768 || request.max_completion_tokens>=32768,'Max must retain a meaningful total thinking/answer budget');
   }
