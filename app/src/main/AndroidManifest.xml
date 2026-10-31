@@ -36,6 +36,10 @@
             <meta-data android:name="android.accessibilityservice" android:resource="@xml/phone_accessibility_service" />
         </service>
         <receiver android:name="app.hoshino.harness.phone.PhoneActionReceiver" android:exported="false" />
+        <!-- m2.9: runs only while a phone task holds the background agent display; shows an ongoing notice with 停止. -->
+        <service android:name="app.hoshino.harness.phone.PhoneTaskService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User initiated on-device AI agent operating apps on a background virtual display" />
+        </service>
         <receiver android:name="app.hoshino.harness.phone.setup.PairingCodeReceiver" android:exported="false" />
         <receiver android:name="app.hoshino.harness.core.M2Widget" android:exported="false"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/m2_widget_info" /></receiver>
     </application>

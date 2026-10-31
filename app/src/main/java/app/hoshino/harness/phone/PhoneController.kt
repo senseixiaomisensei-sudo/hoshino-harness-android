@@ -20,6 +20,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -69,6 +71,15 @@ class PhoneController private constructor(private val context: Context) {
     private var idleJob: Job? = null
     val ocr: PhoneOcr? get() = OcrModels.engine(context)
 
+    init {
+        // m2.9: a foreground service (with its ongoing notice) lives exactly as long as the agent display.
+        scope.launch {
+            _display.map { it != null }.distinctUntilChanged().collect { exists ->
+                PhoneTaskForeground.sync(context, exists)?.let { consent.audit("phone task foreground service not started: ${it.javaClass.simpleName}") }
+            }
+        }
+    }
+
     suspend fun handle(body: JSONObject): JSONObject = try {
         when (val action = body.optString("action")) {
             "status" -> status()
@@ -78,6 +89,8 @@ class PhoneController private constructor(private val context: Context) {
             "steps" -> steps(session(body), body)
             "grant" -> grant(session(body), body.getString("fingerprint"))
             "list_apps" -> listApps(body.optString("query"))
+            // m2.9: lets the kernel's system_shell guard accept only commands that explicitly target the agent display.
+            "display" -> JSONObject().put("ok", true).put("display", agentDisplayId() ?: JSONObject.NULL)
             "handoff" -> PhoneTakeover.of(context).request(session(body), body.optString("reason").take(300), this)
             "stop" -> { stop(session(body), "stopped by request"); JSONObject().put("ok", true) }
             "release" -> { release(session(body)); JSONObject().put("ok", true) }
