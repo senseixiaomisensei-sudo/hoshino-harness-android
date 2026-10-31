@@ -87,6 +87,41 @@ class StepRunnerTest {
         assertTrue(port.performed.isEmpty())
     }
 
+    // M2.8 approval semantics: these hold whatever the kernel approval mode is (the gate below approves everything,
+    // which is what the user-enabled no-approval mode amounts to on this side).
+    private val approveAll = ApprovalGate { true }
+
+    @Test fun paymentIsNeverGrantableEvenWhenEverythingIsApproved() = runBlocking {
+        val transfer = snap(el("e1", "张三", listOf(0, 0, 999, 80), clickable = false), el("e2", "转账", listOf(800, 900, 999, 990)))
+        val port = FakePort(transfer)
+        val r = StepRunner(port, approveAll).run(listOf(PhoneStep(StepKind.tap, ref = "e2")))
+        assertEquals("payment", r.reason)
+        assertEquals("payment", r.needsUser?.reason)
+        assertNull(r.pending)
+        assertTrue(port.performed.isEmpty())
+        // A payment sheet (PIN pad digits are not "pay" buttons) is hands-only too.
+        val sheet = snap(el("e1", "请输入支付密码", listOf(0, 0, 999, 100), clickable = false), el("e2", "1", listOf(0, 700, 300, 800)))
+        val pin = FakePort(sheet)
+        assertEquals("payment", StepRunner(pin, approveAll).run(listOf(PhoneStep(StepKind.tap, ref = "e2"))).needsUser?.reason)
+        assertTrue(pin.performed.isEmpty())
+        // Leaving stays possible so the agent can hand over.
+        assertTrue(StepRunner(pin, approveAll).run(listOf(PhoneStep(StepKind.back))).completed)
+        assertEquals(listOf("back"), pin.performed)
+    }
+
+    @Test fun verificationCodeAndCaptchaAreHandsOnlyEvenWhenEverythingIsApproved() = runBlocking {
+        val code = snap(el("e1", "输入验证码", listOf(0, 0, 999, 100), clickable = false), el("e2", "", listOf(0, 200, 999, 300), editable = true, role = "EditText"))
+        val port = FakePort(code)
+        val r = StepRunner(port, approveAll).run(listOf(PhoneStep(StepKind.type, ref = "e2", text = "123456")))
+        assertEquals("needs_user", r.reason)
+        assertEquals("login", r.needsUser?.reason)
+        assertTrue(port.performed.isEmpty())
+        val captcha = FakePort(snap(el("e1", "拖动滑块完成拼图", listOf(0, 0, 999, 100), clickable = false)))
+        val c = StepRunner(captcha, approveAll).run(listOf(PhoneStep(StepKind.swipe, x = 100, y = 500, x2 = 900, y2 = 500)))
+        assertEquals("captcha", c.needsUser?.reason)
+        assertTrue(captcha.performed.isEmpty())
+    }
+
     @Test fun chooserStopsUnlessThePickIsAnOption() = runBlocking {
         val chooser = ScreenSnapshot("c", "android", 1080, 2400, listOf(el("e9", "打开方式", listOf(0, 500, 999, 550), clickable = false), el("e10", "微信", listOf(0, 600, 500, 700)), el("e11", "微信(双开)", listOf(500, 600, 999, 700))))
         val port = FakePort(chooser)

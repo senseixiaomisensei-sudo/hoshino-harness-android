@@ -61,7 +61,11 @@ class StepRunner(private val port: PhonePort, private val gate: ApprovalGate, pr
             if (step.kind == StepKind.type && (target?.password == true || (target == null && screen.elements.any { it.focused && it.password }))) {
                 return StepsResult(results, i, "password", needsUser = NeedsUser("password", "typing into a password field is left to the user"), screen = screen)
             }
+            // Hands-only screens and payment never depend on approval: no grant, approval mode (including the user-enabled
+            // no-approval mode) or remembered decision can let the agent act there (docs/decisions.md, 2026-10-31 M2.8).
+            handsOnly(step, screen)?.let { n -> return StepsResult(results, i, "needs_user", needsUser = n, screen = screen) }
             IrreversibleDetector.classify(step, screen, target)?.let { hit ->
+                if (hit.action == IrrevAction.pay) return StepsResult(results, i, "payment", needsUser = NeedsUser("payment", "payment is always done by the user: ${hit.matched}"), screen = screen)
                 val fp = fingerprint(step, hit, screen, target)
                 if (!gate.consume(fp)) return StepsResult(results, i, "approval_required", pending = PendingApproval(i, step.describe(), hit.action, hit.matched, fp, screen.packageName), screen = screen)
             }
@@ -104,6 +108,22 @@ class StepRunner(private val port: PhonePort, private val gate: ApprovalGate, pr
     companion object {
         const val QUIET_MS = 400L
         const val SETTLE_MAX_MS = 2_500L
+
+        /**
+         * A step the agent must not take on this screen whatever the approval mode: typing or clearing on any screen that
+         * needs the user (password, login, verification code, captcha, payment), and tapping/long-pressing/swiping on a
+         * captcha or payment screen (sliders, PIN pads). Reading, Back, keys, waiting and opening another app stay allowed
+         * so the agent can still hand over or leave.
+         */
+        fun handsOnly(step: PhoneStep, s: ScreenSnapshot): NeedsUser? {
+            val n = SystemScreens.needsUser(s) ?: return null
+            val acting = when (step.kind) {
+                StepKind.type, StepKind.clear -> true
+                StepKind.tap, StepKind.long_press, StepKind.swipe -> n.reason == "captcha" || n.reason == "payment"
+                else -> false
+            }
+            return if (acting) n else null
+        }
 
         fun conditionsMet(e: Expectation, s: ScreenSnapshot): Boolean {
             val text = s.texts.joinToString("\n")
