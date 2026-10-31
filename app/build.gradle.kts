@@ -35,6 +35,7 @@ android {
         getByName("x86").assets.srcDir(layout.buildDirectory.dir("generated/runtimeAssets/x86_64").get().asFile)
         getByName("androidTestArm64").assets.srcDir(layout.buildDirectory.dir("generated/benchmarkAssets/arm64-v8a").get().asFile)
         getByName("androidTestX86").assets.srcDir(layout.buildDirectory.dir("generated/benchmarkAssets/x86_64").get().asFile)
+        getByName("androidTest").assets.srcDir(rootProject.file("eval")) // EV2 评测题集（tasks/…），EvalRunTest 从测试包 assets 读
     }
     androidResources { noCompress += listOf("txz","tgz") }
     packaging { jniLibs { useLegacyPackaging = true }; resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
