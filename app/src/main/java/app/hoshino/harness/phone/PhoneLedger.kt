@@ -89,14 +89,11 @@ object PhoneApps {
             .sortedBy { it.label.lowercase() }
     }
 
-    /** Exact package, else exact label, else the single label containing [query]. */
-    fun resolve(context: Context, query: String): String? {
-        val q = query.trim()
-        val apps = list(context)
-        apps.firstOrNull { it.packageName == q }?.let { return it.packageName }
-        if (q == context.packageName) return q
-        fun key(s: String) = s.filterNot { it.isWhitespace() }.lowercase()
-        apps.filter { key(it.label) == key(q) }.singleOrNull()?.let { return it.packageName }
-        return apps.filter { key(it.label).contains(key(q)) }.singleOrNull()?.packageName
-    }
+    /** m2.9.3: [AppNameMatch] (exact package / label, cleaned query, well-known aliases such as 微信 = WeChat = com.tencent.mm). */
+    fun resolve(context: Context, query: String): String? =
+        AppNameMatch.resolve(list(context).map { AppNameMatch.App(it.label, it.packageName) }, query, context.packageName)
+
+    /** Close candidates for the "no installed app matches" error. */
+    fun suggest(context: Context, query: String): List<App> =
+        AppNameMatch.suggest(list(context).map { AppNameMatch.App(it.label, it.packageName) }, query).map { App(it.label, it.packageName) }
 }

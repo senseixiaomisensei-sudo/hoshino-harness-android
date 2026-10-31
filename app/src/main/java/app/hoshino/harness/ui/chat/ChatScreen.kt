@@ -369,6 +369,7 @@ fun ChatScreen(
                                 onScreenshot = {app.hoshino.harness.ui.tools.CaptureRequests.selection.value=app.hoshino.harness.ui.tools.CaptureSelection(items=listOf(it));navigate(Routes.SCREENSHOT)},
                             )
                         }
+                        app.hoshino.harness.ui.phone.PhoneScreenBar(onOpen = { navigate(Routes.VIRTUAL_SCREEN) })
                         SessionMessages(
                             session = sessionState,
                             sessionId = currentId.orEmpty(),
@@ -379,7 +380,7 @@ fun ChatScreen(
                         composerUi(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp, bottom = 10.dp).navigationBarsPadding())
                     }
                 }
-                PhonePip()
+                PhonePip(onExpand = { navigate(Routes.VIRTUAL_SCREEN) })
             }
         }
     }

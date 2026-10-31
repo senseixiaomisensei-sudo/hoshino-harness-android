@@ -507,7 +507,7 @@ class AndroidPhoneScreen(
     private suspend fun openApp(app: String, cold: Boolean = false): ActionOutcome {
         val s = shell() ?: return ActionOutcome(false, "helper_not_running")
         if (display == null) return ActionOutcome(false, "apps are only opened on the agent display")
-        val pkg = PhoneApps.resolve(context, app) ?: return ActionOutcome(false, "no installed app matches \"$app\"; use phone_list_apps")
+        val pkg = PhoneApps.resolve(context, app) ?: return ActionOutcome(false, "no installed app matches \"$app\"" + PhoneApps.suggest(context, app).let { if (it.isEmpty()) "; use phone_list_apps" else "; did you mean: " + it.joinToString { a -> "${a.label} (${a.packageName})" } })
         if (pkg == context.packageName) return ActionOutcome(false, "own_app: Hoshino does not operate itself")
         val mainBefore = runCatching { s.topPackage(Display.DEFAULT_DISPLAY) }.getOrNull()
         val started = now()
@@ -524,6 +524,8 @@ class AndroidPhoneScreen(
             0 -> placeOnAgent(s, pkg, mainBefore) ?: run { PhoneLedger.mute(context, s, pkg); awaitUsable(s, pkg, started, note) }
             1 -> ActionOutcome(false, "in_use: the user is using $pkg on the main screen; ask before taking it over")
             2 -> ActionOutcome(false, "no launcher entry for $pkg")
+            // m2.9.3: the system refused the start (both the binder call and `am start --display` as the shell uid).
+            4 -> ActionOutcome(false, "blocked_by_system: Android/the ROM refused to start $pkg on the agent display (e.g. MIUI/HyperOS 关联启动 or 自启动 interception). Tell the user to allow it for $pkg in the system security settings or reconnect the phone helper in 设置 → 设置手机操作; do not retry with system_shell")
             7 -> ActionOutcome(false, "busy: the agent display is used by another task")
             else -> ActionOutcome(false, "could not start $pkg")
         }

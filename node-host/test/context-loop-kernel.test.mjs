@@ -139,11 +139,18 @@ test('WP9-B context & loop quality on the original kernel', { timeout: 600000 },
   assert.ok(mock.requests.some(r => r.lastText.includes('Rewrite the whole answer in the language')));
 
   // ---- RT10: a discussion question does not run a writing tool, and never reaches the approval prompt
+  // (m2.9.3: a one-time soft reminder instead of the hard denial; the model that does not insist answers in text)
   const approvalsBefore = approvals.length;
   const discuss = await prompt('什么是闭包？');
-  assert.ok(discuss.results.some(r => r.includes('The user is discussing')), JSON.stringify(discuss.results));
+  assert.ok(discuss.results.some(r => r.includes('Check before acting')), JSON.stringify(discuss.results));
+  assert.ok(!discuss.results.some(r => r.includes('The user is discussing')), 'the old hard denial is opt-in only');
   await assert.rejects(access(join(workspace, 'should-not-exist.txt')));
   assert.ok(!approvals.slice(approvalsBefore).some(a => a.tool === 'write'));
+  // m2.9.3: a model that insists after the reminder is not blocked a second time.
+  const insist = await prompt('insist-fixture 为什么天空是蓝的');
+  assert.equal(insist.results.filter(r => r.includes('Check before acting')).length, 1, JSON.stringify(insist.results));
+  assert.equal(await readFile(join(workspace, 'insisted.txt'), 'utf8'), 'second call ran\n');
+  assert.equal(insist.answer, '已按你的要求写好。');
 
   // ---- RT16: transient 503 retried on the same route; 401 explained
   const flaky = await prompt('flaky-fixture 再试试');

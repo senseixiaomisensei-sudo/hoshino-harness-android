@@ -15,6 +15,8 @@ object Routes {
     const val SHIZUKU = "settings/shizuku"
     const val PHONE = "settings/phone"
     const val PHONE_SETUP = "settings/phone-setup"
+    /** m2.9.3: the agent display inside the app (zoom, free operation, takeover). */
+    const val VIRTUAL_SCREEN = "phone/screen"
     const val KERNEL = "settings/kernel"
     const val DATA = "settings/data"
     const val CREDENTIALS = "settings/credentials"

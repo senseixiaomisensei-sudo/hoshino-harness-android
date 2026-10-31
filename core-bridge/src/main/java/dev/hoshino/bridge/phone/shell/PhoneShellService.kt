@@ -119,17 +119,28 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
         val intent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return START_NOT_FOUND
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle()
-        val ok = try {
+        // m2.9.3: positive refusal codes (100–102, e.g. a ROM's launch interception) are no longer counted as started
+        // ([StartResult]); a refused or failed binder start is retried once with the shell's `am start --display`.
+        val binder = try {
             val start = taskManager.javaClass.methods.first { it.name == "startActivityAsUser" && it.parameterTypes.size == 12 }
             // (caller, callingPackage, callingFeatureId, intent, resolvedType, resultTo, resultWho, requestCode, flags, profilerInfo, options, userId)
             val result = start.invoke(taskManager, null, ShellContext.SHELL_PACKAGE, null, intent, null, null, null, 0, 0, null, options, USER_CURRENT) as Int
-            result >= 0
+            if (result !in 0..3) Log.w(TAG, "startActivityAsUser on display $displayId returned $result")
+            StartResult.ofCode(result)
         } catch (t: Throwable) {
             Log.w(TAG, "startActivityAsUser unavailable, falling back to am start", t)
-            val component = intent.component?.flattenToShortString() ?: return START_NOT_FOUND
-            sh("am", "start", "--display", "$displayId", "-n", component).first == 0
+            StartResult.ERROR
         }
-        if (ok) START_OK else START_ERROR
+        val outcome = if (binder == StartResult.STARTED) binder else {
+            val component = intent.component?.flattenToShortString() ?: return START_NOT_FOUND
+            val (exit, out) = sh("am", "start", "--display", "$displayId", "--user", "current", "-n", component)
+            StartResult.ofAmOutput(exit, out).let { if (it == StartResult.ERROR && binder == StartResult.BLOCKED) StartResult.BLOCKED else it }
+        }
+        when (outcome) {
+            StartResult.STARTED -> START_OK
+            StartResult.BLOCKED -> START_BLOCKED
+            StartResult.ERROR -> START_ERROR
+        }
     }
 
     /**
@@ -446,6 +457,8 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
         const val START_IN_USE_ON_MAIN = 1
         const val START_NOT_FOUND = 2
         const val START_ERROR = 3
+        /** m2.9.3: the system refused the start (positive refusal code / am start error code 10x), e.g. ROM launch interception. */
+        const val START_BLOCKED = 4
         /** restartApp results (never 0: an older helper answers 0). */
         const val RESTART_COLD = 10
         const val RESTART_WARM = 11
