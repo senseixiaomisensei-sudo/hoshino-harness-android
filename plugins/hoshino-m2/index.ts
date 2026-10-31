@@ -3,6 +3,7 @@ import {defineTool} from '@deepseek-ai/dsh-tools';
 import {readFile,writeFile,mkdir,readdir,lstat,appendFile} from 'node:fs/promises';
 import {join,dirname,relative} from 'node:path';
 import {Configuration,modes,defaults,interpolate,treeStamp,atomic,scopePolicy,withApprovalMode,APPROVAL_MODES,type ApprovalMode,type Data} from './config.js';
+import {stopSummary,exportSession,forgetSessions} from './sessions.js';
 import {approval} from './approval.js';
 import {fetchPage,search,webUrl} from './web.js';
 import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,installPluginZip,gitOperation,ensureTools,exportBackup,restoreBackup,selfSnapshot,command} from './operations.js';
@@ -163,7 +164,7 @@ export async function apply(ctx:Context){
    case 'sync-push':{const cfg=config.get('build.json');const path='/repos/'+cfg.repository+'/contents/hoshino-config.json';let sha:string|undefined;try{sha=(await github(path)).sha;}catch{}return github(path,'PUT',{message:'chore: sync public Hoshino configuration',content:Buffer.from(JSON.stringify(Object.fromEntries(config.values),null,2)).toString('base64'),...(sha?{sha}:{})});}
    case 'sync-pull':{const cfg=config.get('build.json');const result=await github('/repos/'+cfg.repository+'/contents/hoshino-config.json');return invoke('import-config',{content:Buffer.from(result.content,'base64').toString('utf8')});}
    case 'bridge':return bridge(String(args.action),args.request??{});
-   // ---- approval level (incl. user-enabled no-approval)
+   // ---- approval level (incl. user-enabled no-approval) and session management; see sessions.ts
    case 'approval-state':{const sid=String(args.sessionId??'');const policy=config.get('approval.json');const mode=String((ctx.mobilePolicy.options.get(sid) as Data|undefined)?.mode??'standard');return {defaultMode:String(policy.mode??'manual'),sessionMode:sid?policy.scopes?.sessions?.[sid]?.mode??null:null,effective:String(scopePolicy(policy,sid,workspace,mode).mode??'manual'),modes:APPROVAL_MODES};}
    case 'approval-mode':{
     const sid=typeof args.sessionId==='string'&&args.sessionId?args.sessionId:undefined;const scope=String(args.scope??'session');const mode=args.mode==null?null:String(args.mode) as ApprovalMode;
@@ -172,6 +173,9 @@ export async function apply(ctx:Context){
     else{if(!sid)throw Error('Missing session');next=withApprovalMode(next,scope==='clear'?null:mode,sid);}
     await config.write('approval.json',next);return invoke('approval-state',{sessionId:sid??''});
    }
+   case 'stop-summary':return stopSummary(ctx,config,args);
+   case 'session-export':return exportSession(ctx,root,args);
+   case 'sessions-forget':return forgetSessions(ctx,config,args);
    default:throw Error('Unknown M2 operation');
   }
  };
