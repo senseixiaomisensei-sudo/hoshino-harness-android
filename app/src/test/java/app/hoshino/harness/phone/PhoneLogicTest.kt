@@ -133,3 +133,39 @@ class OcrLogicTest {
         assertTrue(out.all { it == 0xff336699.toInt() })
     }
 }
+
+class PhoneSetupFlowTest {
+    private val base = app.hoshino.harness.phone.setup.PhoneSetupFlow.Input(
+        sdk = 35, consentConfirmed = false, shizukuReady = false, developerOptions = false, wirelessDebugging = false,
+        paired = false, helperRunning = false, accessibility = false, ocrReady = false,
+    )
+    private val flow = app.hoshino.harness.phone.setup.PhoneSetupFlow
+
+    @Test fun consentComesBeforeAnySystemChange() {
+        assertEquals(flow.Step.Consent, flow.current(base))
+        assertEquals(flow.Step.Developer, flow.current(base.copy(consentConfirmed = true)))
+    }
+
+    @Test fun unreadableSwitchesNeverBlock() {
+        val i = base.copy(consentConfirmed = true, developerOptions = null, wirelessDebugging = null, userSaysDeveloperOn = true)
+        assertEquals(flow.Step.Pairing, flow.current(i))
+    }
+
+    @Test fun shizukuSkipsPairingAndOcrIsOptional() {
+        val i = base.copy(consentConfirmed = true, shizukuReady = true, accessibility = true)
+        assertEquals(flow.Step.Done, flow.current(i))
+        assertEquals(flow.Mark.Optional, flow.marks(i)[flow.Step.Ocr])
+        assertNull(flow.likelyProblem(i))
+    }
+
+    @Test fun oldAndroidIsUnsupportedAndExplained() {
+        val i = base.copy(sdk = 31)
+        assertEquals(flow.Step.Version, flow.current(i))
+        assertTrue(flow.likelyProblem(i)!!.contains("Android 13"))
+    }
+
+    @Test fun likelyProblemPointsAtTheHelperWhenPaired() {
+        val i = base.copy(consentConfirmed = true, paired = true, wirelessDebugging = false)
+        assertTrue(flow.likelyProblem(i)!!.contains("无线调试关着"))
+    }
+}
