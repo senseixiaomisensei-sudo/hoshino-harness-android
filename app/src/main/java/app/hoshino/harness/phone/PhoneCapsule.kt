@@ -27,6 +27,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import app.hoshino.harness.core.ApprovalDecision
+import app.hoshino.harness.core.approvalChoices
 import app.hoshino.harness.core.Attachment
 import app.hoshino.harness.core.AttachmentKind
 import app.hoshino.harness.core.HarnessEvent
@@ -76,7 +77,7 @@ object PhoneCapsule {
 
     fun foregroundChanged(pkg: String) { host?.foreground(pkg) }
 
-    private data class Approval(val sessionId: String, val id: String, val title: String, val command: String)
+    private data class Approval(val sessionId: String, val id: String, val title: String, val command: String, val oneShot: Boolean)
     private data class Question(val sessionId: String, val id: String, val text: String, val options: List<String>)
 
     @SuppressLint("ClickableViewAccessibility", "SetTextI18n")
@@ -164,7 +165,7 @@ object PhoneCapsule {
 
         private fun onEvent(e: HarnessEvent) {
             when (e) {
-                is HarnessEvent.ApprovalRequested -> approvals.value = approvals.value + Approval(e.sessionId, e.id, e.title, e.command)
+                is HarnessEvent.ApprovalRequested -> approvals.value = approvals.value + Approval(e.sessionId, e.id, e.title, e.command, e.oneShot)
                 is HarnessEvent.ApprovalResolved -> approvals.value = approvals.value.filterNot { it.id == e.id }
                 is HarnessEvent.QuestionAsked -> questions.value = questions.value + Question(e.sessionId, e.id, e.question, e.options.map { it.label })
                 is HarnessEvent.QuestionAnswered -> questions.value = questions.value.filterNot { it.id == e.id }
@@ -217,11 +218,8 @@ object PhoneCapsule {
                 ))
             } else approvals.value.firstOrNull()?.let { a ->
                 actions.addView(label("${a.title}：${a.command}".take(240)))
-                actions.addView(row(
-                    button(ApprovalDecision.AllowOnce.label) { respond(a, ApprovalDecision.AllowOnce) },
-                    button("本会话允许") { respond(a, ApprovalDecision.AllowSession) },
-                    button(ApprovalDecision.Deny.label) { respond(a, ApprovalDecision.Deny) },
-                ))
+                // Same choices and labels as the chat approval card and the notification (approvalChoices).
+                actions.addView(row(*approvalChoices(a.oneShot).map { d -> button(d.label) { respond(a, d) } }.toTypedArray()))
             } ?: questions.value.firstOrNull()?.let { q ->
                 actions.addView(label(q.text.take(300)))
                 if (q.options.isNotEmpty()) actions.addView(row(*q.options.take(4).map { o -> button(o.take(12)) { answer(q, o) } }.toTypedArray()))

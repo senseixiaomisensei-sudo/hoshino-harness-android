@@ -126,6 +126,17 @@ data class Schedule(
 
 enum class ApprovalDecision(val label: String) { AllowOnce("允许一次"), AllowSession("本会话总是允许"), Deny("拒绝") }
 
+/**
+ * The choices every approval surface offers (chat card, notification, phone capsule), so they never disagree.
+ * One-shot approvals (an irreversible phone step bound to that step on that screen; clipboard/share) cannot be
+ * remembered for the session: the kernel would ignore it, so the button is not shown.
+ */
+fun approvalChoices(oneShot: Boolean): List<ApprovalDecision> =
+    if (oneShot) listOf(ApprovalDecision.AllowOnce, ApprovalDecision.Deny) else listOf(ApprovalDecision.AllowOnce, ApprovalDecision.AllowSession, ApprovalDecision.Deny)
+
+/** Approval actions the kernel treats as one-shot (mirrors android-policy `onceOnly` and android-phone `phone_irreversible`). */
+val ONE_SHOT_APPROVAL_TOOLS = setOf("phone_irreversible", "clipboard_read", "clipboard_write", "app_screenshot", "share_text", "share_file")
+
 // ---------- 模型供应商（opencode 风格：一个供应商 → 多个模型） ----------
 
 enum class ProviderProtocol(val label: String) {

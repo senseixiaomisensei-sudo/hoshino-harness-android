@@ -214,6 +214,8 @@ sealed interface HarnessEvent {
         val title: String,
         val detail: String,
         val command: String,
+        /** Bound to this one action (irreversible phone step, clipboard/share): no "allow for this session" choice anywhere. */
+        val oneShot: Boolean = false,
     ) : HarnessEvent
     data class ApprovalResolved(override val sessionId: String, val id: String, val decision: ApprovalDecision) : HarnessEvent
     data class QuestionAsked(

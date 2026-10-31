@@ -184,12 +184,15 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val id=UUID.randomUUID().toString();val decision=CompletableDeferred<ApprovalDecision>();approvals[id]=decision;approvalOwners[id]=session
         val network=body.optString("kind")=="network"
         val detail=if(network) "向所选模型接口发送本次上下文" else vault.redact(listOf(body.optString("path"),body.optString("before"),body.optString("after"),body.optJSONObject("arguments")?.toString(2).orEmpty()).filter {it.isNotBlank() && it!="null"}.joinToString("\n").take(12000))
-        publish(HarnessEvent.ApprovalRequested(session,id,if(network) "模型网络请求" else "工具执行审批",detail,if(network) "发送到当前 provider" else body.optString("command").ifEmpty{body.optString("tool")}))
-        M2Notifications.approval(context,session,id,if(network)"模型网络请求" else body.optString("tool"))
+        val tool=body.optString("tool");val phoneStep=tool=="phone_irreversible"
+        val oneShot=tool in ONE_SHOT_APPROVAL_TOOLS||body.optJSONObject("arguments")?.optBoolean("once")==true
+        val title=when{network->"模型网络请求";phoneStep->"手机不可逆操作";else->"工具执行审批"}
+        publish(HarnessEvent.ApprovalRequested(session,id,title,detail,if(network) "发送到当前 provider" else body.optString("command").ifEmpty{tool},oneShot))
+        M2Notifications.approval(context,session,id,if(network)"模型网络请求" else if(phoneStep) body.optString("summary").ifEmpty{title} else tool,oneShot)
         return try {
             val chosen=withTimeoutOrNull(290000) { decision.await() } ?: ApprovalDecision.Deny
             publish(HarnessEvent.ApprovalResolved(session,id,chosen))
-            JSONObject().put("approved",chosen!=ApprovalDecision.Deny).put("remember",chosen==ApprovalDecision.AllowSession)
+            JSONObject().put("approved",chosen!=ApprovalDecision.Deny).put("remember",chosen==ApprovalDecision.AllowSession&&!oneShot)
         } finally { approvals.remove(id);approvalOwners.remove(id);M2Notifications.dismiss(context,id) }
     }
     override suspend fun respondApproval(sessionId: String,approvalId: String,decision: ApprovalDecision) { approvals[approvalId]?.complete(decision) }
