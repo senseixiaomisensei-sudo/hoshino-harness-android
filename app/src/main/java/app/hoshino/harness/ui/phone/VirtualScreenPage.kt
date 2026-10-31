@@ -49,6 +49,7 @@ import app.hoshino.harness.phone.PhoneDisplayFps
 import app.hoshino.harness.phone.PhoneTaskState
 import app.hoshino.harness.phone.PhoneTakeover
 import app.hoshino.harness.phone.PreviewZoom
+import app.hoshino.harness.ui.chat.PhonePipPrefs
 import app.hoshino.harness.ui.components.BtnStyle
 import app.hoshino.harness.ui.components.EmptyState
 import app.hoshino.harness.ui.components.HButton
@@ -244,7 +245,7 @@ fun PhoneScreenBar(onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val display by controller.display.collectAsState()
     val state by controller.state.collectAsState()
     val manual by controller.manual.active.collectAsState()
-    val pip by remember { app.hoshino.harness.ui.chat.PhonePipPrefs.open(context) }.collectAsState()
+    val pip by remember { PhonePipPrefs.open(context) }.collectAsState()
     if (display == null && state.status == PhoneTaskState.Status.Idle) return
     Row(
         modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -253,6 +254,6 @@ fun PhoneScreenBar(onOpen: () -> Unit, modifier: Modifier = Modifier) {
     ) {
         Text("虚拟屏 · " + phoneStatusLabel(state, manual != null) + (state.recent.lastOrNull()?.let { " · $it" } ?: ""), style = t.caption, color = c.text2, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         HButton("全屏", onOpen, compact = true)
-        if (display != null) HButton(if (pip) "收起小窗" else "小窗", { app.hoshino.harness.ui.chat.PhonePipPrefs.set(context, !pip) }, style = BtnStyle.Ghost, compact = true)
+        if (display != null) HButton(if (pip) "收起小窗" else "小窗", { PhonePipPrefs.set(context, !pip) }, style = BtnStyle.Ghost, compact = true)
     }
 }

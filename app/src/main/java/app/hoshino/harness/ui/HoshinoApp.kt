@@ -35,6 +35,7 @@ import app.hoshino.harness.ui.settings.AboutScreen
 import app.hoshino.harness.ui.settings.AppearanceScreen
 import app.hoshino.harness.ui.settings.CredentialsScreen
 import app.hoshino.harness.ui.settings.PhoneSetupScreen
+import app.hoshino.harness.ui.phone.VirtualScreenPage
 import app.hoshino.harness.ui.settings.DataPrivacyScreen
 import app.hoshino.harness.ui.settings.FeedbackScreen
 import app.hoshino.harness.ui.settings.KernelScreen
@@ -120,7 +121,7 @@ fun HoshinoApp() {
             composable(Routes.SHIZUKU) { ShizukuScreen(viewModel(), back) }
             composable(Routes.PHONE) { PhoneCapabilitiesScreen(viewModel(), back) }
             composable(Routes.PHONE_SETUP) { PhoneSetupScreen(back) }
-            composable(Routes.VIRTUAL_SCREEN) { app.hoshino.harness.ui.phone.VirtualScreenPage(back) }
+            composable(Routes.VIRTUAL_SCREEN) { VirtualScreenPage(back) }
             composable(Routes.KERNEL) { KernelScreen(viewModel(), back) }
             composable(Routes.DATA) { DataPrivacyScreen(viewModel(), back) }
             composable(Routes.CREDENTIALS) { CredentialsScreen(viewModel(), back) }
