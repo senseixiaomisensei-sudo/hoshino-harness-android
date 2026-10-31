@@ -99,3 +99,14 @@
 - 用户明确要求发布 GitHub 仓库、写报告后收工，因此停止后续 M1 功能开发，不集成未验证的安全模式草稿。
 - 默认分支采用 `codex/m1`，让仓库首页与 clone 获取本次交付源码；M0 的历史基线保留在 `main`。已发布 preview.5 的 tag、APK 和源码提交保持不变。
 - 报告分别记录本地 8 项通过与远端 CI 两项失败。整理测试夹具和说明不改变已发布 APK，也不将阶段性交付写成完整 M1 验收通过。
+
+## 2026-10-31 M2.7 审批档（含无审批）与会话管理
+
+- **无审批只能由用户开启**：`approval.json` 新增 `mode: "none"`，出厂默认仍是 `manual`，测试锁定这一点。开启时（本会话或设为默认）首次弹风险说明，可勾选不再提示。无审批下 `resolveApproval` 直接 allow，不再走 Android 审批卡；只有用户自己写的 `deny` 规则仍生效（那是用户自设护栏，不是确认卡），`ask` 规则不会把卡带回来。每次决定照常写审计 `approvals.jsonl`，`approver=auto-none` 并记录 `mode`。
+- **权限档先于审批档**：`android-policy` 的 `tools/pre-execute` 里先跑 `tierGate`（抽到 `tier.ts` 便于测试），再问审批。因此无审批放宽不了只读 / 工作区 / 完全访问的边界；`system_shell` 仍只在完全访问会话可用，工作区路径校验不变。安卓系统自身的确认（装 APK、运行时权限、Shizuku 授权）无法也不去绕过，界面写明。
+- **审批档的作用域**：全局默认 + 每会话覆盖，沿用 `approval.json` 已有的 `scopes.sessions`，不新建配置文件。新会话尚未创建时选的「仅本会话」先记在 ViewModel，创建后立即写入。切到无审批时，该会话还挂着的审批卡按「允许一次」放行。
+- **插话走 dsh 原生 steer**：运行中继续发送调用 `session/prompt mode=steer`（消息进 inbox 的 next-step，下一次模型请求前被当前任务认领），不另开任务；内核不再接受插话时退回原有排队。核实锁定的 dsh 0.2.2-alpha.2：`ReactLoopInbox.mutate` 把每次变化写成持久化会话事件 `agent/inbox/spliced`（`target/start/removedCount/inserted/outcome`），认领时以同一消息 id 追加 `user/message`；`session/follow` 的实时尾巴通过 `session/event` 转发**所有**会话事件，快照的 records 是按消息预算切出的连续事件段，`projections.values.inbox` 带当时完整的待处理列表。所以 Android 端不需要额外订阅：`SteerTracker` 镜像 inbox（快照后用 `inbox` 投影校正），插话气泡在进 inbox 时画出（「已收到，下一步处理」），认领成 `user/message` 时只改状态为「已加入当前任务」，不重复画气泡。
+- **停止 = 取消 + 作废未认领插话 + 交代**：dsh 的 `session/cancel` 用 `keepInbox: true`，未认领的插话会留在 inbox；因此 Android 停止后对每条未认领插话调用官方 `session/updateQueue {kind:"remove"}`（产生 `outcome: "canceled"` 的 splice，界面标「已停止，这句没有处理」）。随后插件操作 `stop-summary` 等本轮停稳，按本轮事件整理事实，优先用压缩模型/当前模型在 12 秒内写 3–6 行交代（材料加标签当数据、不给工具），失败或超时按记录拼一段；结果用 `agent.inject`（next-step、不唤醒）写进 inbox，下一轮「继续」能读到。界面从 `agent/inbox/spliced` 画出交代；若那条事件不在已加载的一页里，则在它被认领成 `user/message`（来源 `hoshino-stop-note`）时补画。结构参照 Mika `StopSummary`，见 THIRD_PARTY_NOTICES.md。
+- **删除会话不改 dsh**：dsh 没有删除 RPC。删除立即写墓碑并隐藏，停止、取消订阅、归档，清插件侧（审批覆盖、会话提示词、策略选项、定时任务；内核未连接时排队，连上后补做）与 Android 侧（交付记录、附件原件、缓存、元数据、等待消息）。dsh 的会话 JSONL 目录只在内核进程不在时删除（下一次启动内核前；确认 `/proc/<pid>` 的启动时刻与命令行，避免误判复用的 pid），连同 `origin=subagent` 的子会话，保留用户分叉出的会话。工作区里的用户文件不删。
+- **置顶**：本地记录为准（时间戳排序），连接时同步 dsh 原有 `workspace/pinSession`；归档会取消置顶，已归档不能置顶。
+- **导出**：插件读 dsh `sessionQuery.readSession`，Markdown 优先用 dsh 自带的 `formatSessionMarkdown`（精简运行时没有时用本地格式化），JSON 是完整事件日志；Android 去掉已知密钥后保存到「下载/Hoshino」并打开系统分享。
