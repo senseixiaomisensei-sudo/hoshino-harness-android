@@ -118,6 +118,13 @@ Copyright 2026 wangzan101
   - `core-bridge/src/main/java/dev/hoshino/bridge/phone/shell/ColdStart.kt`、`core-bridge/src/test/java/dev/hoshino/bridge/phone/shell/ColdStartTest.kt` ← Mika `ColdStart.kt` / `ColdStartTest.kt`；`PhoneShellService.restartApp/topActivity` ← Mika `ShellService.restartApp/topActivity`
   - `app/src/main/java/app/hoshino/harness/phone/LaunchReady.kt` 参照 Mika `AndroidScreen.awaitOpened` 的思路重新实现（多了“过了闪屏才算打开”的判定）
 
+### 悬浮球、无极缩放预览与手动接管（分支 feat/m2.9-floating-ball）
+
+- 使用方式：参照 Mika 的浮层拖动规则改写（不是逐行移植）。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/src/main/java/com/wangzan101/mika/cap/phone/a11y/OverlayHost.kt`（`OverlayFrame.track`：越过系统触摸阈值才算拖动、按屏幕坐标计算位移）→ `app/src/main/java/app/hoshino/harness/phone/PhoneCapsule.kt`（面板标题栏拖动，文件头已有出处说明）
+- 新文件 `PreviewRelay.kt`、`PreviewGeometry.kt`、`ManualTakeover.kt`、`BallPanelModel.kt`、`FpsMath.kt`、`DisplayFps.kt` 为本项目原创，未移植 Mika 代码。
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy
