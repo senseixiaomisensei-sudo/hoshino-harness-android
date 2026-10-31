@@ -8,6 +8,7 @@
 
 - [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.1/Hoshino-Harness-0.2.1-m2.9.1-arm64-v8a.apk)（非调试 fast 构建）
 - [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.9.1)
+- arm64 APK：77,150,769 字节（比 m2.9 大 34,460 字节），SHA-256 `d3deeb296942ce8f54b904c67ef509dd030afda7f22f8da7fd61030ed298e958`；签名证书 SHA-256 `e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1`；构建与验收 [Actions run 41177336342](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/41177336342)
 
 修复对话/任务跑一会儿后报「内核拒绝请求：session … is already owned…」与「TRANSPORT Connection error / 0 步 0s」：
 - 启动前清理残留 node 释放会话锁；内核崩溃自动重启（1 分钟最多 3 次）；本地连接心跳与断线重连。
