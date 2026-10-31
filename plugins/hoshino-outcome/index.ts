@@ -9,7 +9,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import { BlockAssembler } from '@deepseek-ai/dsh-llm';
 import { appendPluginRecord } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-agent';
-import { settings, outcomesOf, budgetOf, notify, type OutcomeRecord } from '../hoshino-context/state.js';
+import { settings, outcomesOf, notify, type OutcomeRecord } from '../hoshino-context/state.js';
 import { ground } from './grounding.js';
 
 declare module '@deepseek-ai/dsh-session' {
@@ -95,9 +95,11 @@ export function apply(ctx: Context) {
       return { turn, outcome: 'not_possible', reason: message.slice(0, 300), subtype, by: 'rule', at };
     }
     if (reason.kind === 'error') return { turn, outcome: 'not_possible', reason: String(reason.error?.message ?? '请求失败').slice(0, 200), subtype: 'model_error', by: 'rule', at };
-    const stopped = budgetOf(session.id).stopped;
-    const guardStop = results.some((r: any) => /Safety stop \(/.test(text(r.content)));
-    if (guardStop && stopped) return { turn, outcome: 'not_possible', reason: stopped === 'sandbox_loop' ? '同一条命令反复失败，已安全停止' : '操作连续失败，已安全停止', subtype: 'guard', by: 'rule', at };
+    // The guard's stop arrives as an appended `hoshino-guard` notice (and as the reason of any later refused call), so read
+    // it from this turn's own events; the session ledger's `stopped` outlives the turn and cannot decide it.
+    const guardTexts = [...results.map((r: any) => text(r.content)), ...events.filter(e => e.type === 'user/message' && e.data?.source?.kind === 'hoshino-guard').map(e => text(e.data.content))];
+    const stopped = guardTexts.map(t => /Safety stop \((\w+)\)/.exec(t)?.[1]).find(Boolean);
+    if (stopped) return { turn, outcome: 'not_possible', reason: stopped === 'sandbox_loop' ? '同一条命令反复失败，已安全停止' : '操作连续失败，已安全停止', subtype: 'guard', by: 'rule', at };
     const answer = events.filter(e => e.type === 'assistant/message').map(e => text(e.data.message.content)).filter(t => t.trim()).at(-1) ?? '';
     if (!answer.trim()) return { turn, outcome: 'unknown', reason: '没有给出回答', by: 'rule', at };
     let ungrounded: string[] | undefined;
