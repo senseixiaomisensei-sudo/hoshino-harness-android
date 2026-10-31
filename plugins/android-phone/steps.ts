@@ -78,7 +78,7 @@ export function stepFor(action: string, args: Data): Data {
     case 'swipe': return {action, ...pick('x', 'y', 'x2', 'y2', 'duration_ms', 'expect')};
     case 'back': return {action, ...pick('expect')};
     case 'key': return {action, ...pick('key', 'expect')};
-    case 'open_app': return {action, app: args.app, ...pick('expect')};
+    case 'open_app': return {action, app: args.app, ...pick('cold', 'expect')};
     case 'wait': return {action, expect: args.expect};
     default: throw new Error(`unknown action ${action}`);
   }

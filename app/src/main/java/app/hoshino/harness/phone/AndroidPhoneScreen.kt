@@ -15,14 +15,19 @@ import app.hoshino.harness.phone.ocr.TreeQuality
 import dev.hoshino.bridge.phone.IHoshinoPhoneShell
 import dev.hoshino.bridge.phone.shell.ClipSwap
 import dev.hoshino.bridge.phone.shell.ShellText
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * [PhonePort] on one display: the agent's virtual display (normal case) or the main display (only used for
@@ -103,13 +108,57 @@ class AndroidPhoneScreen(
             StepKind.swipe -> outcome(swipe(px(step.x!!), py(step.y!!), px(step.x2!!), py(step.y2!!), step.durationMs ?: SWIPE_MS), "swipe")
             StepKind.back -> outcome(key(KeyEvent.KEYCODE_BACK), "back")
             StepKind.key -> outcome(key(KEYS.getValue(step.key!!)), "key")
-            StepKind.open_app -> openApp(step.app!!)
+            StepKind.open_app -> openApp(step.app!!, step.cold)
             StepKind.wait -> ActionOutcome(true)
         }
     }
 
     override suspend fun awaitChange(timeoutMs: Long): Boolean =
         withTimeoutOrNull(timeoutMs.coerceAtLeast(1)) { service().changesOn(displayId).first(); true } ?: false
+
+    /**
+     * A-1 (WP-1): tree hash and frame signature are taken and the event subscription is live before [block] acts; the
+     * wait then follows [ChangeWait] against that baseline. Mika's verified()/withEventClock, with the tree hash only
+     * recomputed when events arrived (or every [TREE_RECHECK_MS]) so polling stays cheap.
+     */
+    override suspend fun <T> watch(block: suspend (ChangeProbe) -> T): T = coroutineScope {
+        val svc = service()
+        val beforeTree = treeHash()
+        val beforeFrame = frameSignature()
+        val clock = EventClock(now())
+        // UNDISPATCHED: the collector is registered on the shared flow before this line returns, i.e. before the action.
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { svc.changesOn(displayId).collect { clock.mark(now()) } }
+        var hashAt = Long.MIN_VALUE
+        var hashEvents = -1L
+        var hash = beforeTree
+        fun currentTree(): Long {
+            val t = now()
+            val n = clock.count.value
+            if (n != hashEvents || t - hashAt >= TREE_RECHECK_MS) { hash = treeHash(); hashEvents = n; hashAt = t }
+            return hash
+        }
+        val probe = object : ChangeProbe {
+            override suspend fun awaitStableChange(): ChangeWait.Result = ChangeWait.awaitStableChange(
+                now = ::now,
+                sleep = { delay(it) },
+                frame = ::frameSignature,
+                quietForMs = { now() - clock.last.get() },
+                treeChanged = { currentTree() != beforeTree },
+                beforeFrame = beforeFrame,
+            )
+            override fun events(): Long = clock.count.value
+            override suspend fun awaitEventAfter(seen: Long, timeoutMs: Long): Boolean =
+                withTimeoutOrNull(minOf(timeoutMs, EVENT_RECHECK_MS).coerceAtLeast(1)) { clock.count.first { it > seen }; true } ?: false
+        }
+        try { block(probe) } finally { job.cancel() }
+    }
+
+    /** Time of the last UI event on this display (starts at the subscription) and how many were seen. */
+    private class EventClock(start: Long) {
+        val last = AtomicLong(start)
+        val count = MutableStateFlow(0L)
+        fun mark(at: Long) { last.set(at); count.value = count.value + 1 }
+    }
 
     override suspend fun waitQuiet(quietMs: Long, timeoutMs: Long): Boolean {
         val deadline = now() + timeoutMs
@@ -426,10 +475,8 @@ class AndroidPhoneScreen(
 
     private fun visibleTexts(): List<String> = runCatching { AccessibilityReader.read(service().windowsOn(displayId), width, height).texts }.getOrDefault(emptyList())
 
-    private fun frameSignature(): IntArray? {
-        val bmp = display?.latestFrameBitmap() ?: return null
-        return try { FrameMath.lumaGrid(bmp.width, bmp.height) { x, y -> bmp.getPixel(x, y) } } finally { bmp.recycle() }
-    }
+    /** Luma grid of the newest agent-display frame, read in place (no full-size copy); null without a picture. */
+    private fun frameSignature(): IntArray? = display?.frameSignature()
 
     private fun shows(n: AccessibilityNodeInfo?, text: String): Boolean {
         n ?: return false
@@ -452,20 +499,67 @@ class AndroidPhoneScreen(
         return null
     }
 
-    private suspend fun openApp(app: String): ActionOutcome {
+    /**
+     * Opens [app] on the agent display and returns only once it is usable (A-5): in front and past its splash screen
+     * ([LaunchReady]), or a chooser asks which copy to open, or [LaunchReady.CAP_MS] passed. [cold]: force-stop first
+     * (helper restartApp, only when every task of the app is on our display) so it starts from its first page.
+     */
+    private suspend fun openApp(app: String, cold: Boolean = false): ActionOutcome {
         val s = shell() ?: return ActionOutcome(false, "helper_not_running")
         if (display == null) return ActionOutcome(false, "apps are only opened on the agent display")
         val pkg = PhoneApps.resolve(context, app) ?: return ActionOutcome(false, "no installed app matches \"$app\"; use phone_list_apps")
         if (pkg == context.packageName) return ActionOutcome(false, "own_app: Hoshino does not operate itself")
         val mainBefore = runCatching { s.topPackage(Display.DEFAULT_DISPLAY) }.getOrNull()
-        // startApp only ever targets our display (PhoneShellService checks ownership; no main-screen fallback).
-        val code = runCatching { s.startApp(displayId, pkg) }.getOrDefault(3)
+        val started = now()
+        // startApp/restartApp only ever target our display (PhoneShellService checks ownership; no main-screen fallback).
+        var note: String? = null
+        var code = if (cold) runCatching { s.restartApp(displayId, pkg) }.getOrDefault(3) else runCatching { s.startApp(displayId, pkg) }.getOrDefault(3)
+        if (cold) when (code) {
+            RESTART_COLD -> { code = 0; note = "cold start" }
+            RESTART_WARM -> { code = 0; note = "cold ignored: $pkg also has a task outside the agent display, so it was not force-stopped" }
+            // An older helper without restartApp answers 0: it did nothing, so start warm and say so.
+            0 -> { code = runCatching { s.startApp(displayId, pkg) }.getOrDefault(3); note = "cold not supported by this helper; started warm (restart the helper to update it)" }
+        }
         return when (code) {
-            0 -> placeOnAgent(s, pkg, mainBefore) ?: run { PhoneLedger.mute(context, s, pkg); ActionOutcome(true, "opened $pkg on the agent display") }
+            0 -> placeOnAgent(s, pkg, mainBefore) ?: run { PhoneLedger.mute(context, s, pkg); awaitUsable(s, pkg, started, note) }
             1 -> ActionOutcome(false, "in_use: the user is using $pkg on the main screen; ask before taking it over")
             2 -> ActionOutcome(false, "no launcher entry for $pkg")
             7 -> ActionOutcome(false, "busy: the agent display is used by another task")
             else -> ActionOutcome(false, "could not start $pkg")
+        }
+    }
+
+    /** A-5: polls the agent display until [LaunchReady] says the app is usable, a chooser is up, or the cap. */
+    private suspend fun awaitUsable(s: IHoshinoPhoneShell, pkg: String, started: Long, note: String?): ActionOutcome {
+        val tracker = LaunchReady.Tracker(pkg, started)
+        while (true) {
+            val windows = runCatching { service().windowsOn(displayId) }.getOrDefault(emptyList())
+            val raw = runCatching { AccessibilityReader.read(windows, width, height) }.getOrNull()
+            val snap = raw?.let { ScreenSnapshot("launch", it.packageName, width, height, it.elements, it.hash, it.overlayPackages) }
+            val look = LaunchReady.Look(
+                atMs = now(),
+                taskPackage = runCatching { s.topPackage(displayId) }.getOrNull(),
+                activity = runCatching { s.topActivity(displayId) }.getOrNull(),
+                windowPackage = raw?.packageName,
+                clickable = raw?.elements?.count { it.clickable || it.editable } ?: 0,
+                named = raw?.elements?.count { it.name.isNotBlank() } ?: 0,
+                treeHash = raw?.hash ?: 0L,
+                chooser = snap?.let { SystemScreens.chooser(it) != null } ?: false,
+            )
+            val v = tracker.next(look)
+            val ms = now() - started
+            val tail = note?.let { "; $it" }.orEmpty()
+            when (v.state) {
+                LaunchReady.State.Ready -> return ActionOutcome(true, "opened $pkg on the agent display in ${ms}ms (${v.why})$tail", ms)
+                LaunchReady.State.Chooser -> return ActionOutcome(true, "opened $pkg: the system asks which app to use; pick an option$tail", ms)
+                LaunchReady.State.Timeout -> return when {
+                    v.inFront -> ActionOutcome(true, "opened $pkg but it was not interactive after ${ms}ms (still loading?); read the screen before acting$tail", ms)
+                    // Something else is confirmed in front: say so instead of reporting success.
+                    look.taskPackage != null && look.taskPackage != pkg -> ActionOutcome(false, "app_not_in_front: $pkg did not come to front within ${ms}ms; in front now: ${look.taskPackage}", ms)
+                    else -> ActionOutcome(true, "started $pkg but could not confirm it is in front after ${ms}ms; read the screen$tail", ms)
+                }
+                LaunchReady.State.Waiting -> delay(LaunchReady.POLL_MS)
+            }
         }
     }
 
@@ -510,6 +604,13 @@ class AndroidPhoneScreen(
 
     companion object {
         const val TAP_MS = 60L
+        /** A-1: the tree hash is recomputed when events arrived, and at least this often anyway. */
+        const val TREE_RECHECK_MS = 400L
+        /** Expectation waits re-read the screen at least this often even without an event (changes without events). */
+        const val EVENT_RECHECK_MS = 750L
+        /** IHoshinoPhoneShell.restartApp results (PhoneShellService.RESTART_*). */
+        const val RESTART_COLD = 10
+        const val RESTART_WARM = 11
         /** Long enough for every launcher/app to see a long press. */
         const val LONG_PRESS_MS = 650L
         const val SWIPE_MS = 350L

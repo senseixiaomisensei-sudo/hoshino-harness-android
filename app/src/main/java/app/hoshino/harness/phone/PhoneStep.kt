@@ -46,6 +46,8 @@ data class PhoneStep(
     val app: String? = null,
     val durationMs: Long? = null,
     val expect: Expectation? = null,
+    /** open_app only (A-5): force-stop first so the app starts from its first page (helper decides if that is safe). */
+    val cold: Boolean = false,
 ) {
     fun describe(): String = buildString {
         append(kind.name)
@@ -57,6 +59,7 @@ data class PhoneStep(
         direction?.let { append(' ').append(it) }
         key?.let { append(" key=").append(it) }
         app?.let { append(" app=").append(it) }
+        if (cold) append(" cold")
     }
 
     companion object {
@@ -71,6 +74,7 @@ data class PhoneStep(
                 direction = str("direction")?.lowercase(), key = str("key")?.lowercase(), app = str("app") ?: str("package"),
                 durationMs = if (o.has("duration_ms")) o.optLong("duration_ms").coerceIn(50, 5_000) else null,
                 expect = Expectation.parse(o.optJSONObject("expect")),
+                cold = kind == StepKind.open_app && o.optBoolean("cold", false),
             )
             step.validate()
             return step
