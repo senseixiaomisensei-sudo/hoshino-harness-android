@@ -125,7 +125,9 @@ class BuiltinShellEngineTest {
         var pairFailure: AdbPairingException? = null
         var launchFailure: Exception? = null
         var startsHelper = true
+        var allowAuto = true
         override fun supported() = true
+        override fun autoWirelessDebuggingAllowed() = allowAuto
         override fun paired() = pairedFlag
         override fun setPaired(paired: Boolean) { pairedFlag = paired }
         override fun wirelessDebugging() = wireless
@@ -202,6 +204,16 @@ class BuiltinShellEngineTest {
         assertEquals(BuiltinShellStatus.Failed(BuiltinShellFailure.WifiNotAllowed), e2.status.value)
         e2.retry()
         assertEquals("retry by the user may try once more", 0, q.launches)
+    }
+
+    @Test fun autoOnNeedsExplicitConsent() = runTest {
+        val h = MutableStateFlow<Any?>(null)
+        val p = FakePlatform(h).apply { pairedFlag = true; wireless = false; canWrite = true; allowAuto = false }
+        val e = engine(p, h)
+        e.retry()
+        assertEquals("never written without consent", false, p.wireless)
+        assertEquals(BuiltinShellStatus.WirelessDebuggingOff, e.status.value)
+        assertEquals(0, p.launches)
     }
 
     @Test fun noWifiWithDebuggingOff() = runTest {

@@ -26,7 +26,9 @@ interface BuiltinShellPlatform {
     /** Wireless debugging switch; null when unreadable (does not block). */
     fun wirelessDebugging(): Boolean?
     fun wifiConnected(): Boolean
-    /** Turns wireless debugging on with WRITE_SECURE_SETTINGS (granted by the helper after pairing). False when not allowed. */
+    /** The user ticked "自动打开无线调试" in the setup wizard (default off, mika-gap §2 PL3). */
+    fun autoWirelessDebuggingAllowed(): Boolean
+    /** Turns wireless debugging on with WRITE_SECURE_SETTINGS (granted only with consent). False when not allowed. */
     fun turnOnWirelessDebugging(): Boolean
     suspend fun findPairingPort(timeoutMs: Long): Int?
     fun pair(port: Int, code: String)
@@ -58,9 +60,9 @@ object BuiltinShellFailures {
 /**
  * Helper state and watchdog. [helper] non-null means we hold the helper binder (Running). Otherwise,
  * once paired: wait [graceMs] (a still-alive helper hands itself over again when the app restarts),
- * then start one through adbd, retrying with [backoff]. When wireless debugging is off on Wi-Fi and the
- * app holds WRITE_SECURE_SETTINGS, it turns the switch on once per network ("自动恢复" after reboot)
- * and stops if the system flips it back (the network was never allowed).
+ * then start one through adbd, retrying with [backoff]. When wireless debugging is off on Wi-Fi it is
+ * turned back on only if the user consented in the wizard ([BuiltinShellPlatform.autoWirelessDebuggingAllowed],
+ * default off) and the app holds WRITE_SECURE_SETTINGS: once per network, stopping if the system flips it back.
  */
 class BuiltinShellEngine(
     private val platform: BuiltinShellPlatform,
@@ -159,7 +161,7 @@ class BuiltinShellEngine(
 
     /** Wireless debugging is off: turn it on once per network when allowed; true when it stays on. */
     private suspend fun turnOn(): Boolean {
-        if (autoOnTried || !platform.wifiConnected()) return false
+        if (!platform.autoWirelessDebuggingAllowed() || autoOnTried || !platform.wifiConnected()) return false
         autoOnTried = true
         _status.value = BuiltinShellStatus.Connecting
         val written = withContext(io) { platform.turnOnWirelessDebugging() }

@@ -33,7 +33,9 @@ class PhoneServices private constructor(context: Context) {
     private val app = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val hub = HelperHub(app)
-    val builtin = BuiltinShellManager(app, hub) { accessibilityComponent(app) }
+    /** Set by the app before [start]: what the user allowed in the setup wizard. Allows nothing by default. */
+    @Volatile var consent: SetupConsent = SetupConsent.NONE
+    val builtin = BuiltinShellManager(app, hub, { accessibilityComponent(app) }, { consent })
     val shizuku = ShizukuPhoneChannel(app)
 
     /** Shizuku first, then the built-in helper. */
@@ -54,10 +56,16 @@ class PhoneServices private constructor(context: Context) {
         started = true
         builtin.start()
         shizuku.refresh()
-        // Each time the built-in helper comes up: enable our accessibility service etc. (no dialogs, no loops).
+        // Each time the built-in helper comes up: run the setup commands the user consented to (no dialogs, no loops).
         scope.launch {
-            hub.shell.collect { s -> if (s != null) _setupIssues.value = runCatching { builtin.applySetupPermissions() }.getOrElse { listOf("setup") } }
+            hub.shell.collect { s -> if (s != null) applyConsent() }
         }
+    }
+
+    /** Runs the consented setup commands now (after the wizard's consent page, or when the helper starts). */
+    suspend fun applyConsent(): List<String> {
+        if (hub.shell.value == null) return emptyList()
+        return runCatching { builtin.applySetupPermissions() }.getOrElse { listOf("setup") }.also { _setupIssues.value = it }
     }
 
     /** Somebody needs phone control now: start or bind the best available channel. */

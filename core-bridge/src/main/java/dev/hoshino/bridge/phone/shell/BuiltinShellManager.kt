@@ -35,14 +35,20 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Real implementation of the built-in helper: pairing, starting the helper through the local adbd, watchdog
- * and the one-time setup commands after pairing (auto-enable our accessibility service, grant
- * WRITE_SECURE_SETTINGS so wireless debugging can be turned back on after a reboot, battery exemption).
+ * and the setup commands after pairing. Unlike Mika, none of the setup commands (enable our accessibility
+ * service, grant WRITE_SECURE_SETTINGS, battery exemption) and no automatic "turn wireless debugging back
+ * on" runs unless the user ticked that item in the setup wizard ([SetupConsent], mika-gap §2 PL3).
  */
 @SuppressLint("NewApi")
-class BuiltinShellManager(context: Context, private val hub: HelperHub, private val accessibilityService: () -> String) {
+class BuiltinShellManager(
+    context: Context,
+    private val hub: HelperHub,
+    private val accessibilityService: () -> String,
+    private val consent: () -> SetupConsent = { SetupConsent.NONE },
+) {
     private val app = context.applicationContext
     private var started = false
-    private val platform by lazy { AndroidPlatform(app, hub) }
+    private val platform by lazy { AndroidPlatform(app, hub, consent) }
 
     val engine: BuiltinShellEngine by lazy { BuiltinShellEngine(platform, hub.shell, CoroutineScope(SupervisorJob() + Dispatchers.Default), Dispatchers.IO) }
 
@@ -83,11 +89,12 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
     }
 
     /**
-     * After the helper is up: make our accessibility service enabled (bypassing "restricted settings"),
-     * allow the restricted-settings app-op, grant WRITE_SECURE_SETTINGS and exempt from battery optimisation.
-     * Each command is independent; failures are reported, never retried in a loop.
+     * After the helper is up: run only the setup commands the user consented to. Accessibility: allow the
+     * restricted-settings app-op and add our service to enabled_accessibility_services (other services stay).
+     * Each command is independent; failures are reported, never retried in a loop. Returns failed items.
      */
     suspend fun applySetupPermissions(): List<String> {
+        val c = consent()
         val shell = hub.shell.value ?: return listOf("helper not running")
         val pkg = app.packageName
         val failed = mutableListOf<String>()
@@ -96,18 +103,27 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
             return (b?.getInt("exitCode") ?: -1) to (b?.getString("output").orEmpty())
         }
         withContext(Dispatchers.IO) {
-            for (cmd in listOf(PermissionCommands.allowRestrictedSettings(pkg), PermissionCommands.grantWriteSecureSettings(pkg), PermissionCommands.whitelist(pkg))) {
-                if (exec(cmd).first != 0) failed += cmd.substringBefore(' ')
+            val commands = buildList {
+                if (c.accessibility()) add(PermissionCommands.allowRestrictedSettings(pkg))
+                if (c.writeSecureSettings() && app.checkSelfPermission(PermissionCommands.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) add(PermissionCommands.grantWriteSecureSettings(pkg))
+                if (c.batteryExemption()) add(PermissionCommands.whitelist(pkg))
             }
-            val current = exec(PermissionCommands.READ_ACCESSIBILITY).second.trim()
-            PermissionCommands.withService(current, accessibilityService())?.let { list ->
-                for (cmd in PermissionCommands.writeAccessibility(list)) if (exec(cmd).first != 0) failed += "accessibility"
+            for (cmd in commands) {
+                if (exec(cmd).first != 0) failed += cmd.substringBefore(' ') else c.audit("setup " + cmd.substringBefore(' ') + " " + cmd.split(' ').getOrNull(1).orEmpty())
+            }
+            if (c.accessibility()) {
+                val current = exec(PermissionCommands.READ_ACCESSIBILITY).second.trim()
+                PermissionCommands.withService(current, accessibilityService())?.let { list ->
+                    var ok = true
+                    for (cmd in PermissionCommands.writeAccessibility(list)) if (exec(cmd).first != 0) { failed += "accessibility"; ok = false }
+                    if (ok) c.audit("setup accessibility enabled")
+                }
             }
         }
         return failed
     }
 
-    private class AndroidPlatform(private val app: Context, private val hub: HelperHub) : BuiltinShellPlatform {
+    private class AndroidPlatform(private val app: Context, private val hub: HelperHub, private val consent: () -> SetupConsent) : BuiltinShellPlatform {
         val manualPort = AtomicReference<Int?>(null)
         private val scan = LocalPortScan(NioPortScanner(), ::localHosts, { LocalPortScan.parseRange(runCatching { File(PORT_RANGE_FILE).readText() }.getOrNull()) })
         private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -127,9 +143,16 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
             cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
         }.getOrDefault(true)
 
+        override fun autoWirelessDebuggingAllowed() = consent().autoWirelessDebugging()
+
         override fun turnOnWirelessDebugging(): Boolean {
+            val c = consent()
+            // PL3: only when the user ticked "自动打开无线调试" (default off); every write is audited and announced once.
+            if (!c.autoWirelessDebugging()) return false
             if (app.checkSelfPermission(PermissionCommands.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) return false
-            return runCatching { Settings.Global.putInt(app.contentResolver, ADB_WIFI_ENABLED, 1) }.getOrDefault(false)
+            val ok = runCatching { Settings.Global.putInt(app.contentResolver, ADB_WIFI_ENABLED, 1) }.getOrDefault(false)
+            if (ok) { c.audit("auto-on wireless debugging"); c.wirelessDebuggingTurnedOn() }
+            return ok
         }
 
         override suspend fun findPairingPort(timeoutMs: Long): Int? = finder.findPorts(AdbServiceTypes.PAIRING, timeoutMs).firstOrNull()

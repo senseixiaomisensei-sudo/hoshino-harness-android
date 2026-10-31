@@ -91,3 +91,27 @@ object PairingScreen {
         return if (waiting) PairingAttempt(code, reading.port) else null
     }
 }
+
+/**
+ * The user's choices from the setup wizard's consent page. Implemented by the app; the default allows nothing.
+ * The helper never changes a system setting the user did not tick (mika-gap §2 PL3).
+ */
+interface SetupConsent {
+    fun accessibility(): Boolean
+    fun writeSecureSettings(): Boolean
+    fun batteryExemption(): Boolean
+    fun autoWirelessDebugging(): Boolean
+    /** Local audit line (no content). */
+    fun audit(event: String) {}
+    /** Wireless debugging was switched on automatically: tell the user once (capsule/notification). */
+    fun wirelessDebuggingTurnedOn() {}
+
+    companion object {
+        val NONE = object : SetupConsent {
+            override fun accessibility() = false
+            override fun writeSecureSettings() = false
+            override fun batteryExemption() = false
+            override fun autoWirelessDebugging() = false
+        }
+    }
+}
