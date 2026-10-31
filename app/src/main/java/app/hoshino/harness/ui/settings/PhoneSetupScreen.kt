@@ -27,7 +27,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.hoshino.harness.phone.PhoneAccessibilityService
+import app.hoshino.harness.phone.FpsMath
 import app.hoshino.harness.phone.PhoneConsent
+import app.hoshino.harness.phone.PhoneDisplayFps
 import app.hoshino.harness.phone.PhoneConsentState
 import app.hoshino.harness.phone.PhoneController
 import app.hoshino.harness.phone.ocr.OcrModels
@@ -40,6 +42,7 @@ import app.hoshino.harness.ui.components.BtnStyle
 import app.hoshino.harness.ui.components.GroupCard
 import app.hoshino.harness.ui.components.HButton
 import app.hoshino.harness.ui.components.HCheckbox
+import app.hoshino.harness.ui.components.HSlider
 import app.hoshino.harness.ui.components.HTextField
 import app.hoshino.harness.ui.components.Hairline
 import app.hoshino.harness.ui.components.ListRow
@@ -236,6 +239,21 @@ fun PhoneSetupScreen(onBack: () -> Unit) {
                 OcrModels.State.Ready -> Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) { Tag("已就绪", color = c.success); HButton("删除模型", { OcrModels.delete(context) }, style = BtnStyle.Ghost, compact = true) }
                 OcrModels.State.Downloading -> ThinProgress(ocrProgress, Modifier.fillMaxWidth().padding(16.dp))
                 else -> HButton("下载文字识别模型（15.6 MB）", { scope.launch { message = OcrModels.download(context)?.let { "下载失败：$it" } ?: "文字识别已就绪" } }, compact = true, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            }
+        }
+
+        SectionLabel("虚拟屏帧率")
+        GroupCard {
+            Column(Modifier.padding(vertical = 6.dp)) {
+                val fpsSetting = remember { PhoneDisplayFps.of(context) }
+                val fps by fpsSetting.fps.collectAsState()
+                var fpsDraft by remember(fps) { mutableStateOf(fps.toFloat()) }
+                Hint("后台屏画面的采集与悬浮球预览每秒最多 ${FpsMath.snap(fpsDraft)} 帧（${FpsMath.MIN_FPS}–${FpsMath.MAX_FPS}，默认 ${FpsMath.DEFAULT_FPS}）。越高越流畅也越耗电；悬浮面板收起、没人看时自动降到最低（不画预览，采集最多 ${FpsMath.IDLE_CAPTURE_FPS} 帧）。")
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    HSlider(fpsDraft, { fpsDraft = it; fpsSetting.set(FpsMath.snap(it)) }, FpsMath.MIN_FPS.toFloat()..FpsMath.MAX_FPS.toFloat(), steps = FpsMath.SLIDER_STEPS)
+                }
+                val zeroCopy by fpsSetting.zeroCopy.collectAsState()
+                ConsentRow("实验：零拷贝预览（GPU 直出）", "悬浮面板的画面不经过 CPU 拷贝，放大也清晰、更省电；个别机型可能不兼容，出问题关掉即可。下次任务开始时生效。", zeroCopy) { fpsSetting.setZeroCopy(it) }
             }
         }
 

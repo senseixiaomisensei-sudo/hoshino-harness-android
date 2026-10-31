@@ -47,7 +47,7 @@ import kotlin.math.roundToInt
 /**
  * Chat-page picture-in-picture of the agent display (PH24): draggable, snaps to the nearest side, green
  * border while Hoshino works, breathing orange when you are needed. Frames come from the same decoder as the
- * capsule (≤ 5 fps, only while this is on screen). Tap to collapse to a small badge. Shown only while the
+ * floating ball (at the user's frame rate from 设置 → 设置手机操作, only while this is on screen). Tap to collapse to a small badge. Shown only while the
  * agent display exists. Mounted by one line in ChatScreen.
  */
 @Composable
