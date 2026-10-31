@@ -57,6 +57,14 @@ Copyright 2026 wangzan101
   - `app/ui/AgentPip.kt`、`PipPhysics.kt` → `app/src/main/java/app/hoshino/harness/ui/chat/PhonePip.kt`
   - 没有移植：`core/cap/phone/{GesturePacing,TypingPacing,AppPacing}.kt`、`core/uistate/IdleScroll.kt`（规避式拟人，mika-gap §2 PL4）；`core/shell/WirelessDebuggingAutoOn.kt` 的静默开启与 `RecoveryPermissions` 的静默授权改为向导里逐项同意（PL3）；ML Kit 的 `PhoneOcr` 换成下面的开源 OCR（PL1）。
 
+### 剪贴板安全打字（分支 feat/m2.9-wp2-clipboard）
+
+- 使用方式：直接移植并改写，文件头部保留出处说明。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/.../cap/phone/shell/ShellClip.kt`（读/还原判断）、`ShellService.kt` 的 `setClipText/restoreClip/canReadClipboard/suppressOverlay/markSensitive` → `core-bridge/.../phone/shell/ShellClip.kt`（判断 + 新增可测的 `ClipSwap` 状态机）与 `PhoneShellService.kt`（shell 身份剪贴板、10 s 看门狗为本仓库新增）
+  - `app/src/test/.../cap/phone/shell/ShellClipTest.kt` → `core-bridge/src/test/.../phone/shell/ShellClipTest.kt`（另加 `ClipSwapTest`）
+  - `app/.../cap/phone/a11y/AndroidScreen.kt` 的 `typeText/typeAt/typeUnseen/inputText/inWebView`（思路）→ `app/.../phone/TypeFlow.kt`、`app/.../phone/AndroidPhoneScreen.kt`（逐字按键注入 `injectText` 为本仓库新增；不移植 `TypingPacing`）
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy
