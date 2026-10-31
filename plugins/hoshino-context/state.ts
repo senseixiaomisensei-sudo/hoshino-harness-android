@@ -10,7 +10,8 @@ export type ContextSettings = {
   /** CX5 */
   untrusted: { enabled: boolean; extraTools: string[] };
   /** RT10 */
-  intent: { enabled: boolean; model: boolean; timeoutMs: number };
+  /** discuss: `remind` (m2.9.3 default) = hold the first gated call once with a soft reminder, the next one runs; `deny` = pre-m2.9.3 hard refusal (opt-in). */
+  intent: { enabled: boolean; model: boolean; timeoutMs: number; discuss: 'remind' | 'deny' };
   /** RT11 */
   turnPolicy: { empty: boolean; language: boolean; readback: boolean; readbackTools: string[] };
   /** RT12 / SB4 */
@@ -23,7 +24,7 @@ export type ContextSettings = {
 export const DEFAULT_SETTINGS: ContextSettings = {
   compaction: { strategy: 'auto', thresholdRatio: 0.7 },
   untrusted: { enabled: true, extraTools: [] },
-  intent: { enabled: true, model: true, timeoutMs: 6000 },
+  intent: { enabled: true, model: true, timeoutMs: 6000, discuss: 'remind' },
   turnPolicy: { empty: true, language: true, readback: true, readbackTools: ['web_render'] },
   guard: { failureWarn: 2, failureStop: 8, sandboxLoopWarn: 3, sandboxLoopStop: 5, sandboxBudgetMs: 30 * 60_000 },
   retry: { enabled: true, maxRetries: 3, maxWaitMs: 30_000 },
@@ -46,11 +47,13 @@ export async function loadSettings(selfHome: string): Promise<ContextSettings> {
   try { parsed = JSON.parse(await readFile(settingsPath, 'utf8')); } catch { /* defaults */ }
   merge(settings, parsed, DEFAULT_SETTINGS);
   if (!['auto', 'rules'].includes(settings.compaction.strategy)) settings.compaction.strategy = 'auto';
+  if (!['remind', 'deny'].includes(settings.intent.discuss)) settings.intent.discuss = 'remind';
   settings.compaction.thresholdRatio = Math.min(0.95, Math.max(0.3, settings.compaction.thresholdRatio));
   return settings;
 }
 export async function saveSettings(next: unknown): Promise<ContextSettings> {
   merge(settings, next, DEFAULT_SETTINGS);
+  if (!['remind', 'deny'].includes(settings.intent.discuss)) settings.intent.discuss = 'remind';
   if (settingsPath) {
     await mkdir(dirname(settingsPath), { recursive: true });
     await writeFile(settingsPath + '.tmp', JSON.stringify(settings, null, 2));

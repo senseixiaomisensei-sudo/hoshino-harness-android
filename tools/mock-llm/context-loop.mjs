@@ -47,6 +47,9 @@ export function createContextLoopMock() {
         reply = lastText.includes('Your reply was empty') ? '这是补上的回答。' : '';
       } else if (human.includes('language-fixture')) {
         reply = lastText.includes('Rewrite the whole answer') ? '这是用中文改写后的完整回答，内容和数值保持不变。' : 'This is a complete answer written entirely in English even though the user wrote in Chinese, which should trigger the language reminder exactly once before it reaches the user.';
+      } else if (human.includes('insist-fixture')) {
+        // m2.9.3: the soft intent reminder holds the first call once; the model insists and the second call runs.
+        if (!hasResult || lastText.includes('Check before acting')) { tool = 'write'; args = { file_path: 'insisted.txt', content: 'second call ran\n' }; } else reply = '已按你的要求写好。';
       } else if (human.includes('什么是')) {
         if (!hasResult) { tool = 'write'; args = { file_path: 'should-not-exist.txt', content: 'gate failed\n' }; } else reply = '闭包是函数和它捕获的变量环境的组合。';
       } else if (human.includes('flaky-fixture')) {

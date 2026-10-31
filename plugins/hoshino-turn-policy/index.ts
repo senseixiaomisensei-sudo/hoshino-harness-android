@@ -13,7 +13,10 @@ import type {} from '@deepseek-ai/dsh-tools';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '../hoshino-context/index.js';
 import { mismatch } from './language.js';
-import { ruleIntent, parseIntent, LOOKUP_TOOLS, INTENT_PROMPT, DISCUSS_DENIAL, NUDGE, needsReadback, READBACK_TOOLS, SANDBOX_TOOLS, ADVICE, climb, signature, classify, isTransient, userReason, detail, type Intent } from './rules.js';
+import { judgeTurnIntent, humanMessages, type IntentVerdict } from './intent.js';
+import { appendFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { ruleIntent, parseIntent, LOOKUP_TOOLS, INTENT_PROMPT, DISCUSS_DENIAL, DISCUSS_REMINDER, NUDGE, needsReadback, READBACK_TOOLS, SANDBOX_TOOLS, ADVICE, climb, signature, classify, isTransient, userReason, detail, type Intent } from './rules.js';
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -44,13 +47,13 @@ export function turnEvents(session: any): any[] {
   }
   return out.reverse();
 }
-/** The human message that opened the turn (null for scheduled/plugin-originated turns). */
+/** The latest human message of the turn (null for scheduled/plugin-originated turns). */
 function humanText(events: any[]): string | null {
-  const users = events.filter(e => e.type === 'user/message' && e.data?.source?.kind === 'user');
-  return users.length ? text(users.at(-1).data.content) : null;
+  const users = humanMessages(events);
+  return users.length ? users.at(-1)!.text : null;
 }
 
-type TurnState = { turn: number; nudges: Set<string>; intent?: Intent | null; intentDone?: boolean; failures: number; failureRung: number; warnings: number; lastSig?: string; sigRepeats: number; sandboxSig?: string; sandboxRepeats: number; sandboxRung: number; stopped?: string; sandboxMs: number; retries: number; retryWaitMs: number };
+type TurnState = { turn: number; nudges: Set<string>; intent?: Intent | null; intentKey?: string; intentBy?: IntentVerdict['by']; discussReminded?: boolean; noApprovalAudited?: boolean; failures: number; failureRung: number; warnings: number; lastSig?: string; sigRepeats: number; sandboxSig?: string; sandboxRepeats: number; sandboxRung: number; stopped?: string; sandboxMs: number; retries: number; retryWaitMs: number };
 
 export function apply(ctx: Context) {
   const { settings, budgetOf, notify } = ctx.hoshinoContext;
@@ -66,6 +69,16 @@ export function apply(ctx: Context) {
   };
   const currentTurn = (agent: any) => { for (let seq = agent.session.seq - 1; seq >= 0; seq--) { const e = agent.session.eventAt(seq); if (e.type === 'turn/start') return e.data.turn as number; } return 0; };
   ctx.on('agent/disposed', ({ agent }: any) => { states.delete(agent.id); });
+
+  /** True when the user-enabled no-approval mode governs this session (hoshino-m2 follows the parent chain). */
+  const noApproval = (id: string): boolean => { try { return (ctx as any).get?.('mobileM2')?.noApproval?.(id) === true; } catch { return false; } };
+  /** RT10 audit: what the gate did, never the user's words. `<selfHome>/audit/intent.jsonl`. */
+  const audit = (sessionId: string, tool: string, entry: Record<string, unknown>) => {
+    const root = (ctx as any).get?.('mobileM2')?.config?.root as string | undefined;
+    if (!root) return;
+    const line = JSON.stringify({ at: new Date().toISOString(), sessionId, tool, gate: 'intent', ...entry }) + '\n';
+    void mkdir(join(root, 'audit'), { recursive: true }).then(() => appendFile(join(root, 'audit', 'intent.jsonl'), line)).catch(() => {});
+  };
 
   // ---------------------------------------------------------------- light model calls (intent)
   async function lightModel(agent: any, system: string, user: string, timeoutMs: number, signal: AbortSignal): Promise<string | null> {
@@ -92,18 +105,37 @@ export function apply(ctx: Context) {
     if (SANDBOX_TOOLS.has(exec.name) && s.sandboxRepeats >= settings.guard.sandboxLoopStop && s.sandboxSig === signature(exec.name, exec.arguments))
       return { kind: 'deny', reason: ADVICE.sandboxLoop, info: { name: 'HoshinoGuard', code: 'SANDBOX_LOOP' } };
     if (settings.intent.enabled && !LOOKUP_TOOLS.has(exec.name)) {
-      if (!s.intentDone) {
-        s.intentDone = true;
-        const events = turnEvents(agent.session);
-        const human = humanText(events);
-        // Only a person's message is judged; scheduled or plugin-started turns follow the model.
-        s.intent = human === null ? null : ruleIntent(human);
-        if (human !== null && s.intent === null && settings.intent.model) {
-          const raw = await lightModel(agent, INTENT_PROMPT, `The user's current message:\n${human}`, settings.intent.timeoutMs, exec.signal);
-          s.intent = raw === null ? null : parseIntent(raw);
-        }
+      // m2.9.3: the user-enabled no-approval mode (inherited by subagents, same rule as the approval seam) skips the gate.
+      if (noApproval(agent.id)) {
+        if (!s.noApprovalAudited) { s.noApprovalAudited = true; audit(agent.id, exec.name, { action: 'skip-no-approval' }); }
+        return next();
       }
-      if (s.intent === 'DISCUSS') return { kind: 'deny', reason: DISCUSS_DENIAL, info: { name: 'HoshinoIntent', code: 'DISCUSS_INTENT' } };
+      const events = turnEvents(agent.session);
+      const humans = humanMessages(events);
+      // Re-judged whenever a newer human message (an interjection) joined the turn; before m2.9.3 the first verdict of
+      // the turn was kept, so 「打开微信」 sent while a discussion turn ran was still refused.
+      const key = humans.length ? `${humans.length}:${humans.at(-1)!.index}` : 'none';
+      if (s.intentKey !== key) {
+        s.intentKey = key;
+        s.discussReminded = false;
+        const verdict = await judgeTurnIntent(humans, ruleIntent, settings.intent.model
+          ? async (prompt: string) => { const raw = await lightModel(agent, INTENT_PROMPT, prompt, settings.intent.timeoutMs, exec.signal); return raw === null ? null : parseIntent(raw); }
+          : null);
+        s.intent = verdict.intent; s.intentBy = verdict.by;
+      }
+      if (s.intent === 'DISCUSS') {
+        if (settings.intent.discuss === 'deny') {
+          audit(agent.id, exec.name, { action: 'deny', by: s.intentBy });
+          return { kind: 'deny', reason: DISCUSS_DENIAL, info: { name: 'HoshinoIntent', code: 'DISCUSS_INTENT' } };
+        }
+        // Default: one soft reminder per human message; the next gated call runs (an explicit instruction is never blocked twice).
+        if (!s.discussReminded) {
+          s.discussReminded = true;
+          audit(agent.id, exec.name, { action: 'remind', by: s.intentBy });
+          return { kind: 'deny', reason: DISCUSS_REMINDER, info: { name: 'HoshinoIntent', code: 'DISCUSS_REMINDER' } };
+        }
+        audit(agent.id, exec.name, { action: 'allow-after-remind', by: s.intentBy });
+      }
     }
     return next();
   }, { prepend: true } as any);
@@ -137,7 +169,7 @@ export function apply(ctx: Context) {
     const agent = exec.agent;
     if (!agent || exec.parent || exec.name === 'end_not_done') return decision;
     const s = stateOf(agent, currentTurn(agent));
-    const failed = result.isError === true && !['DISCUSS_INTENT', 'GUARD_STOPPED'].includes(result.error?.info?.code);
+    const failed = result.isError === true && !['DISCUSS_INTENT', 'DISCUSS_REMINDER', 'GUARD_STOPPED'].includes(result.error?.info?.code);
     const advice: string[] = [];
     const sig = signature(exec.name, exec.arguments);
     if (failed) {
