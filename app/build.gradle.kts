@@ -4,7 +4,7 @@ android {
     compileSdk { version = release(37) { minorApiLevel = 0 } }
     defaultConfig {
         applicationId = "dev.hoshino.app"; minSdk = 29; targetSdk = 37
-        versionCode = 217; versionName = "0.2.1-m2.9.4"
+        versionCode = 218; versionName = "0.2.1-m2.9.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     // 仪器测试默认针对 debug；真机手机基准（tools/phone-bench）要量不可调试的 fast 包：-Phoshino.testBuildType=fast。

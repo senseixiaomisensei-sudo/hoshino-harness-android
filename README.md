@@ -2,7 +2,13 @@
 
 开源原生 Android AI Agent：Kotlin Compose 界面 + 原版 DeepSeek Harness（DSH）/ Cordis 内核，本地运行，使用你自己的模型 API Key。MIT。
 
-## 最新版本：0.2.1-m2.9.4（2026-10-31）
+## 最新版本：0.2.1-m2.9.5（2026-10-31）
+
+包名 `dev.hoshino.app`，versionCode 218，直接覆盖安装。[Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.9.5)
+
+- **局域网 Ollama**：拉取模型失败不再闪退；测试连接超时放宽、地址自动补全、回退 /api/tags、中文错误原因；开代理时局域网地址不走代理。电脑端需设 `OLLAMA_HOST=0.0.0.0`。
+
+## 上一版：0.2.1-m2.9.4（2026-10-31）
 
 包名 `dev.hoshino.app`，versionCode 217，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
 
@@ -13,7 +19,7 @@
 - **应用内虚拟屏与悬浮球分开**：在软件内（含接管时）不再弹出悬浮球显示层。
 - **捏合放大虚拟屏本身**：应用内捏合调整虚拟屏窗口大小（25%–100%），不再放大画面内容。
 
-## 上一版：0.2.1-m2.9.3（2026-10-31）
+## 更早：0.2.1-m2.9.3（2026-10-31）
 
 包名 `dev.hoshino.app`，versionCode 216，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。首次使用需在「设置 → 设置手机操作」重连助手。
 
