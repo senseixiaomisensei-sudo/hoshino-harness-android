@@ -26,7 +26,62 @@ object PhoneSetupFlow {
         val accessibility: Boolean,
         val ocrReady: Boolean,
         val userSaysDeveloperOn: Boolean = false,
+        /** User ticked "配对后自动开启无障碍": the helper turns the service on right after pairing (WP-9). */
+        val autoAccessibility: Boolean = false,
+        /** How long the helper has been running while the service is still off (ms), null when not in that state. */
+        val helperUpWithoutA11yMs: Long? = null,
     )
+
+    /**
+     * The one thing the wizard's main button does next (WP-9 / D-1: 首配 ≤ 120 s). The consent page is the first
+     * screen; confirming it immediately continues with the next system page so the user does not tap twice.
+     */
+    enum class Primary { Unsupported, Confirm, OpenDeveloperOptions, StartPairing, WaitAutoAccessibility, OpenAccessibility, Done }
+
+    /** Wait this long for the helper to switch the service on before offering the manual path. */
+    const val AUTO_A11Y_WAIT_MS = 6_000L
+
+    private fun helperReady(i: Input) = i.shizukuReady || i.helperRunning
+
+    fun primary(i: Input): Primary = when (current(i)) {
+        Step.Version -> Primary.Unsupported
+        Step.Consent -> Primary.Confirm
+        Step.Developer -> afterConsent(i)
+        Step.Pairing -> Primary.StartPairing
+        Step.Accessibility -> if (autoPending(i)) Primary.WaitAutoAccessibility else Primary.OpenAccessibility
+        Step.Ocr, Step.Done -> Primary.Done
+    }
+
+    /**
+     * What "按所选开始" continues with once consent is saved: developer options visibly off → their page (tap the
+     * build number 7 times); otherwise straight to wireless debugging, where the user switches it on and pairs in
+     * the same visit (the pairing-code notification is already armed).
+     */
+    fun afterConsent(i: Input): Primary = when {
+        i.sdk < 33 -> Primary.Unsupported
+        helperReady(i) -> if (i.accessibility) Primary.Done else if (autoPending(i)) Primary.WaitAutoAccessibility else Primary.OpenAccessibility
+        i.developerOptions == false && !i.userSaysDeveloperOn && !i.paired -> Primary.OpenDeveloperOptions
+        else -> Primary.StartPairing
+    }
+
+    /** The helper is up and the user allowed it to switch the service on: wait instead of sending them to settings. */
+    fun autoPending(i: Input): Boolean = helperReady(i) && !i.accessibility && i.autoAccessibility && i.consentConfirmed &&
+        (i.helperUpWithoutA11yMs ?: 0L) < AUTO_A11Y_WAIT_MS
+
+    /**
+     * How many more times the user still has to leave Hoshino for a system page (D-1 target: ≤ 3 in total for a
+     * new user): developer options (if visibly off), wireless debugging + pairing (one visit), accessibility
+     * (only when not switched on by the helper).
+     */
+    fun remainingTrips(i: Input): Int {
+        if (i.sdk < 33) return 0
+        var n = 0
+        val ready = helperReady(i)
+        if (!ready && i.developerOptions == false && !i.userSaysDeveloperOn && !i.paired) n++
+        if (!ready) n++
+        if (!i.accessibility && !(i.autoAccessibility && i.consentConfirmed)) n++
+        return n
+    }
 
     fun marks(i: Input): Map<Step, Mark> {
         val supported = i.sdk >= 33
