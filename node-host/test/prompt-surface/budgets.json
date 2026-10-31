@@ -1,0 +1,7 @@
+{
+  "_note": "EV3 大小门槛：每种配置发给模型的提示词全貌（系统提示 + 工具定义 + 附加上下文）粗估 token 上限（字符/4）。约为 2026-10-31 金样的 1.15 倍。金样更新不会自动放宽这里；超了要在 PR 里说明为什么值得，再由人改这个数。",
+  "collapsed": {"estimatedTokens": 450},
+  "phone": {"estimatedTokens": 900},
+  "web": {"estimatedTokens": 650},
+  "all": {"estimatedTokens": 7600}
+}

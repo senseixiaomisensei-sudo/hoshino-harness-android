@@ -66,9 +66,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
-      - name: Build host and plugins, run guards
+      - name: dsh needs Node >= 24.9
+        run: node -e "const [a,b]=process.versions.node.split('.').map(Number);if(a<24||a===24&&b<9)throw new Error('Node '+process.versions.node+' < 24.9')"
+      - name: Build host and plugins, run EV4 plugin guard and EV3 prompt golden (four tool configurations)
         working-directory: node-host
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
-          node --test test/architecture.test.mjs
+          node --test test/architecture.test.mjs test/prompt-surface.test.mjs

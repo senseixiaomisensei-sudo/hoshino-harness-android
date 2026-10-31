@@ -1,0 +1,30 @@
+{
+  "collapsed": {
+    "systemChars": 1373,
+    "toolsChars": 2,
+    "contextChars": 181,
+    "tools": 0,
+    "estimatedTokens": 389
+  },
+  "phone": {
+    "systemChars": 1385,
+    "toolsChars": 1530,
+    "contextChars": 181,
+    "tools": 7,
+    "estimatedTokens": 774
+  },
+  "web": {
+    "systemChars": 1385,
+    "toolsChars": 653,
+    "contextChars": 181,
+    "tools": 3,
+    "estimatedTokens": 555
+  },
+  "all": {
+    "systemChars": 2053,
+    "toolsChars": 23421,
+    "contextChars": 1016,
+    "tools": 50,
+    "estimatedTokens": 6623
+  }
+}
