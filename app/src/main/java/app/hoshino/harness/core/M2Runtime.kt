@@ -72,6 +72,12 @@ class M2Runtime(private val context:Context,private val silentInstall:suspend(Fi
             else -> error("未知原生桥能力")
         }
     }
+    /** 删除会话时一并去掉它的交付文件记录（工作区里的文件本身属于用户，不删）。 */
+    suspend fun forgetSessions(ids:Set<String>)=withContext(Dispatchers.IO){
+        if(deliveries.value.none{it.sessionId in ids})return@withContext
+        deliveries.update{rows->rows.filterNot{it.sessionId in ids}}
+        records.writeText(JSONArray(deliveries.value.map{JSONObject().put("id",it.id).put("sessionId",it.sessionId).put("path",it.path).put("name",it.name).put("bytes",it.bytes)}).toString())
+    }
     suspend fun save(file:File,name:String=""):JSONObject=withContext(Dispatchers.IO) {
         val type=android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())?:"application/octet-stream"
         val values=android.content.ContentValues().apply{put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,name.ifBlank{file.name}.replace('/','_'));put(android.provider.MediaStore.MediaColumns.MIME_TYPE,type);put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,"Download/Hoshino");put(android.provider.MediaStore.MediaColumns.IS_PENDING,1)}

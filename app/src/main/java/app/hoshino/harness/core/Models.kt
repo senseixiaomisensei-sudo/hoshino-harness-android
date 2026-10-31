@@ -40,7 +40,11 @@ data class SessionInfo(
     val running: Boolean = false,
     val archived: Boolean = false,
     val parentId: String? = null,
-)
+    /** 置顶时间（毫秒）；0 表示未置顶。 */
+    val pinnedAt: Long = 0L,
+) {
+    val pinned: Boolean get() = pinnedAt > 0L
+}
 
 enum class AttachmentKind(val label: String) { File("文件"), Image("图片"), Camera("拍照"), WorkspaceFile("工作区文件") }
 
