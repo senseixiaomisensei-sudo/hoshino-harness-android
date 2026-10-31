@@ -465,8 +465,11 @@ object PhoneCapsule {
                 autoTakeover.beginFailed(); toast(takeoverRefusal()); return false
             }
             autoJob?.cancel(); autoJob = null
-            return controller.manual.active.value != null
+            val active = controller.manual.active.value != null
+            if (!active && now - lastTakeoverHint > 3_000) { lastTakeoverHint = now; toast("先点「接管」才能操作虚拟屏") }
+            return active
         }
+        private var lastTakeoverHint = 0L
 
         private fun touchReleased(now: Long) {
             autoTakeover.touchUp(now)

@@ -193,7 +193,7 @@ class TapClassifierTest {
 
 class AutoTakeoverModelTest {
     @Test fun touchTakesOverAndIdleHandsBack() {
-        val m = AutoTakeoverModel(idleMs = 4_000)
+        val m = AutoTakeoverModel(idleMs = 4_000, touchTakesOver = true)
         assertEquals(AutoTakeoverModel.Action.Begin, m.touchDown(1_000))
         assertEquals(AutoTakeoverModel.Mode.Auto, m.mode)
         assertNull(m.nextCheckAt())                                  // finger still down
@@ -211,7 +211,7 @@ class AutoTakeoverModelTest {
     }
 
     @Test fun buttonMakesItStickyUntilHandBack() {
-        val m = AutoTakeoverModel(idleMs = 4_000)
+        val m = AutoTakeoverModel(idleMs = 4_000, touchTakesOver = true)
         m.touchDown(0); m.touchUp(100)
         assertEquals(AutoTakeoverModel.Action.None, m.button(200))  // auto → sticky, no second begin
         assertEquals(AutoTakeoverModel.Mode.Sticky, m.mode)
@@ -221,8 +221,20 @@ class AutoTakeoverModelTest {
         assertEquals(AutoTakeoverModel.Action.None, m.touchDown(1_000_003))
     }
 
-    @Test fun failuresAndOutsideEndsReset() {
+    @Test fun defaultOnlyButtonTakesOver() {
         val m = AutoTakeoverModel()
+        assertEquals(AutoTakeoverModel.Action.None, m.touchDown(0))   // m2.9.4: a touch never takes over
+        assertEquals(AutoTakeoverModel.Mode.Off, m.mode)
+        m.touchUp(10)
+        assertNull(m.nextCheckAt())
+        assertEquals(AutoTakeoverModel.Action.Begin, m.button(20))
+        assertEquals(AutoTakeoverModel.Mode.Sticky, m.mode)
+        assertEquals(AutoTakeoverModel.Action.None, m.tick(1_000_000)) // no automatic hand-back
+        assertEquals(AutoTakeoverModel.Action.End, m.button(1_000_001))
+    }
+
+    @Test fun failuresAndOutsideEndsReset() {
+        val m = AutoTakeoverModel(touchTakesOver = true)
         assertEquals(AutoTakeoverModel.Action.Begin, m.touchDown(0))
         m.beginFailed()
         assertEquals(AutoTakeoverModel.Mode.Off, m.mode)

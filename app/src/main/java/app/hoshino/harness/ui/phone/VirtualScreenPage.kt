@@ -196,7 +196,7 @@ fun VirtualScreenPage(onBack: () -> Unit) {
                     Text("双击缩放（关掉后单击立即送达，双击送给 App）", style = t.caption, color = c.text2, modifier = Modifier.weight(1f))
                     HSwitch(doubleTapZoom, { doubleTapZoom = it })
                 }
-                Text("双指捏合缩放、双指拖动平移；单指点按/长按/滑动直接操作虚拟屏，一碰即接管、AI 暂停，停手 4 秒自动交还。", style = t.caption, color = c.text3)
+                Text("双指捏合缩放、双指拖动平移；点「接管」后 AI 暂停，单指点按/长按/滑动才会操作虚拟屏；点「交还」AI 继续。", style = t.caption, color = c.text3)
             }
         }
         Spacer(Modifier.navigationBarsPadding())

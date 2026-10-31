@@ -51,7 +51,18 @@ class InAppTakeover private constructor(private val controller: PhoneController,
         }
         autoJob?.cancel(); autoJob = null
         _mode.value = model.mode
-        return controller.manual.active.value != null
+        val active = controller.manual.active.value != null
+        if (!active) hint()
+        return active
+    }
+
+    private var lastHint = 0L
+    /** Not taken over: tell the user (at most every 3 s) that 「接管」 comes first. */
+    private fun hint() {
+        val now = clock()
+        if (now - lastHint < 3_000) return
+        lastHint = now
+        _notice.value = if (PhoneTakeover.of(controller.appContext).pending.value != null) refusal() else "先点「接管」才能操作虚拟屏"
     }
 
     fun touchUp() { model.touchUp(clock()); scheduleAutoReturn() }

@@ -75,11 +75,16 @@ class TapClassifier(
 }
 
 /**
- * 「自由操作」 (m2.9.2): the user can touch the preview at any time. The first touch takes over automatically and pauses
+ * m2.9.4: by default only the 「接管」 button takes over (user request); touches on the picture are ignored until then.
+ * With touchTakesOver = true (the m2.9.2 「自由操作」 behaviour): the user can touch the preview at any time. The first touch takes over automatically and pauses
  * the AI ([Action.Begin]); after the finger is lifted and nothing happened for [idleMs] the AI gets the display back
  * ([Action.End]). The 「接管」 button makes the takeover sticky (no auto hand-back) until 「交还」. Pure, clock injected.
  */
-class AutoTakeoverModel(private val idleMs: Long = DEFAULT_IDLE_MS) {
+class AutoTakeoverModel(
+    private val idleMs: Long = DEFAULT_IDLE_MS,
+    /** m2.9.4: off by default — only the 「接管」 button takes over; a touch on the picture never does. */
+    private val touchTakesOver: Boolean = false,
+) {
     enum class Mode { Off, Auto, Sticky }
     enum class Action { None, Begin, End }
 
@@ -92,7 +97,7 @@ class AutoTakeoverModel(private val idleMs: Long = DEFAULT_IDLE_MS) {
     fun touchDown(now: Long): Action {
         touching++
         lastActivity = now
-        return if (mode == Mode.Off) { mode = Mode.Auto; Action.Begin } else Action.None
+        return if (mode == Mode.Off && touchTakesOver) { mode = Mode.Auto; Action.Begin } else Action.None
     }
 
     fun touchUp(now: Long) { touching = (touching - 1).coerceAtLeast(0); lastActivity = now }
