@@ -67,7 +67,7 @@ class NativeKernel(private val context: Context,
                 }
                 if(context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE!=0){val wait=context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE).getLong("test-start-delay-ms",0).coerceIn(0,10000);if(wait>0)delay(wait)}
                 process=launcher.launch(context,JSONObject().put("callbackPort",callback!!.port).put("callbackToken",callback!!.token),
-                    { code -> if(current==generation.get()) {diagnostic("内核退出 ($code)");state.update { it.copy(phase="崩溃") }} },::diagnostic)
+                    { code -> if(current==generation.get()) {diagnostic("内核退出 ($code)");state.update { it.copy(phase="崩溃") };watchdogRestart(current)} },::diagnostic)
             } catch(failure: Exception) {
                 if(current==generation.get()) {
                     diagnostic("host: ${failure.javaClass.simpleName}")
@@ -76,6 +76,14 @@ class NativeKernel(private val context: Context,
                 }
             }
         }
+    }
+    private val crashTimes=java.util.ArrayDeque<Long>()
+    /** Watchdog: an unexpected kernel exit (HyperOS kill, OOM) restarts it with backoff, at most 3 times a minute. */
+    private fun watchdogRestart(current:Int){
+        val now=SystemClock.elapsedRealtime()
+        synchronized(crashTimes){while(crashTimes.isNotEmpty()&&now-crashTimes.first()>60000)crashTimes.removeFirst();if(crashTimes.size>=3){diagnostic("watchdog: 1 分钟内连续崩溃，停止自动重启");return};crashTimes.addLast(now)}
+        val attempt=crashTimes.size
+        scope.launch{delay(500L*attempt);if(current==generation.get()){diagnostic("watchdog: 内核已重启");stop();start()}}
     }
     suspend fun client(): SessionClient = withTimeout(300000) { ready.await() }
     fun diagnostic(message: String) { state.update { it.copy(logs=(it.logs+message).takeLast(50)) } }
