@@ -8,6 +8,7 @@
 
 - [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.2/Hoshino-Harness-0.2.1-m2.9.2-arm64-v8a.apk)（非调试 fast 构建）
 - [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.9.2)
+- arm64 APK：77,221,729 字节（比 m2.9.1 大 70,960 字节），SHA-256 `6947cd2c4c83fe32962168034848f65f893f168407ae03a2d628747c4f064530`；签名证书 SHA-256 `e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1`；构建与验收 [Actions run 41179258796](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/41179258796)
 
 主要内容（详见 [docs/m2.9.2-noapproval-preview.md](docs/m2.9.2-noapproval-preview.md)）：
 - **无审批 = 彻底无审批**（替代 M2.8 规则）：全部审批入口自动放行并审计；子 Agent 继承无审批；付款 / 密码 / 验证码 / 人机验证在无审批下不再停下，只记审计。默认仍是手动审批。
