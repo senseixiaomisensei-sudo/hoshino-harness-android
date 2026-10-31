@@ -2,20 +2,27 @@
 
 开源原生 Android AI Agent：Kotlin Compose 界面 + 原版 DeepSeek Harness（DSH）/ Cordis 内核，本地运行，使用你自己的模型 API Key。MIT。
 
-## 最新版本：0.2.1-m2.6（2026-10-29）
+## 最新版本：0.2.1-m2.7（2026-10-31）
 
-包名 `dev.hoshino.app`，versionCode 208，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
+包名 `dev.hoshino.app`，versionCode 209，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
 
-- [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.6/Hoshino-Harness-0.2.1-m2.6-arm64-v8a.apk)（非调试 fast 构建）
-- [全部产物与 SHA256](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.6)
+- [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.7/Hoshino-Harness-0.2.1-m2.7-arm64-v8a.apk)（非调试 fast 构建）
+- [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.7)
 
 主要内容：
 
-- **DSH 内核升级**到与电脑版一致的版本，兼容电脑版 DSH 插件与配置，提示词变量（如 `{{cwd}}`）兼容。
-- **插件市场**：插件 → 发现，读取与电脑版 DSH 相同的 `format: 1` 索引；默认源 Awesome DSH Plugin 与开放插件市场（dshopen.org）；搜索、分类、排序、版本、兼容性，npm / Git（固定提交、子目录）安装，可更新提示，自定义索引源；Agent 可用只读 `plugin_market` 工具。
-- **网络兼容**：内核读取索引失败时自动改用 Android 系统网络（系统代理 / VPN），jsDelivr 自动切换镜像；npm / git 安装使用系统代理。
-- **流畅度**：arm64 发布非调试构建（接近正式版的 ART 编译），流式输出按帧合并，市场列表懒加载与图标缓存。
-- 构建与发布：推送 `codex/dsh-upgrade` 触发 `.github/workflows/dsh-upgrade.yml`，含 arm64 真内核启动、x86_64 覆盖安装 + 聊天 + 工具调用验收后自动发布。
+- **流畅度**：流式输出只追加，长会话按轮缓存、稳定 key、Markdown 增量渲染；工具输出内存只留 64 KiB 尾部，需要时从 dsh 日志读全量；会话 LRU 释放。文件卡跟随产生它的那一轮；已处理的审批卡折叠进过程组（可关）。
+- **无审批档**（只能由用户主动开启，出厂默认仍是手动审批）：仍受权限档和用户自设 deny 规则约束，每次自动放行写审计日志。
+- **插话与停止**：运行中继续发送走 dsh 原生 steer，下一步并入当前任务；停止后作废未处理的插话，并写一段停止交代供「继续」使用。
+- **会话管理**：删除（多选、左滑）、置顶、重命名、导出 Markdown / JSON 到「下载/Hoshino」并分享。
+- **ChatGPT 登录**：与 Mika 相同的「用 ChatGPT 登录」（动态客户端、本机回环、PKCE、JWKS），走标准 `api.openai.com/v1/responses`；旧方式登录过的需重新登录一次。套餐模型列表动态读取，新增 `gpt-6.1-terra` 与 xhigh 推理档。
+- **模型自带联网搜索**优先，服务商不支持时自动回退到 Hoshino 搜索。
+
+需真机验收（CI 未覆盖）：长会话流畅度；ChatGPT 真账号登录、套餐模型与 `gpt-6.1-terra`、模型联网搜索及回退；无审批、插话、停止交代；删除 / 置顶 / 重命名 / 导出；重启后文件卡归轮。CI 已验证：arm64 真内核启动、x86_64 模拟器从旧版覆盖安装保留会话与配置、聊天与工具调用。
+
+构建与发布：推送 `codex/dsh-upgrade` 触发 `.github/workflows/dsh-upgrade.yml`，含 arm64 真内核启动、x86_64 覆盖安装 + 聊天 + 工具调用验收后自动发布。
+
+上一版 [0.2.1-m2.6](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.6)（2026-10-29）：DSH 内核升级到与电脑版一致、插件市场（`format: 1` 索引、npm / Git 安装）、索引读取走 Android 系统网络与 jsDelivr 镜像、arm64 非调试构建。
 
 ## M2（2026-10-27，历史）
 
@@ -76,7 +83,7 @@ M1 冒烟覆盖 APK 自带内核、真实 PTY、密钥保护、复制、截图�
 
 ## 使用
 
-首次启动解压 rootfs，前台服务启动内核。设置里添加 provider、协议、base URL、模型和自己的 key。Anthropic 默认 `https://api.anthropic.com`，OpenAI 兼容的 `/v1` 根地址依服务约定填写。等待“已连接”后聊天；模型网络请求与 Agent 写操作默认审批。终端、文件和 self 的能力边界以交付报告为准。
+首次启动解压 rootfs，前台服务启动内核。设置里添加 provider、协议、base URL、模型和自己的 key。Anthropic 默认 `https://api.anthropic.com`，OpenAI 兼容的 `/v1` 根地址依服务约定填写。等待“已连接”后聊天。发给已启用模型服务商的请求不单独审批（自 M2.1 起，添加并启用服务商即视为授权）；会改文件、执行 shell、联网抓取等工具调用默认审批，「无审批」档只能由用户在设置或会话中主动开启。终端、文件和 self 的能力边界以交付报告为准。
 
 不要将服务、密钥、用户 workspace 或 `.research` 缓存提交到仓库。JSON 中的 `apiKey` 是 Keystore 凭据引用。无遥测插件、无 Google Play Services、无远程业务后端。
 
