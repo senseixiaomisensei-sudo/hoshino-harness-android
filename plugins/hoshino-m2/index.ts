@@ -16,6 +16,7 @@ import type {} from '@deepseek-ai/dsh-schedule';
 import type {} from '@deepseek-ai/dsh-subagent';
 import {createRequire} from 'node:module';
 import {createScope,type Scope} from '@deepseek-ai/dsh-scope';
+import {sessionToolDeny} from './tool-mask.js';
 export interface MobileM2 {config:Configuration;syncTools(sessionId:string):void;invoke(action:string,args:Data):Promise<any>;approve(action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>):Promise<{approved:boolean;remember?:boolean}>}
 declare module '@deepseek-ai/cordis'{interface Context{mobileM2:MobileM2}}
 export const name='hoshino-m2';
@@ -41,7 +42,7 @@ export async function apply(ctx:Context){
  ctx.effect(()=>()=>{ctx.androidBridge.call=originalCall;});
  const modeFor=(sid:string)=>{const o=ctx.mobilePolicy.options.get(sid) as Data|undefined;return (config.get('modes.json').modes??modes).find((m:Data)=>m.id===o?.mode)??modes[1]!;};
  const toolMasks=new Map<string,{scope:Scope;release?:()=>void}>();let syncingTools=false;
- const syncTools=(id:string)=>{if(syncingTools)return;const item=toolMasks.get(id);if(!item)return;syncingTools=true;try{item.release?.();item.release=undefined;const mode=modeFor(id);if(Array.isArray(mode.tools)){const deny=ctx.tools.definitions().map(t=>t.name).filter(name=>!mode.tools.includes(name));if(deny.length)item.release=item.scope.ctx.tools.restrict({deny});}}finally{syncingTools=false;}};
+ const syncTools=(id:string)=>{if(syncingTools)return;const item=toolMasks.get(id);if(!item)return;syncingTools=true;try{item.release?.();item.release=undefined;const mode=modeFor(id);const deny=sessionToolDeny(ctx.tools.definitions().map(t=>t.name),mode.tools,ctx.mobilePolicy.options.get(id)?.tier);if(deny.length)item.release=item.scope.ctx.tools.restrict({deny});}finally{syncingTools=false;}};
  ctx.on('agent/created',({agent})=>{toolMasks.set(agent.id,{scope:createScope(ctx,agent)});syncTools(agent.id);return undefined;});
  ctx.on('agent/disposed',({agent})=>{const item=toolMasks.get(agent.id);toolMasks.delete(agent.id);if(item)void item.scope.dispose();});
  ctx.on('tools/change',()=>{if(!syncingTools)for(const id of toolMasks.keys())syncTools(id);});

@@ -2,7 +2,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { Context } from '../../node-host/src/platform.js';
 import type {} from '../android-policy/index.js';
-import { checkSteps, render, runSteps, stepFor, type Data } from './steps.js';
+import { checkSteps, phoneError, render, runSteps, stepFor, PHONE_PROMPT, type Data } from './steps.js';
 
 /**
  * Phone control tools (m2.8). Every tool is a thin client of the Android single execution entry
@@ -26,13 +26,13 @@ export function apply(ctx: Context): void {
   const sid = (exec: {agent?: {id: string}}) => exec.agent?.id ?? '';
   const phone = async (action: string, args: Data, exec: {agent?: {id: string}; signal: AbortSignal}) => {
     const r = await call('phone', {action, sessionId: sid(exec), ...args}, exec.signal);
-    if (r.ok === false && r.error && action !== 'handoff') throw new Error(String(r.error) + (r.setup ? ` (${r.setup})` : ''));
+    if (r.ok === false && r.error && action !== 'handoff') throw new Error(phoneError(r));
     return render(r);
   };
   const text = (name: string, description: string, parameters: Data, run: (args: Data, exec: any) => Promise<string>) =>
     ctx.tools.register(defineTool({name, description, parameters: parameters as any, output: {schema: {type: 'string'}, render: (_, value) => [{type: 'text', text: value}]}, execute: run as any}));
 
-  text('phone_status', 'Phone control readiness and diagnosis (helper, accessibility, OCR, Android version, lock state). No screen content.', {}, (_, exec) => phone('diagnose', {}, exec));
+  text('phone_status', 'Phone control readiness and diagnosis (helper, accessibility, OCR, Android version, lock state). No screen content. Call it first when a phone_* tool reports that phone control is not ready.', {}, (_, exec) => phone('diagnose', {}, exec));
   text('phone_observe', 'Read the agent display (a background screen the user does not see): compressed elements with stable refs, or only what changed since your last read. Set full=true for the whole screen.', {full: {type: 'boolean'}}, (a, exec) => phone('observe', {full: a.full === true}, exec));
   text('phone_list_apps', 'List launcher apps (label and package).', {query: {type: 'string'}}, (a, exec) => phone('list_apps', {query: a.query ?? ''}, exec));
   text('phone_handoff', 'Hand the current app to the user (login, captcha, payment, password, anything you must not do). Waits until the user taps 处理好了 or 跳过; skipped means NOT done.', {reason: {type: 'string', required: true}}, (a, exec) => phone('handoff', {reason: String(a.reason ?? '')}, exec));
@@ -47,7 +47,7 @@ export function apply(ctx: Context): void {
     ['phone_swipe', 'swipe', 'Straight swipe from x,y to x2,y2 (0..999).', {x: {type: 'number', required: true}, y: {type: 'number', required: true}, x2: {type: 'number', required: true}, y2: {type: 'number', required: true}, duration_ms: {type: 'number'}, ...expect}],
     ['phone_back', 'back', 'Press Back on the agent display.', {...expect}],
     ['phone_press_key', 'key', 'Press a navigation key: enter, tab, del, search, up, down, left, right, page_up, page_down, escape, move_home, move_end, space, forward_del, center, back.', {key: {type: 'string', required: true}, ...expect}],
-    ['phone_launch_app', 'open_app', 'Open an app on the agent display by package or label (never Hoshino itself).', {app: {type: 'string', required: true}, ...expect}],
+    ['phone_launch_app', 'open_app', 'Open an app (e.g. 抖音, WeChat) on the agent display by package or label (never Hoshino itself). This is how to open apps; it needs no Shizuku and no full-access.', {app: {type: 'string', required: true}, ...expect}],
     ['phone_wait', 'wait', 'Wait until text appears/disappears, an app is in front, or the screen is quiet.', {expect: {type: 'object', required: true}}],
   ];
   for (const [tool, action, description, parameters] of single) text(tool, description, parameters, async (a, exec) => render(await runSteps(call, approve, sid(exec), checkSteps([stepFor(action, a)]), undefined, exec.signal)));
@@ -61,13 +61,10 @@ export function apply(ctx: Context): void {
       const route = exec.agent?.session.requestHeader()?.config; const provider = route?.provider ?? exec.agent?.options.provider; const model = route?.model ?? exec.agent?.options.model;
       if (!provider || !model || !(await ctx.llm.resolveModelInfo(provider, model, exec.signal)).inputModalities?.includes('image')) throw new Error('Current model does not declare image input; use phone_observe');
       const image = await call('phone', {action: 'screenshot', sessionId: sid(exec)}, exec.signal);
-      if (image.ok === false) throw new Error(String(image.error ?? 'screenshot failed'));
+      if (image.ok === false) throw new Error(phoneError({error: 'screenshot failed', ...image}));
       return JSON.stringify(await ctx.attachments.saveImage({data: Buffer.from(String(image.data), 'base64'), mediaType: 'image/jpeg', name: 'phone-screen.jpg'}));
     },
   }));
 
-  ctx.systemPrompt.context({name: 'hoshino-phone', order: 520, required: false, text: () => [
-    'Phone control: apps run on a background agent display; the user keeps using the main screen. Start with phone_status if unsure, phone_observe to read (refs stay valid across reads), then act; prefer phone_do_steps with expect conditions for known sequences.',
-    'Sending, deleting, ordering and submitting go through the user\'s approval policy for that exact step on that exact screen (by default the user is asked once per step; a declined step must not be retried). Payment, passwords, captchas and verification codes are always handed to the user with phone_handoff, in every approval mode including no-approval. Never operate Hoshino itself. Call phone_finish when done.',
-  ].join('\n')});
+  ctx.systemPrompt.context({name: 'hoshino-phone', order: 520, required: false, text: () => PHONE_PROMPT});
 }

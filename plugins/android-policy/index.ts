@@ -2,7 +2,7 @@ import type { Context } from '../../node-host/src/platform.js';
 import { readFile, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { workspacePath } from './paths.js';
-import { tierGate, READ_TOOLS } from './tier.js';
+import { tierGate, READ_TOOLS, FULL_ACCESS_PROMPT } from './tier.js';
 import {resolve} from 'node:path';
 import type {} from '@deepseek-ai/dsh-working-directory';
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs';
@@ -37,7 +37,7 @@ export function apply(ctx: Context): void {
   }});
   ctx.systemPrompt.context({name:'hoshino-session-policy',order:501,required:true,text:()=> {
     const id=ctx.agents.currentInitiator()?.id;const current=id ? options.get(id) : undefined;
-    return [current?.prompt,current?.tier==='full-access' ? 'Full-access is authorized. For Android system commands use system_shell through Shizuku. Its real uid and cwd are returned. Ordinary bash remains inside Alpine and file tools remain in the private workspace. System commands still require approval.' : '',current?.planMode ? 'Plan mode: do not write files, execute shell, or change configuration. Read and explain only.' : ''].filter(Boolean).join('\n');
+    return [current?.prompt,current?.tier==='full-access' ? FULL_ACCESS_PROMPT : '',current?.planMode ? 'Plan mode: do not write files, execute shell, or change configuration. Read and explain only.' : ''].filter(Boolean).join('\n');
   }});
   ctx.on('tools/pre-execute', async (exec, next) => {
     const sessionId=exec.agent?.id ?? '';

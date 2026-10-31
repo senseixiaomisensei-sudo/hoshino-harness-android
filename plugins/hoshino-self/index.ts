@@ -71,7 +71,7 @@ export async function apply(ctx: Context): Promise<void> {
         if(!['read-only','workspace-write','full-access'].includes(String(request.tier)))throw new Error('Unknown session permission tier');
         if(request.tier==='full-access') {
           const access=await ctx.androidBridge.call<{authorized:boolean}>('system-access');
-          if(!access.authorized)throw new Error('Shizuku authorization is required for full-access');
+          if(!access.authorized)throw new Error('Full-access needs a system executor: Shizuku running and authorized, or the built-in wireless-debugging helper paired and running (设置 → 设置手机操作). Opening or operating apps does not need full-access; use the phone_* tools.');
         }
         const prior=ctx.mobilePolicy.options.get(id);
         const options={tier:String(request.tier),planMode:typeof request.planMode==='boolean' ? request.planMode : prior?.planMode ?? false,prompt:typeof request.prompt==='string' ? request.prompt.slice(0,32000) : prior?.prompt ?? '',mode:String(request.mode??prior?.mode??'standard'),model:String(request.model??prior?.model??'')};
