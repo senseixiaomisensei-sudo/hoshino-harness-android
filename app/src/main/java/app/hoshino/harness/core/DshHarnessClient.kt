@@ -176,6 +176,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             }
             "phone" -> return app.hoshino.harness.phone.PhoneController.of(context).handle(body.put("sessionId",body.optString("sessionId").ifEmpty{activeSession}))
             "restart-after-turn" -> {restartAfter.add(body.getString("sessionId"));return JSONObject()}
+            "context-notice" -> {contextNotice(body)?.let{publish(it)};return JSONObject()}
             "file-diff" -> {
                 val before=body.optString("before","");val after=body.getString("after")
                 val lines=before.lines().mapIndexed { i,line->DiffLine(DiffLineType.Remove,line,i+1,null) }+after.lines().mapIndexed{i,line->DiffLine(DiffLineType.Add,line,null,i+1)}
@@ -467,6 +468,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","steer").put("content",promptContent(client,sessionId,text,attachments)))
     }
     private suspend fun resumeInterrupted(){if(M2SafeMode.enabled(context))return;val live=api().rpc("session/list",JSONObject()).getJSONArray("items").rows().associateBy{it.getString("sessionId")};for(row in sessions.value){if(metadata.getBoolean("pending:${row.id}",false)&&live[row.id]?.optBoolean("running")!=true){api().rpc("session/prompt",JSONObject().put("sessionId",row.id).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",JSONArray().put(JSONObject().put("type","text").put("text","Resume the interrupted user task from the persisted session log and last completed step. Inspect actual files before repeating any side effect. Do not duplicate completed actions."))))}}}
+    override suspend fun compact(sessionId: String) { publish(compactSession(sessionId)) }
     /**
      * 停止：立即取消本轮（dsh `session/cancel`），还没被认领的插话随之作废（官方 `session/updateQueue remove`），
      * 然后由插件补一段「停止后的交代」写进 inbox（下一轮「继续」能读到），界面从持久化事件画出来。
@@ -635,6 +637,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     /** People-facing reason for a failed turn. ChatGPT plan errors arrive already explained by plugins/android-api. */
     private fun failureDetail(sid:String,failure:JSONObject?):String {
+        val base=providerFailureDetail(sid,failure)
+        val message=failure?.optString("message").orEmpty()
+        if(failure==null||!dev.hoshino.bridge.isTransportFailure(failure.optString("code"),message))return base
+        val proxyActive=runCatching{dev.hoshino.bridge.KernelNetwork.kernelProxyEnvironment(context).isNotEmpty()}.getOrDefault(false)
+        return base+"\n"+dev.hoshino.bridge.transportFailureHint(dev.hoshino.bridge.classifyTransportFailure(message),proxyActive)
+    }
+    private fun providerFailureDetail(sid:String,failure:JSONObject?):String {
         val raw=vault.redact(failure?.optString("message").orEmpty()).take(1500)
         if(metadata.getString("session-provider:$sid",null)!="openai-codex")return raw.ifBlank{"内核未返回错误详情"}
         val status=failure?.optInt("status")

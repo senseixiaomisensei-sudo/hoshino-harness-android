@@ -72,13 +72,13 @@ export function stepFor(action: string, args: Data): Data {
   const pick = (...keys: string[]) => Object.fromEntries(keys.filter(k => args[k] !== undefined && args[k] !== null).map(k => [k, args[k]]));
   switch (action) {
     case 'tap': case 'long_press': return {action, ...pick('ref', 'target', 'x', 'y', 'expect')};
-    case 'type': return {action, ...pick('ref', 'target', 'text', 'enter', 'expect')};
-    case 'clear': return {action, ...pick('ref', 'target')};
+    case 'type': return {action, ...pick('ref', 'target', 'x', 'y', 'text', 'enter', 'expect')};
+    case 'clear': return {action, ...pick('ref', 'target', 'x', 'y')};
     case 'scroll': return {action, ...pick('ref', 'target', 'direction', 'expect')};
     case 'swipe': return {action, ...pick('x', 'y', 'x2', 'y2', 'duration_ms', 'expect')};
     case 'back': return {action, ...pick('expect')};
     case 'key': return {action, ...pick('key', 'expect')};
-    case 'open_app': return {action, app: args.app, ...pick('expect')};
+    case 'open_app': return {action, app: args.app, ...pick('cold', 'expect')};
     case 'wait': return {action, expect: args.expect};
     default: throw new Error(`unknown action ${action}`);
   }
@@ -97,6 +97,8 @@ export const PHONE_PROMPT = [
   'The virtual display is created only while a phone task runs. Not seeing an extra display (dumpsys display, a display list) does NOT mean the feature is missing: just call phone_launch_app.',
   'Start with phone_status if unsure. If phone control is not set up (helper not running, accessibility off), call phone_status and tell the user to open 设置 → 设置手机操作 to pair the built-in wireless-debugging helper and enable the accessibility service. Never tell the user to install or configure Shizuku for this, and never ask for full-access to open an app.',
   'Refs from phone_observe stay valid across reads; prefer phone_do_steps with expect conditions for known sequences.',
+  'To read, prefer one call over scroll+observe loops: phone_collect reads a whole list or chat (scrolls and dedups on the phone), phone_find scrolls to a target, phone_query / phone_extract read the current screen.',
+  'phone_type_text: give ref/target, or x/y to tap a field that is not in the element list (self-drawn input) and type there. Errors: no_focus = no input field holds focus (tap the field first); point_not_typed = nothing at that point took the text; needs_ime = the text could not be entered without touching the user\'s clipboard, try smaller parts or hand it to the user. Never copy text to the clipboard to read or move it.',
   'Sending, deleting, ordering and submitting go through the user\'s approval policy for that exact step on that exact screen (by default the user is asked once per step; a declined step must not be retried). Payment, passwords, captchas and verification codes are always handed to the user with phone_handoff, in every approval mode including no-approval. Never operate Hoshino itself. Call phone_finish when done.',
 ].join('\n');
 

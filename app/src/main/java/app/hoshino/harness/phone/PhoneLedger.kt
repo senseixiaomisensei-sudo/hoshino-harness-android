@@ -1,7 +1,6 @@
 // Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.
 package app.hoshino.harness.phone
 
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import dev.hoshino.bridge.phone.IHoshinoPhoneShell
@@ -10,8 +9,10 @@ import dev.hoshino.bridge.phone.IHoshinoPhoneShell
  * System state Hoshino borrows during a phone task and must give back (RT6, PH18):
  * - apps muted on the agent display (PLAY_AUDIO app-op): the original mode is written down before the
  *   change and restored when the task ends, and again when the helper comes back after a crash;
- * - the clipboard borrowed for a paste: when the process died mid-paste, our text is cleared on next start
- *   (the user's own clip is never written to disk, so it cannot be restored after a crash).
+ * - the clipboard borrowed for a paste (WP-2): only the helper (shell uid) reads and writes it, and it keeps the
+ *   user's clip in its own process, which outlives a crashed app. It restores by itself 10 s after a borrow the app
+ *   never returned; when the helper is reachable again after a crash we also ask it to restore right away.
+ *   The app never clears the clipboard itself (it cannot tell the user's clip from ours in the background).
  * Only package names and app-op modes are stored; no content.
  */
 object PhoneLedger {
@@ -60,10 +61,15 @@ object PhoneLedger {
     fun borrowClipboard(context: Context) { prefs(context).edit().putBoolean(KEY_CLIP, true).commit() }
     fun returnClipboard(context: Context) { prefs(context).edit().remove(KEY_CLIP).apply() }
 
-    /** On process start: a paste was interrupted, so our text may still be on the clipboard. */
-    fun recover(context: Context) {
-        if (!prefs(context).getBoolean(KEY_CLIP, false)) return
-        runCatching { context.getSystemService(ClipboardManager::class.java).clearPrimaryClip() }
+    fun clipboardBorrowed(context: Context): Boolean = prefs(context).getBoolean(KEY_CLIP, false)
+
+    /**
+     * A paste was interrupted by a crash: the helper still holds the user's clip, so ask it to put it back
+     * (a no-op when its watchdog already did, or nothing is borrowed). Without a helper nothing is touched.
+     */
+    fun recoverClipboard(context: Context, shell: IHoshinoPhoneShell?) {
+        if (!clipboardBorrowed(context) || shell == null) return
+        runCatching { shell.restoreClip() }
         returnClipboard(context)
     }
 }

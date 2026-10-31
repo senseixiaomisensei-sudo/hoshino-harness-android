@@ -57,6 +57,74 @@ Copyright 2026 wangzan101
   - `app/ui/AgentPip.kt`、`PipPhysics.kt` → `app/src/main/java/app/hoshino/harness/ui/chat/PhonePip.kt`
   - 没有移植：`core/cap/phone/{GesturePacing,TypingPacing,AppPacing}.kt`、`core/uistate/IdleScroll.kt`（规避式拟人，mika-gap §2 PL4）；`core/shell/WirelessDebuggingAutoOn.kt` 的静默开启与 `RecoveryPermissions` 的静默授权改为向导里逐项同意（PL3）；ML Kit 的 `PhoneOcr` 换成下面的开源 OCR（PL1）。
 
+### WP9-B 上下文与循环（`feat/m2.9-context-loop`）移植/改写的文件
+
+被移植或改写的文件头保留 `Portions derived from Mika … Apache-2.0. Modified by Hoshino Harness contributors.`。
+
+| 本仓库文件 | 对应 Mika 源文件 | 说明 |
+|---|---|---|
+| `plugins/hoshino-context/core.ts` | `core/agent/ContextCompressor.kt`、`core/context/StepSummary.kt`、`core/observation/Untrusted.kt` | 无模型检查点格式（目标/已确认事实/进展/下一步）、不可信内容包裹，改写为 TypeScript 并接入 dsh 压缩钩子 |
+| `plugins/hoshino-turn-policy/language.ts` | `core/agent/ReplyLanguage.kt` | 回答语言判定，逐条移植 |
+| `plugins/hoshino-turn-policy/rules.ts` | `core/agent/IntentGate.kt`、`core/agent/TurnPolicy.kt`、`core/agent/StopRules.kt`、`core/agent/StuckAdvice.kt`、`core/guard/GuardRules.kt`、`core/cap/sandbox/SandboxGuard.kt`、`core/model/ModelAccessErrors.kt`、`resources/prompts/roles/intent_gate.md`、`resources/prompts/feedback/loop.md` | 意图提示词、交答前提醒措辞、守卫阶梯、沙箱守卫、模型访问错误分类与中文原因 |
+| `plugins/hoshino-turn-policy/index.ts` | 同上 | 接入 dsh `tools/pre-execute`、`tools/post-execute`、`agent/turn-stopping`、`agent/request-error` |
+| `plugins/hoshino-outcome/index.ts` | `core/general/OutcomeTools.kt`、`core/agent/OutcomeJudge.kt`、`resources/prompts/roles/outcome_judge.md`、`resources/prompts/tools/end_not_done.md` | `end_not_done` 工具与结局判定 |
+| `plugins/hoshino-outcome/grounding.ts` | `core/verify/Grounding.kt` | 规则核对的轻量子集（引文、带单位/小数/三位以上的数、日期时刻、带数字的编号） |
+
+### 评测与度量（分支 feat/m2.9-eval，移植基线 0.1.13 / `688f59d5a18d99d0231504598da4059f3feb226e`）
+
+- 使用方式：
+  - 评测题集直接复制、不改一字：Mika `eval/tasks/**`（128 题）→ `eval/tasks/**`。JSON 不能写注释，出处与每个文件的 SHA-256 记在 `eval/provenance.json`；`EvalProvenanceTest` 守着「没登记改动的文件与 Mika 原文逐字节一致」。
+  - Kotlin 代码移植并改写（包名改为 `dev.hoshino.bridge.eval` / `dev.hoshino.bridge.metrics`，kotlinx.serialization 换成 org.json，运行记录从 Mika 的 `RunEvent` 换成 dsh 原版会话日志事件）。被移植或改写的文件头部保留：
+    `// Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.`
+- 移植文件清单（Mika 源文件 → 本仓库文件；Mika 路径相对其仓库根，`…/core/` 指 `core/src/main/kotlin/com/wangzan101/mika/core/`，`…/core-test/` 指 `core/src/test/kotlin/com/wangzan101/mika/core/`）：
+  - `eval/tasks/**/*.json` → `eval/tasks/**/*.json`（原样，128 题，SHA-256 见 `eval/provenance.json`）
+  - `eval/README.md` → `eval/README.md`（出题规矩、调优池/保留池、人工改判规则照抄；跑法改写为 Hoshino 与双跑）
+  - `…/core/eval/EvalTask.kt` → `core-bridge/src/main/java/dev/hoshino/bridge/eval/EvalTask.kt`
+  - `…/core/eval/Checks.kt`、`…/core/eval/BarrierSignals.kt` → `core-bridge/src/main/java/dev/hoshino/bridge/eval/Checks.kt`
+  - `…/core/eval/Scoring.kt` → `core-bridge/src/main/java/dev/hoshino/bridge/eval/Scoring.kt`
+  - `…/core/eval/EvalReport.kt` → `core-bridge/src/main/java/dev/hoshino/bridge/eval/EvalReport.kt`
+  - `…/core/eval/RunFacts.kt`、`…/core/eval/RecordedEvidence.kt` → `core-bridge/src/main/java/dev/hoshino/bridge/eval/DshRunFacts.kt`（改为从 dsh 会话日志取事实）
+  - `…/core/verify/Grounding.kt` → `core-bridge/src/main/java/dev/hoshino/bridge/eval/Grounding.kt`
+  - `…/core/record/RunMetrics.kt`（含 `RunStats`）→ `core-bridge/src/main/java/dev/hoshino/bridge/metrics/RunMetrics.kt`、`RunStats.kt`（口径照抄；输入换成 dsh 事件）
+  - `…/core/record/RunMetricsStore.kt` → `core-bridge/src/main/java/dev/hoshino/bridge/metrics/RunMetricsStore.kt`
+  - `app/src/main/java/com/wangzan101/mika/ui/RunMetricsUi.kt`（小结一行、展开、运行统计的窗口/复制/分享与文字口径）→ `core-bridge/src/main/java/dev/hoshino/bridge/metrics/RunSummaryFormat.kt`（文字）、`app/src/main/java/app/hoshino/harness/ui/chat/RunSummary.kt`（OB3 小结）、`app/src/main/java/app/hoshino/harness/ui/settings/RunStatsScreen.kt`（OB5 运行统计），均为 Compose 重写
+  - `…/core-test/eval/{TaskSetTest,EvalTaskTest,ChecksTest,ScoringTest,EvalReportTest,EvalReportMetricsTest,EvalReportTimingTest}.kt` → `core-bridge/src/test/java/dev/hoshino/bridge/eval/` 同名文件（按移植后的接口改写，断言保留）
+  - `…/core-test/verify/{GroundingClaimsTest,GroundingFormatsTest}.kt` → `core-bridge/src/test/java/dev/hoshino/bridge/eval/GroundingTest.kt`；`…/core-test/verify/GroundingNumbersTest.kt` → `GroundingNumbersTest.kt`
+  - `…/core-test/record/{RunMetricsTest,RunStatsTest,RunMetricsStoreTest}.kt` → `core-bridge/src/test/java/dev/hoshino/bridge/metrics/` 同名文件（RunMetricsTest 按 dsh 事件重写场景）
+  - `…/core-test/capability/PackageDependencyTest.kt` → `core-bridge/src/test/java/dev/hoshino/bridge/arch/ArchitectureGuardTest.kt`（规则换成本仓库的分层）
+  - `app/src/androidTest/java/com/wangzan101/mika/eval/EvalRunTest.kt`、`EvalProbes.kt` → `app/src/androidTest/java/app/hoshino/harness/eval/EvalRunTest.kt`、`EvalProbes.kt`（驱动换成 dsh 会话：`HarnessClient.send` + 事件流 + 会话日志；探针改用 UiAutomation/UiAutomator）
+- 未移植、本仓库新写（不带移植文件头）：`HoshinoCapabilities.kt`、`DshSessionLog.kt`、`RunTimingTracker.kt`、`DshRunFactsTest.kt`、`EvalProvenanceTest.kt`、`HoshinoCapabilitiesTest.kt`、`app/.../core/RunMetricsHub.kt`、`node-host/test/prompt-surface.test.mjs`（EV3）、`node-host/test/architecture.test.mjs`、`tools/eval/dual-run.py`、`tools/eval/compare.py`、`tools/license-gate.py`。
+
+### 剪贴板安全打字（分支 feat/m2.9-wp2-clipboard）
+
+- 使用方式：直接移植并改写，文件头部保留出处说明。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/.../cap/phone/shell/ShellClip.kt`（读/还原判断）、`ShellService.kt` 的 `setClipText/restoreClip/canReadClipboard/suppressOverlay/markSensitive` → `core-bridge/.../phone/shell/ShellClip.kt`（判断 + 新增可测的 `ClipSwap` 状态机）与 `PhoneShellService.kt`（shell 身份剪贴板、10 s 看门狗为本仓库新增）
+  - `app/src/test/.../cap/phone/shell/ShellClipTest.kt` → `core-bridge/src/test/.../phone/shell/ShellClipTest.kt`（另加 `ClipSwapTest`）
+  - `app/.../cap/phone/a11y/AndroidScreen.kt` 的 `typeText/typeAt/typeUnseen/inputText/inWebView`（思路）→ `app/.../phone/TypeFlow.kt`、`app/.../phone/AndroidPhoneScreen.kt`（逐字按键注入 `injectText` 为本仓库新增；不移植 `TypingPacing`）
+
+### 首配提速与自愈（分支 feat/m2.9-wp9-setup）
+
+- 使用方式：参照 Mika 的思路重新实现，不是逐行移植；自愈改为用户勾选后才生效，并在用户自己关闭无障碍时暂停。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `core-bridge/src/main/java/dev/hoshino/bridge/phone/shell/SelfHeal.kt` ← Mika `core/.../shell/AccessibilityRepair.kt`（等待/去掉再加回/最多 2 次/逐次拉长间隔）、`core/.../shell/RecoveryPolicy.kt`（退避与停止条件）、`app/.../cap/phone/setup/BuiltinShellRecovery.kt`（App 有 WRITE_SECURE_SETTINGS 时直接写系统设置）
+
+### 动作后等待与打开 App（分支 feat/m2.9-wp1-wait，移植基线 0.1.13 / `688f59d`）
+- 许可：Apache-2.0，全文见 `licenses/mika-LICENSE`。被移植或改写的文件头保留 `Portions derived from Mika … Apache-2.0. Modified by Hoshino Harness contributors.`。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/src/main/java/app/hoshino/harness/phone/ChangeWait.kt` ← Mika `app/src/main/java/com/wangzan101/mika/cap/phone/a11y/ChangeWait.kt`（安静窗口 400→250 ms、轮询 150→100 ms，结果改为说明哪一路信号变了）
+  - `app/src/test/java/app/hoshino/harness/phone/ChangeWaitTest.kt` ← Mika `app/src/test/java/com/wangzan101/mika/cap/phone/a11y/ChangeWaitTest.kt`（全部用例保留，另加慢页面/静态页用例）
+  - `AndroidPhoneScreen.watch`（动作前订阅事件、取树哈希与帧签名）← Mika `AndroidScreen.kt` 的 `verified()` / `withEventClock` / `EventClock` / `awaitChange`
+  - `core-bridge/src/main/java/dev/hoshino/bridge/phone/shell/ColdStart.kt`、`core-bridge/src/test/java/dev/hoshino/bridge/phone/shell/ColdStartTest.kt` ← Mika `ColdStart.kt` / `ColdStartTest.kt`；`PhoneShellService.restartApp/topActivity` ← Mika `ShellService.restartApp/topActivity`
+  - `app/src/main/java/app/hoshino/harness/phone/LaunchReady.kt` 参照 Mika `AndroidScreen.awaitOpened` 的思路重新实现（多了“过了闪屏才算打开”的判定）
+
+### 悬浮球、无极缩放预览与手动接管（分支 feat/m2.9-floating-ball）
+
+- 使用方式：参照 Mika 的浮层拖动规则改写（不是逐行移植）。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/src/main/java/com/wangzan101/mika/cap/phone/a11y/OverlayHost.kt`（`OverlayFrame.track`：越过系统触摸阈值才算拖动、按屏幕坐标计算位移）→ `app/src/main/java/app/hoshino/harness/phone/PhoneCapsule.kt`（面板标题栏拖动，文件头已有出处说明）
+- 新文件 `PreviewRelay.kt`、`PreviewGeometry.kt`、`ManualTakeover.kt`、`BallPanelModel.kt`、`FpsMath.kt`、`DisplayFps.kt` 为本项目原创，未移植 Mika 代码。
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy

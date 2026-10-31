@@ -7,6 +7,8 @@ android {
         versionCode = 212; versionName = "0.2.1-m2.8.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    // 仪器测试默认针对 debug；真机手机基准（tools/phone-bench）要量不可调试的 fast 包：-Phoshino.testBuildType=fast。
+    testBuildType = (project.findProperty("hoshino.testBuildType") as String?) ?: "debug"
     buildFeatures { compose = true; buildConfig = true }
     signingConfigs {
         getByName("debug") {
@@ -38,6 +40,7 @@ android {
         getByName("x86").assets.srcDir(layout.buildDirectory.dir("generated/runtimeAssets/x86_64").get().asFile)
         getByName("androidTestArm64").assets.srcDir(layout.buildDirectory.dir("generated/benchmarkAssets/arm64-v8a").get().asFile)
         getByName("androidTestX86").assets.srcDir(layout.buildDirectory.dir("generated/benchmarkAssets/x86_64").get().asFile)
+        getByName("androidTest").assets.srcDir(rootProject.file("eval")) // EV2 评测题集（tasks/…），EvalRunTest 从测试包 assets 读
     }
     androidResources { noCompress += listOf("txz","tgz") }
     packaging { jniLibs { useLegacyPackaging = true }; resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }

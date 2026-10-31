@@ -31,5 +31,29 @@ interface IHoshinoPhoneShell {
     void releaseAll() = 14;
     // "builtin" or "shizuku": which host runs this service.
     String host() = 15;
+
+    // ---- WP-2 clipboard / typing: transaction codes 16-20 belong to WP-2 (19-20 reserved). ----
+    // Results are never 0: an older helper answers unknown codes with an empty reply, which reads as 0.
+    // Puts text on the clipboard as the shell, only if the user's current clip could be read first (it is kept
+    // in this process for restoreClip). 1=set 2=unreadable (clipboard left untouched) 3=failed.
+    // Marked sensitive (A13+) and with the "copied" overlay suppressed. Restored automatically after 10 s if the
+    // app never calls restoreClip (e.g. it crashed mid-paste).
+    int setClipText(String text) = 16;
+    // Gives the user's clip back (cleared if it was empty); left alone if the user copied something else
+    // meanwhile or it cannot be read now. No-op when nothing is borrowed.
+    void restoreClip() = 17;
+    // Types printable text key by key into an own display (no clipboard). 1=typed 2=some character has no
+    // key, nothing sent 3=failed.
+    int injectText(int displayId, String text) = 18;
+
+    // ---- WP-1 wait / open app: transaction codes 41-45 belong to WP-1 (43-45 reserved). ----
+    // Class name of the top activity of the top task on an own display; null for other displays, no task, or an
+    // older helper (unknown codes answer an empty reply, which reads as null).
+    String topActivity(int displayId) = 41;
+    // launch_app cold=true. Never 0 (an older helper answers 0): 10=force-stopped and started fresh
+    // 11=started warm instead (the app has a task outside the agent display, so its process was not stopped)
+    // 1=user is using it on the main screen (neither stopped nor started) 2=no launcher entry 3=error.
+    // Own displays only.
+    int restartApp(int displayId, String packageName) = 42;
     void destroy() = 16777114;
 }

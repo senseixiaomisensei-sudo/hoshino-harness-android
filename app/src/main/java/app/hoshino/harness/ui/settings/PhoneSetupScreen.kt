@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -26,7 +27,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.hoshino.harness.phone.PhoneAccessibilityService
+import app.hoshino.harness.phone.FpsMath
 import app.hoshino.harness.phone.PhoneConsent
+import app.hoshino.harness.phone.PhoneDisplayFps
 import app.hoshino.harness.phone.PhoneConsentState
 import app.hoshino.harness.phone.PhoneController
 import app.hoshino.harness.phone.ocr.OcrModels
@@ -34,10 +37,12 @@ import app.hoshino.harness.phone.setup.PairingCoordinator
 import app.hoshino.harness.phone.setup.PairingCopy
 import app.hoshino.harness.phone.setup.PairingNotifier
 import app.hoshino.harness.phone.setup.PhoneSetupFlow
+import app.hoshino.harness.phone.setup.SelfHealSettings
 import app.hoshino.harness.ui.components.BtnStyle
 import app.hoshino.harness.ui.components.GroupCard
 import app.hoshino.harness.ui.components.HButton
 import app.hoshino.harness.ui.components.HCheckbox
+import app.hoshino.harness.ui.components.HSlider
 import app.hoshino.harness.ui.components.HTextField
 import app.hoshino.harness.ui.components.Hairline
 import app.hoshino.harness.ui.components.ListRow
@@ -55,9 +60,11 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
- * 「设置手机操作」向导 (PH22). One page, steps in order, each ticks itself from what the system reports; the
- * consent step lists every system change Hoshino could make and nothing is done before the user ticks it
- * (mika-gap §2 PL3, "自动打开无线调试" unticked by default). "稍后再说" is always possible: leaving the page.
+ * 「设置手机操作」向导 (PH22, WP-9). The consent page is the first screen: every system change Hoshino could make
+ * is listed, all unticked (mika-gap §2 PL3), and "按所选开始" saves the ticks and goes straight to the next system
+ * page. After pairing, the helper switches the accessibility service on only when the user ticked that item, so
+ * the user normally leaves Hoshino at most twice or three times (D-1: 首配中位 ≤ 120 s). Steps tick themselves from
+ * what the system reports; "稍后再说" is always possible: leaving the page.
  */
 @Composable
 fun PhoneSetupScreen(onBack: () -> Unit) {
@@ -76,13 +83,24 @@ fun PhoneSetupScreen(onBack: () -> Unit) {
     val ocrState by remember { OcrModels.stateFlow(context) }.collectAsState()
     val ocrProgress by OcrModels.progress.collectAsState()
     val issues by services.setupIssues.collectAsState()
+    val selfHeal = remember { SelfHealSettings.of(context) }
+    val healSaved by selfHeal.wanted.collectAsState()
+    val healPaused by selfHeal.paused.collectAsState()
+    val observation by services.accessibilityObservation.collectAsState()
+    val lastHeal by remember { services.lastHeal }.collectAsState()
     var draft by remember(saved) { mutableStateOf(saved.copy(confirmed = true)) }
+    var healDraft by remember(healSaved) { mutableStateOf(healSaved) }
+    var moreItems by remember { mutableStateOf(false) }
+    var editConsent by remember { mutableStateOf(false) }
+    var helperUpAt by remember { mutableStateOf<Long?>(null) }
     var userSaysDeveloperOn by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
     var port by remember { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) { while (true) { delay(1500); tick++ } }
+    LaunchedEffect(Unit) { while (true) { delay(1000); tick++ } }
+    val helperUp = status == BuiltinShellStatus.Running || channel != PhoneChannel.None
+    LaunchedEffect(helperUp, a11y) { helperUpAt = if (helperUp && a11y == null) SystemClock.elapsedRealtime() else null }
 
     val input = remember(status, channel, a11y, saved, ocrState, userSaysDeveloperOn, tick) {
         PhoneSetupFlow.Input(
@@ -96,10 +114,30 @@ fun PhoneSetupScreen(onBack: () -> Unit) {
             accessibility = a11y != null,
             ocrReady = ocrState == OcrModels.State.Ready,
             userSaysDeveloperOn = userSaysDeveloperOn,
+            autoAccessibility = saved.enableAccessibility,
+            helperUpWithoutA11yMs = helperUpAt?.let { SystemClock.elapsedRealtime() - it },
         )
     }
     val marks = PhoneSetupFlow.marks(input)
     val current = PhoneSetupFlow.current(input)
+    val primary = PhoneSetupFlow.primary(input)
+
+    fun go(p: PhoneSetupFlow.Primary) {
+        when (p) {
+            PhoneSetupFlow.Primary.OpenDeveloperOptions -> open(context, PhoneSetupFlow.developerOptionsPage())
+            PhoneSetupFlow.Primary.StartPairing -> { pairing.begin(); open(context, PhoneSetupFlow.wirelessDebuggingPage()) }
+            PhoneSetupFlow.Primary.OpenAccessibility -> open(context, PhoneSetupFlow.accessibilityPage())
+            else -> Unit
+        }
+    }
+
+    fun confirm() {
+        consent.save(draft)
+        selfHeal.save(healDraft && draft.enableAccessibility)
+        scope.launch { services.applyConsent() }
+        message = "已保存"
+        go(PhoneSetupFlow.afterConsent(input.copy(consentConfirmed = true, autoAccessibility = draft.enableAccessibility)))
+    }
 
     PageScaffold("设置手机操作", onBack, subtitle = "让 Hoshino 在后台屏上替你操作 App") {
         Text(
@@ -112,18 +150,45 @@ fun PhoneSetupScreen(onBack: () -> Unit) {
             Hint(if (Build.VERSION.SDK_INT >= 34) "Android ${Build.VERSION.RELEASE}：后台屏有独立焦点，你打字不会被打断。" else if (Build.VERSION.SDK_INT == 33) "Android 13：可以用，但后台屏输入时可能抢走你正在用的输入框焦点，推荐 14+。" else "需要 Android 13 或更高版本。")
         }
 
-        Step("2 · 你同意 Hoshino 做哪些系统改动", marks[PhoneSetupFlow.Step.Consent]) {
-            Hint("下面每一项都不会在你勾选前发生。可以随时回来改；取消勾选后不再自动执行（已经打开的系统开关请在系统设置里关）。")
-            ConsentRow("配对后自动开启 Hoshino 的无障碍服务", "用助手直接写入无障碍开关，省去「受限制的设置」的几步。推荐。", draft.enableAccessibility) { draft = draft.copy(enableAccessibility = it) }
-            ConsentRow("授予 Hoshino「修改安全设置」权限（WRITE_SECURE_SETTINGS）", "只用于下面「自动打开无线调试」。", draft.writeSecureSettings) { draft = draft.copy(writeSecureSettings = it, autoWirelessDebugging = it && draft.autoWirelessDebugging) }
-            ConsentRow("连上 Wi-Fi 后自动打开无线调试", "重启或换网后系统会关掉无线调试；勾选后 Hoshino 会在每个网络上尝试打开一次（每次都会通知你并记审计）。打开的调试端口只对本机配对过的设备可用。默认不勾。", draft.autoWirelessDebugging, enabled = draft.writeSecureSettings, danger = true) { draft = draft.copy(autoWirelessDebugging = it) }
-            ConsentRow("把 Hoshino 加入电池优化白名单", "长任务不会被省电策略中断。", draft.batteryExemption) { draft = draft.copy(batteryExemption = it) }
-            ConsentRow("任务期间把后台屏上的 App 静音", "改该 App 的播放声音权限，任务结束或崩溃后恢复原样。", draft.muteAgentApps) { draft = draft.copy(muteAgentApps = it) }
-            ConsentRow("常驻悬浮胶囊", "没有任务时也显示，双击胶囊把此刻屏幕发给 Hoshino。", draft.capsuleAlways) { draft = draft.copy(capsuleAlways = it) }
-            ConsentRow("允许 Agent 操作 Hoshino 自己", "默认拒绝：任何模式下 Agent 都不能点 Hoshino 的界面。", draft.allowSelf, danger = true) { draft = draft.copy(allowSelf = it) }
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HButton("保存并应用", { consent.save(draft); scope.launch { services.applyConsent() }; message = "已保存" }, style = BtnStyle.Primary)
+        if (current != PhoneSetupFlow.Step.Version && current != PhoneSetupFlow.Step.Done) {
+            SectionLabel("下一步") { Text("还要离开 Hoshino 约 ${PhoneSetupFlow.remainingTrips(input)} 次", style = t.caption, color = c.text2) }
+            GroupCard {
+                Column(Modifier.padding(vertical = 6.dp)) {
+                    Hint(primaryHint(primary))
+                    when (primary) {
+                        PhoneSetupFlow.Primary.Confirm -> Unit // the button sits under the consent items below
+                        PhoneSetupFlow.Primary.WaitAutoAccessibility -> ThinProgress(((input.helperUpWithoutA11yMs ?: 0L).toFloat() / PhoneSetupFlow.AUTO_A11Y_WAIT_MS).coerceIn(0f, 1f), Modifier.fillMaxWidth().padding(16.dp))
+                        PhoneSetupFlow.Primary.Done, PhoneSetupFlow.Primary.Unsupported -> Unit
+                        else -> HButton(primaryLabel(primary), { go(primary) }, style = BtnStyle.Primary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                    }
+                }
             }
+        }
+
+        Step("2 · 你同意 Hoshino 做哪些系统改动", marks[PhoneSetupFlow.Step.Consent]) {
+          if (saved.confirmed && !editConsent) {
+            val on = listOf(saved.enableAccessibility, selfHeal.consent(), saved.batteryExemption, saved.writeSecureSettings, saved.autoWirelessDebugging, saved.muteAgentApps, saved.capsuleAlways, saved.allowSelf).count { it }
+            ListRow("已同意 $on 项", subtitle = "点这里查看或修改", onClick = { editConsent = true }, showChevron = true)
+          } else {
+            Hint("每一项默认不勾，勾选前都不会发生；付款、密码、验证码永远交给你自己。可以随时回来改；取消勾选后不再自动执行（已经打开的系统开关请在系统设置里关）。")
+            ConsentRow("配对后自动开启 Hoshino 的无障碍服务（推荐）", "配对成功后由助手直接写入无障碍开关，你不用进系统无障碍设置，也不用处理「受限制的设置」。", draft.enableAccessibility) {
+                draft = draft.copy(enableAccessibility = it); if (!it) healDraft = false
+            }
+            ConsentRow("清理后台或无障碍被系统关掉后自动恢复（推荐）", "HyperOS 一键清理会关掉 Hoshino 的无障碍：勾选后助手在约 10 秒内把它重新打开并重连（每次写审计；同一个 10 分钟内最多 3 次）。你自己在系统里关掉无障碍时不会被打开回去。", healDraft, enabled = draft.enableAccessibility) { healDraft = it }
+            ConsentRow("把 Hoshino 加入电池优化白名单（推荐）", "长任务不会被省电策略中断。", draft.batteryExemption) { draft = draft.copy(batteryExemption = it) }
+            ListRow(if (moreItems) "收起其它授权项" else "其它授权项（4 项，默认不勾）", onClick = { moreItems = !moreItems }, showChevron = true)
+            if (moreItems) {
+                ConsentRow("授予 Hoshino「修改安全设置」权限（WRITE_SECURE_SETTINGS）", "用于「自动打开无线调试」；助手不在时也能自己恢复无障碍。", draft.writeSecureSettings) { draft = draft.copy(writeSecureSettings = it, autoWirelessDebugging = it && draft.autoWirelessDebugging) }
+                ConsentRow("连上 Wi-Fi 后自动打开无线调试", "重启或换网后系统会关掉无线调试；勾选后 Hoshino 会在每个网络上尝试打开一次（每次都会通知你并记审计）。打开的调试端口只对本机配对过的设备可用。默认不勾。", draft.autoWirelessDebugging, enabled = draft.writeSecureSettings, danger = true) { draft = draft.copy(autoWirelessDebugging = it) }
+                ConsentRow("任务期间把后台屏上的 App 静音", "改该 App 的播放声音权限，任务结束或崩溃后恢复原样。", draft.muteAgentApps) { draft = draft.copy(muteAgentApps = it) }
+                ConsentRow("常驻悬浮胶囊", "没有任务时也显示，双击胶囊把此刻屏幕发给 Hoshino。", draft.capsuleAlways) { draft = draft.copy(capsuleAlways = it) }
+                ConsentRow("允许 Agent 操作 Hoshino 自己", "默认拒绝：任何模式下 Agent 都不能点 Hoshino 的界面。", draft.allowSelf, danger = true) { draft = draft.copy(allowSelf = it) }
+            }
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!saved.confirmed) HButton("按所选开始", { confirm() }, style = BtnStyle.Primary)
+                else HButton("保存并应用", { consent.save(draft); selfHeal.save(healDraft && draft.enableAccessibility); scope.launch { services.applyConsent() }; message = "已保存"; editConsent = false }, style = BtnStyle.Primary)
+            }
+          }
             if (issues.isNotEmpty()) Hint("这些项目没能执行：" + issues.joinToString("、"), warn = true)
         }
 
@@ -158,8 +223,14 @@ fun PhoneSetupScreen(onBack: () -> Unit) {
         }
 
         Step("5 · 无障碍服务", marks[PhoneSetupFlow.Step.Accessibility]) {
-            Hint(if (a11y != null) "已开启。" else if (saved.enableAccessibility && input.helperRunning) "已同意自动开启，助手运行后会自动打开；没生效就手动开。" else "在系统「无障碍」里找到「Hoshino 手机操作」打开。")
-            if (a11y == null) HButton("打开无障碍设置", { open(context, PhoneSetupFlow.accessibilityPage()) }, compact = true, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            Hint(when {
+                a11y != null -> "已开启。"
+                PhoneSetupFlow.autoPending(input) -> "助手正在为你打开无障碍服务…"
+                saved.enableAccessibility && input.helperRunning -> "自动开启没有生效：请手动打开（HyperOS 可能要先在应用信息里「允许受限制的设置」）。"
+                saved.enableAccessibility -> "已同意自动开启：配对成功后助手会自动打开。"
+                else -> "在系统「无障碍」里找到「Hoshino 手机操作」打开。"
+            })
+            if (a11y == null && !PhoneSetupFlow.autoPending(input)) HButton("打开无障碍设置", { open(context, PhoneSetupFlow.accessibilityPage()) }, compact = true, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         }
 
         Step("6 · 文字识别（可选，开源离线）", marks[PhoneSetupFlow.Step.Ocr]) {
@@ -168,6 +239,35 @@ fun PhoneSetupScreen(onBack: () -> Unit) {
                 OcrModels.State.Ready -> Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) { Tag("已就绪", color = c.success); HButton("删除模型", { OcrModels.delete(context) }, style = BtnStyle.Ghost, compact = true) }
                 OcrModels.State.Downloading -> ThinProgress(ocrProgress, Modifier.fillMaxWidth().padding(16.dp))
                 else -> HButton("下载文字识别模型（15.6 MB）", { scope.launch { message = OcrModels.download(context)?.let { "下载失败：$it" } ?: "文字识别已就绪" } }, compact = true, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            }
+        }
+
+        SectionLabel("虚拟屏帧率")
+        GroupCard {
+            Column(Modifier.padding(vertical = 6.dp)) {
+                val fpsSetting = remember { PhoneDisplayFps.of(context) }
+                val fps by fpsSetting.fps.collectAsState()
+                var fpsDraft by remember(fps) { mutableStateOf(fps.toFloat()) }
+                Hint("后台屏画面的采集与悬浮球预览每秒最多 ${FpsMath.snap(fpsDraft)} 帧（${FpsMath.MIN_FPS}–${FpsMath.MAX_FPS}，默认 ${FpsMath.DEFAULT_FPS}）。越高越流畅也越耗电；悬浮面板收起、没人看时自动降到最低（不画预览，采集最多 ${FpsMath.IDLE_CAPTURE_FPS} 帧）。")
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    HSlider(fpsDraft, { fpsDraft = it; fpsSetting.set(FpsMath.snap(it)) }, FpsMath.MIN_FPS.toFloat()..FpsMath.MAX_FPS.toFloat(), steps = FpsMath.SLIDER_STEPS)
+                }
+                val zeroCopy by fpsSetting.zeroCopy.collectAsState()
+                ConsentRow("实验：零拷贝预览（GPU 直出）", "悬浮面板的画面不经过 CPU 拷贝，放大也清晰、更省电；个别机型可能不兼容，出问题关掉即可。下次任务开始时生效。", zeroCopy) { fpsSetting.setZeroCopy(it) }
+            }
+        }
+
+        SectionLabel("保活与自愈")
+        GroupCard {
+            Column(Modifier.padding(vertical = 6.dp)) {
+                Hint(when {
+                    !selfHeal.consent() -> "未开启自动恢复：清理后台后需要你手动重新打开无障碍。"
+                    healPaused -> "你在系统里关掉了无障碍，自动恢复已暂停；重新打开无障碍或在上面重新保存后恢复。"
+                    else -> "已开启：无障碍被清理后约 10 秒内自动恢复，助手断线会自动重连。"
+                })
+                Hint("无障碍：" + (if (observation.connected) "运行中" else if (observation.listed) "已开启但没在运行" else "未开启") + " · 助手：" + statusText(status))
+                lastHeal?.let { h -> Hint("上次自动恢复：" + (if (h.restored) "成功" else "失败") + (if (h.byHelper) "（助手在 Hoshino 被清理后完成）" else "（尝试 ${h.attempts} 次）")) }
+                Hint("任务进行中 Hoshino 保持前台服务；付款、密码、验证码仍然交给你。")
             }
         }
 
@@ -214,6 +314,23 @@ private fun statusText(s: BuiltinShellStatus) = when (s) {
     BuiltinShellStatus.Running -> "助手运行中"
     is BuiltinShellStatus.Failed -> "失败"
     BuiltinShellStatus.Unsupported -> "系统版本不支持"
+}
+
+private fun primaryLabel(p: PhoneSetupFlow.Primary) = when (p) {
+    PhoneSetupFlow.Primary.OpenDeveloperOptions -> "打开开发者选项"
+    PhoneSetupFlow.Primary.StartPairing -> "去打开无线调试并配对"
+    PhoneSetupFlow.Primary.OpenAccessibility -> "打开无障碍设置"
+    else -> "继续"
+}
+
+private fun primaryHint(p: PhoneSetupFlow.Primary) = when (p) {
+    PhoneSetupFlow.Primary.Confirm -> "先在下面勾选你同意的项目（都不勾也可以），再点「按所选开始」，会直接带你去下一步的系统页面。"
+    PhoneSetupFlow.Primary.OpenDeveloperOptions -> "在「全部参数与信息」里连点 7 次「OS 版本」打开开发者选项，然后回来。"
+    PhoneSetupFlow.Primary.StartPairing -> "打开「无线调试」，点「使用配对码配对设备」；配对码会自动读到，或在通知里填 6 位数字。"
+    PhoneSetupFlow.Primary.WaitAutoAccessibility -> "配对成功，助手正在打开无障碍服务…"
+    PhoneSetupFlow.Primary.OpenAccessibility -> "在系统「无障碍」里打开「Hoshino 手机操作」。"
+    PhoneSetupFlow.Primary.Done -> "手机操作已就绪。"
+    PhoneSetupFlow.Primary.Unsupported -> "需要 Android 13 或更高版本。"
 }
 
 private fun stepName(s: PhoneSetupFlow.Step) = when (s) {

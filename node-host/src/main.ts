@@ -73,6 +73,12 @@ row('workspace-controller', 'api-workspace-controller');
 row('terminal-controller', 'api-terminal-controller', { shell: { path: '/bin/bash', name: 'bash', args: ['--noprofile', '--norc', '-i'] }, unattendedTimeoutMs: 0 });
 for (const id of ['android-credentials', 'android-policy', 'android-device-info', 'android-ui', 'android-shizuku', 'hoshino-m2', 'hoshino-self', 'android-api']) rows.push({ id, name: resolve(plugins, id, 'index.js') });
 rows.push({ id: 'android-phone', name: resolve(plugins, 'android-phone', 'index.js') });
+// WP9-B context & loop quality: original dsh packages (locked version, unmodified) + Hoshino plugins.
+row('compaction-tool-result-pruner'); row('compaction-image-offload');
+rows.push({ id: 'compaction', name: resolve(plugins, 'hoshino-context', 'compaction.js'), config: { thresholdRatio: 0.7, headroomTokens: 4096, maxTokens: 8192, retainRatio: 0.16, compactionRetries: 1, maxOverflowRetries: 1 } });
+row('command-compact'); row('repeat-tool-reminder', 'repeat-tool-reminder', { thresholds: [3, 5, 8], exclude: ['todo_write', 'ask_user'] }); row('tool-call-timeout-policy');
+row('time-context', 'time-context', { refreshIntervalMs: 300000, ...(((tz) => { try { return tz ? (new Intl.DateTimeFormat('en', { timeZone: tz }), { timeZone: tz }) : {}; } catch { return {}; } })((bootstrap as { timeZone?: string }).timeZone)) });
+for (const id of ['hoshino-context', 'hoshino-turn-policy', 'hoshino-outcome']) rows.push({ id, name: resolve(plugins, id, 'index.js') });
 const configPath = resolve(bootstrap.home, 'mobile.cordis.yml');
 await writeFile(configPath, JSON.stringify(rows));
 let bootContext: Context | undefined;

@@ -54,6 +54,13 @@ test('setup errors surface with the setup hint; steps are validated before reach
   assert.throws(() => checkSteps([{action: 'rm'}]), /unknown action/);
   assert.throws(() => checkSteps(Array.from({length: 21}, () => ({action: 'back'}))), /1\.\.20/);
   assert.deepEqual(stepFor('type', {text: 'hi', enter: true, ref: 'e2', junk: 1}), {action: 'type', ref: 'e2', text: 'hi', enter: true});
+  // WP-2 typeAt: a point reaches Android for type/clear (the field may be missing from the element list).
+  assert.deepEqual(stepFor('type', {text: 'hi', x: 500, y: 300}), {action: 'type', x: 500, y: 300, text: 'hi'});
+  assert.deepEqual(stepFor('clear', {x: 10, y: 20}), {action: 'clear', x: 10, y: 20});
+  // WP-1 A-5: cold reaches Android only for open_app.
+  assert.deepEqual(stepFor('open_app', {app: 'com.x', cold: true}), {action: 'open_app', app: 'com.x', cold: true});
+  assert.deepEqual(stepFor('open_app', {app: 'com.x'}), {action: 'open_app', app: 'com.x'});
+  assert.deepEqual(stepFor('tap', {ref: 'e1', cold: true}), {action: 'tap', ref: 'e1'});
   assert.equal(render({ok: true, screen: 'screen x'}), '{"ok":true}\nscreen x');
 });
 
@@ -111,4 +118,90 @@ test('no-approval: an irreversible step proceeds without a card and is audited; 
     const other = await approve({...irreversible, sessionId: 'other'});
     assert.equal(cards, 1); assert.equal(other.approved, false);
   } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+// WP-4 (B-1): composite read tools — registration (strict schemas, the plugin must still load), argument checks before
+// Android is called, and the body that reaches the Android `phone` entry.
+import {apply as applyPhone} from '../dist/plugins/android-phone/index.js';
+import {READ_TOOLS, readArgs} from '../dist/plugins/android-phone/read.js';
+
+function phonePlugin(reply = () => ({ok: true, screen: 'e9 btn "加入购物车" @840,440 click'})) {
+  const tools = new Map(); const calls = [];
+  const ctx = {
+    tools: {register: t => tools.set(t.name, t)},
+    androidBridge: {call: async (method, body) => { calls.push({method, body: structuredClone(body)}); return reply(body); }},
+    attachments: {}, llm: {}, agents: {}, systemPrompt: {context: () => {}},
+  };
+  applyPhone(ctx);
+  return {tools, calls};
+}
+const exec = {agent: {id: 'sess-1'}, signal: new AbortController().signal};
+const READ_NAMES = ['phone_query', 'phone_extract', 'phone_find', 'phone_collect'];
+
+test('WP-4 read tools register with strict schemas next to the existing phone tools', () => {
+  const {tools} = phonePlugin();
+  for (const name of [...READ_NAMES, 'phone_observe', 'phone_do_steps', 'phone_launch_app']) assert.ok(tools.has(name), `${name} registered`);
+  // dsh-tools builds the top-level object itself; every object nested in it must declare additionalProperties (JsonSchemaError otherwise).
+  const strict = (schema, path, top = false) => {
+    if (!top && schema && typeof schema === 'object' && schema.type === 'object') assert.ok('additionalProperties' in schema, `${path} must declare additionalProperties`);
+    for (const [k, v] of Object.entries(schema?.properties ?? {})) strict(v, `${path}.${k}`);
+    if (schema?.items) strict(schema.items, `${path}[]`);
+  };
+  for (const name of READ_NAMES) {
+    const t = tools.get(name);
+    strict(t.parameters, name, true);
+    for (const [k, v] of Object.entries(t.parameters.properties)) assert.ok(['string', 'number'].includes(v.type), `${name}.${k} is a flat string/number argument`);
+    assert.ok(t.description.length <= 240, `${name} description stays short (${t.description.length})`);
+    assert.equal(t.parameters.required, undefined, `${name}: every argument is optional`);
+  }
+  assert.deepEqual(tools.get('phone_collect').parameters.properties.direction.enum, ['down', 'up']);
+  assert.deepEqual(tools.get('phone_extract').parameters.properties.mode.enum, ['text', 'rows', 'form']);
+  assert.deepEqual(READ_TOOLS.map(t => t.name), READ_NAMES);
+});
+
+test('WP-4 read tools: schema rejects mistyped arguments before anything runs; unknown ones never reach Android', async () => {
+  const {tools, calls} = phonePlugin();
+  await assert.rejects(tools.get('phone_collect').execute({max_items: 'many'}, exec), /max_items|number/i);
+  await assert.rejects(tools.get('phone_collect').execute({direction: 'left'}, exec), /direction|enum|one of/i);
+  assert.equal(calls.length, 0, 'nothing reached Android');
+  await tools.get('phone_query').execute({text: '发送', junk: 1, sessionId: 'other'}, exec);
+  assert.deepEqual(calls.at(-1).body, {action: 'query', sessionId: 'sess-1', text: '发送'});
+});
+
+test('WP-4 read tools: plugin-side checks mirror Android (ScreenQueries.kt) and the body carries only what was given', async () => {
+  const {tools, calls} = phonePlugin();
+  await assert.rejects(tools.get('phone_query').execute({}, exec), /at least one of text, id, role, inside/);
+  await assert.rejects(tools.get('phone_find').execute({role: 'btn', max_scrolls: 31}, exec), /max_scrolls must be an integer 0\.\.30/);
+  await assert.rejects(tools.get('phone_collect').execute({max_items: 1.5}, exec), /max_items must be an integer/);
+  await assert.rejects(tools.get('phone_collect').execute({max_items: 301}, exec), /1\.\.300/);
+  await assert.rejects(tools.get('phone_extract').execute({from_y: 500, to_y: 520}, exec), /at least 50 above/);
+  await assert.rejects(tools.get('phone_collect').execute({cursor: 'c1.down.xyz'}, exec), /bad cursor/);
+  await assert.rejects(tools.get('phone_collect').execute({direction: 'down', cursor: 'c1.up.0123abcd'}, exec), /other direction/);
+  assert.equal(calls.length, 0);
+
+  const out = await tools.get('phone_query').execute({text: '加入购物车', inside: '商品B'}, exec);
+  assert.equal(out, '{"ok":true}\ne9 btn "加入购物车" @840,440 click');
+  assert.deepEqual(calls.at(-1), {method: 'phone', body: {action: 'query', sessionId: 'sess-1', text: '加入购物车', inside: '商品B'}});
+  await tools.get('phone_collect').execute({cursor: 'c1.up.0123abcd.89abcdef', max_items: 40}, exec);
+  assert.deepEqual(calls.at(-1).body, {action: 'collect', sessionId: 'sess-1', direction: 'up', max_items: 40, cursor: 'c1.up.0123abcd.89abcdef'}, 'direction follows the cursor');
+  await tools.get('phone_extract').execute({}, exec);
+  assert.deepEqual(calls.at(-1).body, {action: 'extract', sessionId: 'sess-1'});
+  await tools.get('phone_find').execute({text: '设置', direction: 'up'}, exec);
+  assert.deepEqual(calls.at(-1).body, {action: 'find', sessionId: 'sess-1', text: '设置', direction: 'up'});
+  assert.deepEqual(readArgs('collect', {from_y: 100, to_y: 900}), {action: 'collect', from_y: 100, to_y: 900});
+  assert.throws(() => readArgs('scroll', {}), /unknown read action/);
+});
+
+test('WP-4 read tools: a collect result renders as one JSON line plus the rows; setup errors keep the setup hint', async () => {
+  const rows = 'a1b2c3d4 张三: 明天几点？\n0f0f0f0f 10点\n0f0f0f0f-2 10点';
+  const {tools} = phonePlugin(() => ({ok: true, items: 3, screens: 2, scrolls: 1, stop: 'end', app: 'com.tencent.mm', screen: rows}));
+  const out = await tools.get('phone_collect').execute({direction: 'up'}, exec);
+  const [head, ...lines] = out.split('\n');
+  assert.deepEqual(JSON.parse(head), {ok: true, items: 3, screens: 2, scrolls: 1, stop: 'end', app: 'com.tencent.mm'});
+  assert.equal(lines.length, 3);
+  const notReady = phonePlugin(() => ({ok: false, error: 'Hoshino 的无障碍服务没有开启', code: 'accessibility', setup: '设置 → 设置手机操作'}));
+  await assert.rejects(notReady.tools.get('phone_collect').execute({}, exec), /设置手机操作/);
+  // find that did not find is a normal result for the model, not an exception.
+  const miss = phonePlugin(() => ({ok: false, found: false, total: 0, scrolls: 4, stop: 'end', detail: 'content stopped moving'}));
+  assert.match(await miss.tools.get('phone_find').execute({text: '不存在'}, exec), /"found":false/);
 });

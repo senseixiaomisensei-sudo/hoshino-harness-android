@@ -3,26 +3,36 @@ package dev.hoshino.bridge.phone.shell
 
 import android.annotation.SuppressLint
 import android.app.ActivityOptions
+import android.app.AppOpsManager
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.os.Binder
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.Parcel
+import android.os.PersistableBundle
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
 import android.view.InputDevice
 import android.view.InputEvent
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
 import dev.hoshino.bridge.phone.IHoshinoPhoneShell
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.system.exitProcess
 
@@ -47,6 +57,16 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
     @SuppressLint("PrivateApi")
     private val displayManager: DisplayManager =
         DisplayManager::class.java.getDeclaredConstructor(Context::class.java).apply { isAccessible = true }.newInstance(context)
+
+    // Same reason: the clipboard must be used as com.android.shell. The system honours the "no copied overlay"
+    // extra only for clips set by the shell, and reads/writes in the background are allowed for the shell uid.
+    private val clipboard: ClipboardManager by lazy {
+        ClipboardManager::class.java.getDeclaredConstructor(Context::class.java, Handler::class.java)
+            .apply { isAccessible = true }.newInstance(context, Handler(Looper.getMainLooper() ?: Looper.myLooper()!!))
+    }
+    private val clipLock = Any()
+    private val clip = ClipSwap(AndroidClipStore())
+    private val clipWatchdog = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "hoshino-clip-watchdog").apply { isDaemon = true } }
 
     private val taskManager: Any by lazy { Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null)!! }
 
@@ -96,6 +116,36 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
         }
         if (ok) START_OK else START_ERROR
     }
+
+    /**
+     * launch_app cold=true (A-5, WP-1). Force-stops the app only when every task of it is on this agent display
+     * ([ColdStart]); otherwise starts it normally. Never touches the main screen or a display we do not own.
+     */
+    override fun restartApp(displayId: Int, packageName: String): Int = synchronized(launchLock) {
+        if (!ownDisplay(displayId)) return START_ERROR
+        val decision = try {
+            val displayField = TASK_INFO.getField("displayId")
+            val taskDisplays = allTasks().filter { packageName in packagesOf(it) }.map { displayField.getInt(it) }
+            ColdStart.decide(taskDisplays, displayId, inUseOnMainScreen(packageName))
+        } catch (t: Throwable) {
+            Log.e(TAG, "cannot inspect tasks", t)
+            return START_ERROR
+        }
+        if (context.packageManager.getLaunchIntentForPackage(packageName) == null) return START_NOT_FOUND
+        when (decision) {
+            ColdStart.IN_USE -> START_IN_USE_ON_MAIN
+            ColdStart.WARM -> startApp(displayId, packageName).let { if (it == START_OK) RESTART_WARM else it }
+            ColdStart.RESTART -> {
+                if (sh("am", "force-stop", "--user", "current", packageName).first != 0) return START_ERROR
+                startApp(displayId, packageName).let { if (it == START_OK) RESTART_COLD else it }
+            }
+        }
+    }
+
+    override fun topActivity(displayId: Int): String? = try {
+        if (!ownDisplay(displayId)) null
+        else tasksOn(displayId).firstOrNull()?.let { (TASK_INFO.getField("topActivity").get(it) as? ComponentName)?.className }
+    } catch (t: Throwable) { null }
 
     private fun packagesOf(task: Any): List<String> = listOf("baseActivity", "topActivity").mapNotNull {
         (TASK_INFO.getField(it).get(task) as? ComponentName)?.packageName
@@ -196,6 +246,84 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
         return send(n - 1, MotionEvent.ACTION_UP) || send(n - 1, MotionEvent.ACTION_UP)
     }
 
+    /**
+     * WP-2: borrows the clipboard for one paste. Never touches it unless the user's clip was read first
+     * ([ClipSwap]); a watchdog gives it back if the app dies before [restoreClip]. Content is never logged.
+     */
+    override fun setClipText(text: String): Int = synchronized(clipLock) {
+        if (text.isEmpty() || text.length > CLIP_MAX_CHARS) return ClipSwap.CLIP_FAILED
+        try {
+            val r = clip.set(text)
+            if (r == ClipSwap.CLIP_SET) {
+                val gen = clip.generation
+                clipWatchdog.schedule(Runnable { synchronized(clipLock) { runCatching { clip.restoreIfStill(gen) } } }, CLIP_WATCHDOG_S, TimeUnit.SECONDS)
+            } else {
+                Log.i(TAG, "setClipText: user clip unreadable, clipboard left untouched")
+            }
+            r
+        } catch (t: Throwable) {
+            Log.w(TAG, "setClipText failed: ${t.javaClass.simpleName}")
+            // Never leave ours behind half-way.
+            runCatching { clip.restore() }
+            ClipSwap.CLIP_FAILED
+        }
+    }
+
+    override fun restoreClip() {
+        synchronized(clipLock) {
+            runCatching { clip.restore() }.onFailure { Log.w(TAG, "restoreClip failed: ${it.javaClass.simpleName}") }
+        }
+    }
+
+    /**
+     * WP-2: types [text] key by key (KeyCharacterMap of the virtual keyboard) into an own display, used when the
+     * clipboard may not be borrowed. All-or-nothing: if any character has no key, nothing is sent.
+     */
+    override fun injectText(displayId: Int, text: String): Int {
+        if (!ownDisplay(displayId)) return ShellText.TEXT_FAILED
+        if (!ShellText.typeable(text)) return ShellText.TEXT_UNMAPPABLE
+        val events = try {
+            KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
+        } catch (t: Throwable) { null } ?: return ShellText.TEXT_UNMAPPABLE
+        // Only plain character keys (plus the shift/meta keys the map adds): never Enter, Tab, Home or app keys.
+        if (events.any { !KeyEvent.isModifierKey(it.keyCode) && it.keyCode !in TEXT_KEYS }) return ShellText.TEXT_UNMAPPABLE
+        for (e in events) {
+            val now = SystemClock.uptimeMillis()
+            val ev = KeyEvent(now, now, e.action, e.keyCode, 0, e.metaState, VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD)
+            if (!inject(ev, displayId) && !inject(ev, displayId)) return ShellText.TEXT_FAILED
+        }
+        return ShellText.TEXT_TYPED
+    }
+
+    private inner class AndroidClipStore : ClipStore<ClipData> {
+        override fun canRead(): Boolean = runCatching {
+            val granted = context.checkPermission(READ_CLIPBOARD_IN_BACKGROUND, Process.myPid(), Process.myUid()) == PackageManager.PERMISSION_GRANTED
+            val ops = context.getSystemService(AppOpsManager::class.java)
+            granted && ops.unsafeCheckOpNoThrow(OPSTR_READ_CLIPBOARD, Process.myUid(), ShellContext.SHELL_PACKAGE) == AppOpsManager.MODE_ALLOWED
+        }.getOrDefault(false)
+        override fun current(): ClipData? = clipboard.primaryClip
+        override fun hasClip(): Boolean = clipboard.hasPrimaryClip()
+        override fun hasDescription(): Boolean = clipboard.primaryClipDescription != null
+        override fun isOurs(clip: ClipData, ours: String): Boolean =
+            clip.description.label == CLIP_LABEL && clip.itemCount == 1 && clip.getItemAt(0).text?.toString() == ours
+        override fun putOurs(text: String) {
+            val c = ClipData.newPlainText(CLIP_LABEL, text)
+            val extras = PersistableBundle()
+            extras.putBoolean(EXTRA_SUPPRESS_CLIPBOARD_OVERLAY, true)
+            // Typed text may be an address or phone number: keep it out of clipboard previews and keyboard history.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) extras.putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            c.description.extras = extras
+            clipboard.setPrimaryClip(c)
+        }
+        override fun putBack(clip: ClipData) {
+            val extras = clip.description.extras?.let { PersistableBundle(it) } ?: PersistableBundle()
+            extras.putBoolean(EXTRA_SUPPRESS_CLIPBOARD_OVERLAY, true)
+            clip.description.extras = extras
+            clipboard.setPrimaryClip(clip)
+        }
+        override fun clear() = clipboard.clearPrimaryClip()
+    }
+
     private inline fun injectPair(down: InputEvent, up: InputEvent, displayId: Int, fallback: () -> Boolean): Boolean {
         if (!inject(down, displayId)) return fallback()
         return inject(up, displayId) || inject(up, displayId)
@@ -251,6 +379,7 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
     }
 
     override fun releaseAll() {
+        restoreClip()
         synchronized(displays) { displays.values.toList().also { displays.clear() } }.forEach { runCatching { it.release() } }
     }
 
@@ -300,6 +429,9 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
         const val START_IN_USE_ON_MAIN = 1
         const val START_NOT_FOUND = 2
         const val START_ERROR = 3
+        /** restartApp results (never 0: an older helper answers 0). */
+        const val RESTART_COLD = 10
+        const val RESTART_WARM = 11
         /** Navigation/editing keys only: never volume, power or home from here. */
         val ALLOWED_KEYS = setOf(4, 19, 20, 21, 22, 23, 61, 62, 66, 67, 84, 92, 93, 111, 112, 122, 123, 160)
         private val TASK_INFO: Class<*> by lazy { Class.forName("android.app.TaskInfo") }
@@ -318,5 +450,18 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
         private const val FLAG_OWN_FOCUS = 1 shl 14
         private const val FLAG_STEAL_TOP_FOCUS_DISABLED = 1 shl 16
         private const val IME_POLICY_LOCAL = 0
+        private const val CLIP_LABEL = "hoshino"
+        private const val CLIP_MAX_CHARS = 4_000
+        private const val CLIP_WATCHDOG_S = 10L
+        // Hidden names (AppOpsManager.OPSTR_READ_CLIPBOARD, ClipDescription.EXTRA_SUPPRESS_CLIPBOARD_OVERLAY).
+        private const val OPSTR_READ_CLIPBOARD = "android:read_clipboard"
+        private const val READ_CLIPBOARD_IN_BACKGROUND = "android.permission.READ_CLIPBOARD_IN_BACKGROUND"
+        private const val EXTRA_SUPPRESS_CLIPBOARD_OVERLAY = "com.android.systemui.SUPPRESS_CLIPBOARD_OVERLAY"
+        /** Letters, digits, space and punctuation keys that KeyCharacterMap produces for printable text. */
+        private val TEXT_KEYS: Set<Int> = (KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9).toSet() + (KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z) +
+            setOf(KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_COMMA, KeyEvent.KEYCODE_PERIOD, KeyEvent.KEYCODE_GRAVE, KeyEvent.KEYCODE_MINUS,
+                KeyEvent.KEYCODE_EQUALS, KeyEvent.KEYCODE_LEFT_BRACKET, KeyEvent.KEYCODE_RIGHT_BRACKET, KeyEvent.KEYCODE_BACKSLASH,
+                KeyEvent.KEYCODE_SEMICOLON, KeyEvent.KEYCODE_APOSTROPHE, KeyEvent.KEYCODE_SLASH, KeyEvent.KEYCODE_AT, KeyEvent.KEYCODE_PLUS,
+                KeyEvent.KEYCODE_STAR, KeyEvent.KEYCODE_POUND)
     }
 }

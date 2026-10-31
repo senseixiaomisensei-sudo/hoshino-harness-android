@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Context } from '../../node-host/src/platform.js';
 import { SYSTEM_SHELL_DENY_REASON } from '../android-policy/tier.js';
-import { systemShellScreenGuard } from '../android-policy/index.js';
+import type {} from '../android-policy/index.js';
 export const name='android-shizuku';
 export const inject=['tools','androidBridge','mobilePolicy'];
 export function apply(ctx:Context):void {
@@ -15,7 +15,7 @@ export function apply(ctx:Context):void {
       const tier=ctx.mobilePolicy.options.get(sessionId)?.tier;
       if(tier!=='full-access')throw new Error(SYSTEM_SHELL_DENY_REASON);
       // Same guard as android-policy pre-execute (defense in depth): never launch or operate apps on the user's main screen.
-      const screen=await systemShellScreenGuard(ctx,String(args.command ?? ''),sessionId,exec.signal);
+      const screen=await ctx.mobilePolicy.screenGuard(String(args.command ?? ''),sessionId,exec.signal);
       if(screen.kind==='deny')throw new Error(screen.reason);
       const id=randomUUID();
       const cancel=()=>{void ctx.androidBridge.call('system-shell-cancel',{id,sessionId},AbortSignal.timeout(5000)).catch(()=>{});};

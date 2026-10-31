@@ -20,8 +20,14 @@ class HelperHub(context: Context) {
     private val app = context.applicationContext
     private val _shell = MutableStateFlow<IHoshinoPhoneShell?>(null)
     val shell: StateFlow<IHoshinoPhoneShell?> = _shell.asStateFlow()
-    /** Given to the helper: when the app process dies, the helper sees it through linkToDeath. */
-    private val token = Binder()
+    /**
+     * Given to the helper: when the app process dies, the helper sees it through linkToDeath. It also answers the
+     * helper's self-heal question ([HelperHeal.QUERY]) with [healWanted] (WP-9; false unless the user opted in).
+     */
+    @Volatile var healWanted: () -> Boolean = { false }
+    /** The helper re-enabled our accessibility service this many times while we were dead (for the audit). */
+    @Volatile var onHelperHealed: (Int) -> Unit = {}
+    private val token = HealToken { healWanted() }
     private val nonces: HandoffNonces by lazy { HandoffNonces(PrefsNonceStore(app), SystemClock::elapsedRealtime) }
 
     fun issueLaunchNonce(): String = nonces.issueLaunch()
@@ -58,6 +64,7 @@ class HelperHub(context: Context) {
             return reject(HelperHandoff.Reject.NoBinder)
         }
         _shell.value = shell
+        (extras?.getInt(HelperHeal.KEY_HEALED, 0) ?: 0).takeIf { it > 0 }?.let { n -> runCatching { onHelperHealed(n) } }
         return Bundle().apply {
             putBoolean(HelperHandoff.KEY_ACCEPTED, true)
             putString(HelperHandoff.KEY_NEXT, next)

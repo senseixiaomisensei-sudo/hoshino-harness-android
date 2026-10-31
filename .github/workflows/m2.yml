@@ -127,6 +127,8 @@ jobs:
             "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" | tee /tmp/apk-cert.txt
             grep -qi 'e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1' /tmp/apk-cert.txt
           done
+      - name: PL1 license gate — no ML Kit / Play Services / Firebase / datatransport in the built APKs (dex + merged manifest)
+        run: python3 tools/license-gate.py apk build/deliverables/*.apk
       - uses: actions/upload-artifact@v4
         if: always()
         with:

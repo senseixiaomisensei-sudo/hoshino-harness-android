@@ -20,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -69,7 +70,12 @@ class PhoneController private constructor(private val context: Context) {
     private val grants = ConcurrentHashMap<String, Long>()
     private val stops = ConcurrentHashMap<String, String>()
     private var idleJob: Job? = null
+    /** A-7: recent step timings (numbers and step kinds only) for `phone_status` and the benchmark. */
+    val telemetry = StepTelemetry()
     val ocr: PhoneOcr? get() = OcrModels.engine(context)
+    /** Floating-panel takeover: while active every agent action waits (AI paused) and only the user's input goes in. */
+    val manual = ManualTakeover()
+    private var beforeManual: PhoneTaskState.Status? = null
 
     init {
         // m2.9: a foreground service (with its ongoing notice) lives exactly as long as the agent display.
@@ -78,26 +84,51 @@ class PhoneController private constructor(private val context: Context) {
                 PhoneTaskForeground.sync(context, exists)?.let { consent.audit("phone task foreground service not started: ${it.javaClass.simpleName}") }
             }
         }
+        // User frame-rate setting (5–60 fps) follows the display as it is created and recreated.
+        scope.launch { combine(_display, PhoneDisplayFps.of(context).fps) { d, fps -> d to fps }.collect { (d, fps) -> d?.userFps = fps } }
     }
 
     suspend fun handle(body: JSONObject): JSONObject = try {
         when (val action = body.optString("action")) {
             "status" -> status()
             "diagnose" -> diagnose()
-            "observe" -> observe(session(body), body.optBoolean("full", false))
-            "screenshot" -> screenshot(session(body))
-            "steps" -> steps(session(body), body)
+            "observe" -> gated { observe(session(body), body.optBoolean("full", false)) }
+            "screenshot" -> gated { screenshot(session(body)) }
+            "steps" -> gated(staleAfterWait = session(body)) { steps(session(body), body) }
+            // WP-4 (B-1): composite reads that loop on the phone and return one structured result.
+            // find/collect scroll the agent display, so they wait behind a manual takeover like observe/steps.
+            "query", "extract", "find", "collect" -> gated { read(session(body), action, body) }
             "grant" -> grant(session(body), body.getString("fingerprint"))
             "list_apps" -> listApps(body.optString("query"))
             // m2.9: lets the kernel's system_shell guard accept only commands that explicitly target the agent display.
             "display" -> JSONObject().put("ok", true).put("display", agentDisplayId() ?: JSONObject.NULL)
             "handoff" -> PhoneTakeover.of(context).request(session(body), body.optString("reason").take(300), this)
             "stop" -> { stop(session(body), "stopped by request"); JSONObject().put("ok", true) }
-            "release" -> { release(session(body)); JSONObject().put("ok", true) }
+            "release" -> gated { release(session(body)); JSONObject().put("ok", true) }
             else -> error("unknown phone action '$action'")
         }
     } catch (e: PhoneUnavailable) {
         JSONObject().put("ok", false).put("error", e.message).put("code", e.code).put("setup", "设置 → 设置手机操作")
+    }
+
+    /**
+     * Manual takeover gate: the agent's action waits while the user operates the display by hand. When it had to wait,
+     * the hand-back sentence rides on the result (`user_takeover`). A step batch that waited is not run at all
+     * ([staleAfterWait] = its session): its refs and plan were made for the screen before the user changed it.
+     */
+    private suspend fun gated(staleAfterWait: String? = null, run: suspend () -> JSONObject): JSONObject {
+        val w = manual.awaitAiAllowed(ManualTakeover.GATE_TIMEOUT_MS)
+        if (!w.allowed) return JSONObject().put("ok", false).put("code", "user_takeover")
+            .put("error", "user_takeover: the user is operating the agent display by hand; nothing was done. Wait, then phone_observe again.")
+        if (w.waited && staleAfterWait != null) {
+            val out = JSONObject().put("ok", false).put("completed", false).put("results", JSONArray()).put("stopped_at", 0).put("reason", "user_takeover")
+            manual.takeNote()?.let { out.put("user_takeover", it) }
+            runCatching { reread(staleAfterWait) }.getOrNull()?.let { out.put("screen", it.optString("screen")).put("app", it.opt("app")) }
+            return out
+        }
+        val out = run()
+        manual.takeNote()?.let { out.put("user_takeover", it) }
+        return out
     }
 
     private fun session(body: JSONObject): String = body.optString("sessionId").also { require(it.isNotBlank()) { "sessionId required" } }
@@ -123,7 +154,9 @@ class PhoneController private constructor(private val context: Context) {
 
     private suspend fun screenFor(shell: IHoshinoPhoneShell): AndroidPhoneScreen {
         screen?.let { s -> if (_display.value != null) return s }
+        val createStart = SystemClock.elapsedRealtime()
         val d = withContext(Dispatchers.Main) { AgentDisplay.create(context, shell) }
+        telemetry.recordDisplayCreate(SystemClock.elapsedRealtime() - createStart)
         _display.value = d
         val s = AndroidPhoneScreen(context, d.displayId, { services.shell.value }, d, { ocr })
         screen = s
@@ -133,6 +166,9 @@ class PhoneController private constructor(private val context: Context) {
     /** Port wrapper: AP7 and lock checks before every single action, and the audit line after it. */
     private inner class GuardedPort(private val inner: AndroidPhoneScreen, private val sessionId: String) : PhonePort by inner {
         override suspend fun perform(step: PhoneStep, target: UiElement?): ActionOutcome {
+            // The user took over mid-batch: this step is not done; the runner stops and re-reads (the note rides on the result).
+            val w = manual.awaitAiAllowed(ManualTakeover.GATE_TIMEOUT_MS)
+            if (w.waited || !w.allowed) return ActionOutcome(false, "user_takeover: the user operated the screen by hand before this step; it was NOT done. Read the new screen and decide again")
             PhoneGuards.refuse(inner.last?.packageName, context.packageName, consent.allowSelf, locked(), step)?.let { return ActionOutcome(false, it) }
             val out = inner.perform(step, target)
             _state.update { it.copy(recent = (it.recent + step.describe()).takeLast(3), app = inner.last?.packageName ?: it.app) }
@@ -196,12 +232,17 @@ class PhoneController private constructor(private val context: Context) {
             val before = s.last
             val runner = StepRunner(GuardedPort(s, sessionId), { fp -> consumeGrant(sessionId, fp) }, { stops[sessionId] })
             val r = runner.run(steps, body.optString("app_label").takeIf { it.isNotBlank() })
+            for (x in r.results) x.timing?.let { t ->
+                val kind = steps[x.index].kind.name
+                telemetry.record(kind, x.ok, t)
+                consent.audit(t.auditLine(kind, x.ok))
+            }
             val after = r.screen
-            val effect = ActionEffects.of(before, after)
+            val effect = ActionEffects.of(before, after, r.frameChanged)
             val prev = shown[sessionId]
             after?.let { shown[sessionId] = it }
             val out = JSONObject().put("ok", r.completed).put("completed", r.completed)
-                .put("results", JSONArray(r.results.map { x -> JSONObject().put("index", x.index).put("step", x.step).put("ok", x.ok).put("detail", x.detail ?: JSONObject.NULL).put("waited_ms", x.waitedMs).put("met", x.met ?: JSONObject.NULL) }))
+                .put("results", JSONArray(r.results.map { x -> JSONObject().put("index", x.index).put("step", x.step).put("ok", x.ok).put("detail", x.detail ?: JSONObject.NULL).put("waited_ms", x.waitedMs).put("met", x.met ?: JSONObject.NULL).apply { x.timing?.let { put("ms", it.json()) }; x.change?.let { put("changed", it.changed); if (it.frameChanged && !it.treeChanged) put("frame_only", true) }; x.openedInMs?.let { put("opened_in_ms", it) } } }))
                 .put("effect", effect.effect.name).put("tree_blind", effect.treeBlind)
             effect.limitReached?.let { out.put("limit_reached", it) }
             r.stoppedAt?.let { out.put("stopped_at", it).put("reason", r.reason ?: "") }
@@ -223,6 +264,64 @@ class PhoneController private constructor(private val context: Context) {
             throw e
         } finally {
             if (wake.isHeld) wake.release()
+        }
+    }
+
+    /**
+     * WP-4 composite reads. query/extract read the current screen once; find/collect scroll on the phone (each scroll goes
+     * through [GuardedPort], so the lock and own-app guards apply) until done and come back once. Parameters are validated
+     * before the screen is touched. The final screen becomes the session's last shown screen, so the next phone_observe
+     * is a small diff and refs in the result stay valid.
+     */
+    private suspend fun read(sessionId: String, action: String, body: JSONObject): JSONObject {
+        val query = if (action == "query") ElementQuery.parse(body) else null
+        val extract = if (action == "extract") ExtractParams.parse(body) else null
+        val find = if (action == "find") FindParams.parse(body) else null
+        val collect = if (action == "collect") CollectParams.parse(body) else null
+        return lock.withLock {
+            val shell = requireReady()
+            val scrolling = find != null || collect != null
+            if (scrolling && locked()) throw PhoneUnavailable("locked", "手机锁屏中，解锁后再继续")
+            val s = screenFor(shell)
+            claim(sessionId)
+            touchIdle()
+            stops.remove(sessionId)
+            val wake = if (scrolling) context.getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "hoshino:phone-read").also { it.acquire(WAKE_MS) } else null
+            if (scrolling) _state.update { it.copy(sessionId = sessionId, status = PhoneTaskState.Status.Working, reason = null) }
+            try {
+                val reader = ScreenReader(GuardedPort(s, sessionId)) { stops[sessionId] }
+                val out = JSONObject().put("ok", true)
+                val last: ScreenSnapshot = when {
+                    query != null -> s.read().also { snap ->
+                        val (ms, total) = ScreenQueries.query(snap, query)
+                        out.put("total", total).put("shown", ms.size).put("screen", ScreenQueries.renderMatches(ms).ifEmpty { "no match" })
+                    }
+                    extract != null -> s.read().also { snap -> out.put("mode", extract.mode.name).put("screen", ScreenQueries.extract(snap, extract).ifEmpty { "(empty)" }) }
+                    find != null -> reader.find(find).let { r ->
+                        out.put("ok", r.matches.isNotEmpty()).put("found", r.matches.isNotEmpty()).put("total", r.total).put("scrolls", r.scrolls).put("stop", r.stop)
+                        r.detail?.let { out.put("detail", it) }
+                        if (r.matches.isNotEmpty()) out.put("screen", ScreenQueries.renderMatches(r.matches))
+                        r.screen
+                    }
+                    else -> reader.collect(collect!!).let { r ->
+                        out.put("items", r.rows.size).put("screens", r.screens).put("scrolls", r.scrolls).put("stop", r.stop)
+                        r.detail?.let { out.put("detail", it) }
+                        if (r.cursorLost) out.put("cursor_lost", true)
+                        r.cursor?.let { out.put("cursor", it.encode()) }
+                        out.put("screen", r.rows.indices.joinToString("\n") { i -> r.keys[i] + " " + r.rows[i].text }.ifEmpty { "(no rows)" })
+                        r.screen
+                    }
+                }
+                out.put("app", last.packageName ?: JSONObject.NULL)
+                if (last.secure) out.put("secure", true).put("hint", "secure screen: use phone_handoff")
+                SystemScreens.needsUser(last)?.let { n -> out.put("needs_user", JSONObject().put("reason", n.reason)) }
+                shown[sessionId] = last
+                _state.update { it.copy(sessionId = sessionId, app = last.packageName) }
+                out
+            } finally {
+                if (scrolling) _state.update { if (it.status == PhoneTaskState.Status.Working) it.copy(status = PhoneTaskState.Status.Idle) else it }
+                if (wake?.isHeld == true) wake.release()
+            }
         }
     }
 
@@ -263,6 +362,41 @@ class PhoneController private constructor(private val context: Context) {
         _state.value = PhoneTaskState()
     }
 
+    // ---------- manual takeover from the floating panel ----------
+
+    /** 「接管」: pauses the agent. False when there is no agent display or the agent's own handoff is pending. */
+    fun beginManualTakeover(): Boolean {
+        if (PhoneTakeover.of(context).pending.value != null) return false
+        val d = _display.value ?: return false
+        val app = runCatching { services.shell.value?.topPackage(d.displayId) }.getOrNull()
+        if (!manual.begin(_state.value.sessionId ?: owner, app)) return false
+        beforeManual = _state.value.status
+        _state.update { it.copy(status = PhoneTaskState.Status.TakenOver, reason = "你在手动操作后台屏，AI 已暂停") }
+        consent.audit("manual takeover begin pkg=${app ?: "?"}")
+        return true
+    }
+
+    /** 「交还」: the waiting agent action continues and gets the returned sentence. */
+    fun endManualTakeover(): String? {
+        val app = _display.value?.let { d -> runCatching { services.shell.value?.topPackage(d.displayId) }.getOrNull() }
+        val note = manual.end(app) ?: return null
+        val back = beforeManual?.takeIf { it != PhoneTaskState.Status.TakenOver } ?: PhoneTaskState.Status.Idle
+        beforeManual = null
+        _state.update { if (it.status == PhoneTaskState.Status.TakenOver) it.copy(status = back, reason = null) else it }
+        consent.audit("manual takeover end pkg=${app ?: "?"}")
+        return note
+    }
+
+    /** One user input from the preview, injected into the agent display only while the user has taken over. */
+    suspend fun manualInput(kind: ManualTakeover.Input, inject: suspend (IHoshinoPhoneShell, Int) -> Boolean): Boolean = withContext(Dispatchers.IO) {
+        if (manual.aiMayAct) return@withContext false
+        val shell = services.shell.value ?: return@withContext false
+        val id = agentDisplayId() ?: return@withContext false
+        val ok = runCatching { inject(shell, id) }.getOrDefault(false)
+        if (ok) manual.record(kind)
+        ok
+    }
+
     fun setTakenOver(on: Boolean, reason: String? = null) {
         _state.update { it.copy(status = if (on) PhoneTaskState.Status.TakenOver else PhoneTaskState.Status.Working, reason = reason) }
     }
@@ -292,6 +426,7 @@ class PhoneController private constructor(private val context: Context) {
             .put("builtin", services.builtin.engine.status.value.toString()).put("ocr", ocr?.ready == true)
             .put("ready", sdk >= BuiltinShellManager.MIN_SDK && a11y && shell != null)
             .put("task", _state.value.status.name)
+            .put("step_timing", telemetry.summary())
     }
 
     /** PH26: one report with helper, accessibility, display, focus and lock state. Package names only, no content. */

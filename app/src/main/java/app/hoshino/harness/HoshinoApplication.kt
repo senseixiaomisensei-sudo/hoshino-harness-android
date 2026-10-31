@@ -10,6 +10,7 @@ class HoshinoApplication : Application() {
         Hoshino.applicationContext=applicationContext
         app.hoshino.harness.core.M2SafeMode.initialize(this)
         Hoshino.client=DshHarnessClient(this)
+        app.hoshino.harness.core.RunMetricsHub.install(this)
         Hoshino.store
         (Hoshino.client as DshHarnessClient).restoreVisibleCache()
         (Hoshino.client as DshHarnessClient).restoreWaitingMessages()
