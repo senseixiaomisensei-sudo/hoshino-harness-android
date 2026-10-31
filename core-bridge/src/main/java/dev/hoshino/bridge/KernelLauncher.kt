@@ -107,11 +107,13 @@ fun classifyDiagnostic(line: String): String {
     line.contains("ptrace",ignoreCase=true) && (line.contains("failed",ignoreCase=true) || line.contains("error",ignoreCase=true)) -> "proot: ptrace failed"
     line.contains("proot warning: signal 11 received") -> "proot: tracer SIGSEGV"
     line.contains("proot warning: signal 31 received") -> "proot: tracer SIGSYS"
+    line.contains("heap out of memory") || line.contains("Allocation failed") -> "kernel: FATAL ERROR JavaScript heap out of memory"
     line.contains("did not activate") -> "dsh: plugin activation failed"
     line.contains("Kernel required service") -> "dsh: required service unavailable"
     line.contains("proot error:") -> "proot: runtime error"
     line.contains("Error") || line.contains("error") -> "kernel: error (payload suppressed)"
     else -> "kernel: diagnostic (payload suppressed)"
     }
-    private fun totalRam(context: Context): Long = runCatching{val info=android.app.ActivityManager.MemoryInfo();(context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(info);info.totalMem}.getOrDefault(4L shl 30)
 }
+
+private fun totalRam(context: Context): Long = runCatching{val info=android.app.ActivityManager.MemoryInfo();(context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(info);info.totalMem}.getOrDefault(4L shl 30)
