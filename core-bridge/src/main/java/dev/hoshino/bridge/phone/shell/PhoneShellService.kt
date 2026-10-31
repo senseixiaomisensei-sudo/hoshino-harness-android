@@ -60,7 +60,6 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
 
     // Same reason: the clipboard must be used as com.android.shell. The system honours the "no copied overlay"
     // extra only for clips set by the shell, and reads/writes in the background are allowed for the shell uid.
-    @SuppressLint("PrivateApi")
     private val clipboard: ClipboardManager by lazy {
         ClipboardManager::class.java.getDeclaredConstructor(Context::class.java, Handler::class.java)
             .apply { isAccessible = true }.newInstance(context, Handler(Looper.getMainLooper() ?: Looper.myLooper()!!))
