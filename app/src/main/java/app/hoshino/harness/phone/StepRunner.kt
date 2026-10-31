@@ -22,7 +22,8 @@ fun interface ApprovalGate { fun consume(fingerprint: String): Boolean }
 
 data class PendingApproval(val index: Int, val step: String, val action: IrrevAction, val matched: String, val fingerprint: String, val packageName: String?)
 
-data class StepResult(val index: Int, val step: String, val ok: Boolean, val detail: String? = null, val waitedMs: Long = 0, val met: Boolean? = null)
+/** [timing]: where the step's time went (A-7); null when the step stopped before acting. */
+data class StepResult(val index: Int, val step: String, val ok: Boolean, val detail: String? = null, val waitedMs: Long = 0, val met: Boolean? = null, val timing: StepTiming? = null)
 
 data class StepsResult(
     val results: List<StepResult>,
@@ -32,6 +33,8 @@ data class StepsResult(
     val chooser: Chooser? = null,
     val needsUser: NeedsUser? = null,
     val screen: ScreenSnapshot? = null,
+    /** Milliseconds of the read before the first step (A-7). */
+    val initialReadMs: Long = 0,
 ) {
     val completed: Boolean get() = stoppedAt == null
 }
@@ -42,66 +45,88 @@ data class StepsResult(
  * the exact screen was approved), executes, then waits by code for its expectation (text appears/gone,
  * app in front, screen quiet). Stops early on a chooser, a screen that needs the user, a missing target,
  * a stop request, or a failed action.
+ *
+ * Every acted step also reports a [StepTiming] (resolve / act / wait / read / total, A-7). The timing only
+ * reads [PhonePort.now] around the existing calls; it never adds a wait, a read or a retry.
  */
 class StepRunner(private val port: PhonePort, private val gate: ApprovalGate, private val stopRequested: () -> String? = { null }) {
 
+    // Per-step accumulators for A-7 timing; reset at the start of every step. Only touched by timed* below.
+    private var readMs = 0L
+    private var waitMs = 0L
+
+    private suspend fun timedRead(): ScreenSnapshot { val t = port.now(); try { return port.read() } finally { readMs += port.now() - t } }
+    private suspend fun timedWaitQuiet(quietMs: Long, timeoutMs: Long): Boolean { val t = port.now(); try { return port.waitQuiet(quietMs, timeoutMs) } finally { waitMs += port.now() - t } }
+    private suspend fun timedAwaitChange(timeoutMs: Long): Boolean { val t = port.now(); try { return port.awaitChange(timeoutMs) } finally { waitMs += port.now() - t } }
+
     suspend fun run(steps: List<PhoneStep>, appLabel: String? = null): StepsResult {
         val results = mutableListOf<StepResult>()
+        val firstRead = port.now()
         var screen = port.read()
+        val initialReadMs = port.now() - firstRead
+        fun result(done: List<StepResult>, stoppedAt: Int?, reason: String?, pending: PendingApproval? = null, chooser: Chooser? = null, needsUser: NeedsUser? = null, screen: ScreenSnapshot? = null) =
+            StepsResult(done, stoppedAt, reason, pending, chooser, needsUser, screen, initialReadMs)
         for ((i, step) in steps.withIndex()) {
-            stopRequested()?.let { return StepsResult(results, i, it, screen = screen) }
+            val stepStart = port.now()
+            readMs = 0L; waitMs = 0L
+            stopRequested()?.let { return result(results, i, it, screen = screen) }
             SystemScreens.chooser(screen, appLabel)?.let { c ->
                 val picking = step.kind == StepKind.tap && (step.ref != null && c.options.any { it.ref == step.ref } || step.target != null)
-                if (!picking) return StepsResult(results, i, "chooser", chooser = c, screen = screen)
+                if (!picking) return result(results, i, "chooser", chooser = c, screen = screen)
             }
             val target = when (val r = resolve(step, screen)) {
-                is Resolved.Fail -> return StepsResult(results + StepResult(i, step.describe(), false, r.why), i, r.why, screen = screen)
+                is Resolved.Fail -> return result(results + StepResult(i, step.describe(), false, r.why), i, r.why, screen = screen)
                 is Resolved.Ok -> r.element
             }
             if (step.kind == StepKind.type && (target?.password == true || (target == null && screen.elements.any { it.focused && it.password }))) {
-                return StepsResult(results, i, "password", needsUser = NeedsUser("password", "typing into a password field is left to the user"), screen = screen)
+                return result(results, i, "password", needsUser = NeedsUser("password", "typing into a password field is left to the user"), screen = screen)
             }
             // Hands-only screens and payment never depend on approval: no grant, approval mode (including the user-enabled
             // no-approval mode) or remembered decision can let the agent act there (docs/decisions.md, 2026-10-31 M2.8).
-            handsOnly(step, screen)?.let { n -> return StepsResult(results, i, "needs_user", needsUser = n, screen = screen) }
+            handsOnly(step, screen)?.let { n -> return result(results, i, "needs_user", needsUser = n, screen = screen) }
             IrreversibleDetector.classify(step, screen, target)?.let { hit ->
-                if (hit.action == IrrevAction.pay) return StepsResult(results, i, "payment", needsUser = NeedsUser("payment", "payment is always done by the user: ${hit.matched}"), screen = screen)
+                if (hit.action == IrrevAction.pay) return result(results, i, "payment", needsUser = NeedsUser("payment", "payment is always done by the user: ${hit.matched}"), screen = screen)
                 val fp = fingerprint(step, hit, screen, target)
-                if (!gate.consume(fp)) return StepsResult(results, i, "approval_required", pending = PendingApproval(i, step.describe(), hit.action, hit.matched, fp, screen.packageName), screen = screen)
+                if (!gate.consume(fp)) return result(results, i, "approval_required", pending = PendingApproval(i, step.describe(), hit.action, hit.matched, fp, screen.packageName), screen = screen)
             }
             val started = port.now()
             val outcome = port.perform(step, target)
-            if (!outcome.ok) return StepsResult(results + StepResult(i, step.describe(), false, outcome.detail), i, outcome.detail ?: "action failed", screen = runCatching { port.read() }.getOrDefault(screen))
+            val acted = port.now()
+            if (!outcome.ok) {
+                val timing = StepTiming(started - stepStart, acted - started, 0, 0, acted - stepStart)
+                return result(results + StepResult(i, step.describe(), false, outcome.detail, timing = timing), i, outcome.detail ?: "action failed", screen = runCatching { port.read() }.getOrDefault(screen))
+            }
             val (met, after) = settle(step)
             screen = after
-            results += StepResult(i, step.describe(), true, outcome.detail, port.now() - started, met)
-            if (met == false) return StepsResult(results, i, "expectation not met within ${step.expect?.timeoutMs}ms", screen = screen)
-            SystemScreens.needsUser(screen)?.let { n -> if (i < steps.lastIndex) return StepsResult(results, i + 1, "needs_user", needsUser = n, screen = screen) }
+            val end = port.now()
+            results += StepResult(i, step.describe(), true, outcome.detail, end - started, met, StepTiming(started - stepStart, acted - started, waitMs, readMs, end - stepStart))
+            if (met == false) return result(results, i, "expectation not met within ${step.expect?.timeoutMs}ms", screen = screen)
+            SystemScreens.needsUser(screen)?.let { n -> if (i < steps.lastIndex) return result(results, i + 1, "needs_user", needsUser = n, screen = screen) }
         }
-        return StepsResult(results, null, null, screen = screen, chooser = SystemScreens.chooser(screen, appLabel), needsUser = SystemScreens.needsUser(screen))
+        return result(results, null, null, screen = screen, chooser = SystemScreens.chooser(screen, appLabel), needsUser = SystemScreens.needsUser(screen))
     }
 
     /** After an action: wait for the expectation, or briefly for the screen to settle. Returns (met?, screen). */
     private suspend fun settle(step: PhoneStep): Pair<Boolean?, ScreenSnapshot> {
         val e = step.expect ?: step.takeIf { it.kind == StepKind.wait }?.expect
         if (e == null) {
-            port.waitQuiet(QUIET_MS, SETTLE_MAX_MS)
-            return null to port.read()
+            timedWaitQuiet(QUIET_MS, SETTLE_MAX_MS)
+            return null to timedRead()
         }
         val deadline = port.now() + e.timeoutMs
         while (true) {
             if (e.quiet) {
-                val quiet = port.waitQuiet(QUIET_MS, (deadline - port.now()).coerceAtLeast(0))
-                val s = port.read()
+                val quiet = timedWaitQuiet(QUIET_MS, (deadline - port.now()).coerceAtLeast(0))
+                val s = timedRead()
                 if (quiet && conditionsMet(e, s)) return true to s
             } else {
-                val s = port.read()
+                val s = timedRead()
                 if (conditionsMet(e, s)) return true to s
                 if (SystemScreens.chooser(s) != null || SystemScreens.needsUser(s) != null) return null to s
             }
             val left = deadline - port.now()
-            if (left <= 0) return false to port.read()
-            port.awaitChange(left)
+            if (left <= 0) return false to timedRead()
+            timedAwaitChange(left)
         }
     }
 

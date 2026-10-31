@@ -7,6 +7,8 @@ android {
         versionCode = 212; versionName = "0.2.1-m2.8.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    // 仪器测试默认针对 debug；真机手机基准（tools/phone-bench）要量不可调试的 fast 包：-Phoshino.testBuildType=fast。
+    testBuildType = (project.findProperty("hoshino.testBuildType") as String?) ?: "debug"
     buildFeatures { compose = true; buildConfig = true }
     signingConfigs {
         getByName("debug") {

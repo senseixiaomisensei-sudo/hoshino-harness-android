@@ -69,6 +69,8 @@ class PhoneController private constructor(private val context: Context) {
     private val grants = ConcurrentHashMap<String, Long>()
     private val stops = ConcurrentHashMap<String, String>()
     private var idleJob: Job? = null
+    /** A-7: recent step timings (numbers and step kinds only) for `phone_status` and the benchmark. */
+    val telemetry = StepTelemetry()
     val ocr: PhoneOcr? get() = OcrModels.engine(context)
 
     init {
@@ -123,7 +125,9 @@ class PhoneController private constructor(private val context: Context) {
 
     private suspend fun screenFor(shell: IHoshinoPhoneShell): AndroidPhoneScreen {
         screen?.let { s -> if (_display.value != null) return s }
+        val createStart = SystemClock.elapsedRealtime()
         val d = withContext(Dispatchers.Main) { AgentDisplay.create(context, shell) }
+        telemetry.recordDisplayCreate(SystemClock.elapsedRealtime() - createStart)
         _display.value = d
         val s = AndroidPhoneScreen(context, d.displayId, { services.shell.value }, d, { ocr })
         screen = s
@@ -196,12 +200,17 @@ class PhoneController private constructor(private val context: Context) {
             val before = s.last
             val runner = StepRunner(GuardedPort(s, sessionId), { fp -> consumeGrant(sessionId, fp) }, { stops[sessionId] })
             val r = runner.run(steps, body.optString("app_label").takeIf { it.isNotBlank() })
+            for (x in r.results) x.timing?.let { t ->
+                val kind = steps[x.index].kind.name
+                telemetry.record(kind, x.ok, t)
+                consent.audit(t.auditLine(kind, x.ok))
+            }
             val after = r.screen
             val effect = ActionEffects.of(before, after)
             val prev = shown[sessionId]
             after?.let { shown[sessionId] = it }
             val out = JSONObject().put("ok", r.completed).put("completed", r.completed)
-                .put("results", JSONArray(r.results.map { x -> JSONObject().put("index", x.index).put("step", x.step).put("ok", x.ok).put("detail", x.detail ?: JSONObject.NULL).put("waited_ms", x.waitedMs).put("met", x.met ?: JSONObject.NULL) }))
+                .put("results", JSONArray(r.results.map { x -> JSONObject().put("index", x.index).put("step", x.step).put("ok", x.ok).put("detail", x.detail ?: JSONObject.NULL).put("waited_ms", x.waitedMs).put("met", x.met ?: JSONObject.NULL).apply { x.timing?.let { put("ms", it.json()) } } }))
                 .put("effect", effect.effect.name).put("tree_blind", effect.treeBlind)
             effect.limitReached?.let { out.put("limit_reached", it) }
             r.stoppedAt?.let { out.put("stopped_at", it).put("reason", r.reason ?: "") }
@@ -292,6 +301,7 @@ class PhoneController private constructor(private val context: Context) {
             .put("builtin", services.builtin.engine.status.value.toString()).put("ocr", ocr?.ready == true)
             .put("ready", sdk >= BuiltinShellManager.MIN_SDK && a11y && shell != null)
             .put("task", _state.value.status.name)
+            .put("step_timing", telemetry.summary())
     }
 
     /** PH26: one report with helper, accessibility, display, focus and lock state. Package names only, no content. */

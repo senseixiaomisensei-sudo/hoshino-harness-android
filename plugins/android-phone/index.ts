@@ -44,7 +44,7 @@ export function apply(ctx: Context): void {
   const text = (name: string, description: string, parameters: Data, run: (args: Data, exec: any) => Promise<string>) =>
     ctx.tools.register(defineTool({name, description, parameters: parameters as any, output: {schema: {type: 'string'}, render: (_, value) => [{type: 'text', text: value}]}, execute: run as any}));
 
-  text('phone_status', 'Phone control readiness and diagnosis (helper, accessibility, OCR, Android version, lock state) with setup steps when something is missing. No screen content. Call it first when a phone_* tool reports that phone control is not ready.', {}, async (_, exec) => {
+  text('phone_status', 'Phone control readiness and diagnosis (helper, accessibility, OCR, Android version, lock state, P50/P90 timing of the last 50 steps) with setup steps when something is missing. No screen content. Call it first when a phone_* tool reports that phone control is not ready.', {}, async (_, exec) => {
     const r = await call('phone', {action: 'diagnose', sessionId: sid(exec)}, exec.signal);
     if (r.ok === false && r.error) throw new Error(phoneError(r));
     return phoneStatusText(r);

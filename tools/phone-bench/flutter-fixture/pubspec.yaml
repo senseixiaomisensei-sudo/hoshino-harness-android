@@ -1,0 +1,9 @@
+name: hoshino_flutter_fixture
+description: WP-0 phone bench fixture. A painted page with no semantics, so the accessibility tree stays blind while the frame changes.
+publish_to: none
+version: 1.0.0+1
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+dependencies:
+  flutter:
+    sdk: flutter
