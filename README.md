@@ -2,27 +2,27 @@
 
 开源原生 Android AI Agent：Kotlin Compose 界面 + 原版 DeepSeek Harness（DSH）/ Cordis 内核，本地运行，使用你自己的模型 API Key。MIT。
 
-## 最新版本：0.2.1-m2.8（2026-10-31）
+## 最新版本：0.2.1-m2.8.2（2026-10-31，热修复）
 
-包名 `dev.hoshino.app`，versionCode 210，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
+包名 `dev.hoshino.app`，versionCode 212，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
 
-- [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.8/Hoshino-Harness-0.2.1-m2.8-arm64-v8a.apk)（非调试 fast 构建）
-- [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8)
-- arm64 APK：75,818,353 字节，SHA-256 `33e6ff3f1e78ecd3516afe9fa16ccf41c5caa687515c46f674fe11223cabbacc`；签名证书 SHA-256 `e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1`；构建与验收 [Actions run 41157048968](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/41157048968)
+- [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.8.2/Hoshino-Harness-0.2.1-m2.8.2-arm64-v8a.apk)（非调试 fast 构建）
+- [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8.2)
 
-主要内容：**手机操作**——Hoshino 在后台虚拟屏上替你操作 App，你照常用主屏。
+修复：
+- **`phone_*` 手机工具从未加载**（m2.8 / m2.8.1）：`android-phone` 插件 Schema 缺 `additionalProperties` 导致插件未激活，AI 改用 `system_shell` 在主屏开 App；已修复，构建时缺内置工具直接失败，旧模式白名单也不再屏蔽 `phone_*`。
+- **`system_shell` 拒绝主屏启动/输入命令**（`monkey`、`am start`、`input`、`cmd statusbar` 等未指向后台虚拟屏的），改走 `phone_launch_app` / `phone_do_steps`；App 被拉到主屏时自动挪回虚拟屏。
+- **虚拟屏任务前台服务保活**：任务进行中常驻通知（带「停止」），Hoshino 在后台时任务不被回收。
 
-- **设置向导**「设置手机操作」：同意页所有项默认不勾，未保存前不改任何系统设置；内置手机助手（移植 Mika 的无线调试配对与 ADB 连接），已授权 Shizuku 时直接用 Shizuku。
-- **读屏与操作**：无障碍读屏（压缩元素、稳定 ref、差异读屏），一次连续执行 1–20 步并由代码等待结果；开源文字识别 ONNX Runtime + PP-OCRv4，本机运行、模型按需下载并校验，不用 ML Kit / GMS / Firebase。
-- **接管与胶囊**：登录、验证码、密码、付款交给你（我来处理 / 处理好了 / 跳过）；悬浮胶囊可看小画面、停止、审批、插话。
-- **审批**沿用 m2.7 审批档（出厂手动）：不可逆步骤（发送、删除、下单、提交）逐步单独确认；用户主动开「无审批」时直接执行并记审计；**付款、密码、验证码、人机验证任何档位都交给你亲手完成**。
-- **体积代价**：arm64 APK 比 m2.7 大 7,629,108 字节（约 7.3 MiB，主要是 ONNX Runtime 原生库；安装后解压约 +18.3 MB，真机待测）；OCR 模型按需下载，不计入 APK。
+需小米 15S Pro 真机验收（CI 未覆盖）：开 App 只出现在后台虚拟屏、主屏不被打断；`system_shell` 开 App 被拒；前台服务通知与「停止」；HyperOS 后台长任务保活。CI 已验证：编译与单测、插件工具注册与守卫测试、arm64 真内核启动、x86_64 模拟器覆盖安装保留会话与配置、聊天与工具调用。
 
-需小米 15S Pro 真机验收（CI 未覆盖）：见 [docs/m2.8-phone-acceptance.md](docs/m2.8-phone-acceptance.md)。CI 已验证：编译与单测、arm64 真内核启动、x86_64 模拟器从旧版覆盖安装保留会话与配置、聊天与工具调用。
+上一版 [0.2.1-m2.8.1](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8.1)（2026-10-31，热修复：悬浮胶囊稳定、系统命令权限与报错）：arm64 APK 75,881,665 字节，SHA-256 `dd05836796d1fca75c9093004cc1efa918966efe5e8d9058df151b8f565cbfb3`。
+
+[0.2.1-m2.8](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8)（2026-10-31）：**手机操作**——后台虚拟屏、无障碍读屏、开源 OCR、接管与悬浮胶囊，审批沿用 m2.7 审批档；清单见 [docs/m2.8-phone-acceptance.md](docs/m2.8-phone-acceptance.md)。arm64 APK 75,818,353 字节，SHA-256 `33e6ff3f1e78ecd3516afe9fa16ccf41c5caa687515c46f674fe11223cabbacc`。
 
 构建与发布：推送 `codex/dsh-upgrade` 触发 `.github/workflows/dsh-upgrade.yml`，含 arm64 真内核启动、x86_64 覆盖安装 + 聊天 + 工具调用验收后自动发布。
 
-上一版 [0.2.1-m2.7](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.7)（2026-10-31）：流畅度、无审批档、插话与停止交代、会话管理、与 Mika 相同的 ChatGPT 登录、模型自带联网搜索。arm64 APK 68,189,245 字节，SHA-256 `67c1340cd44bd03fbdc215833b491ecf6dbcda840b412c2e69892b744a731241`。
+[0.2.1-m2.7](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.7)（2026-10-31）：流畅度、无审批档、插话与停止交代、会话管理、与 Mika 相同的 ChatGPT 登录、模型自带联网搜索。arm64 APK 68,189,245 字节，SHA-256 `67c1340cd44bd03fbdc215833b491ecf6dbcda840b412c2e69892b744a731241`。
 
 ## M2（2026-10-27，历史）
 
