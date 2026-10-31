@@ -92,6 +92,8 @@ object PhoneCapsule {
         private val screenOn = MutableStateFlow(true)
         private var expanded = false
         private var watchingFrames = false
+        private var frameJob: Job? = null
+        private var watched: AgentDisplay? = null
         private var fadeJob: Job? = null
         private var breath: Job? = null
         private val dp = ctx.resources.displayMetrics.density
@@ -313,14 +315,16 @@ object PhoneCapsule {
         private fun watchFrames() {
             val d = controller.display.value
             val want = cardAdded && d != null
-            if (want == watchingFrames) return
+            if (want == watchingFrames && watched === d) return
+            frameJob?.cancel(); frameJob = null
+            watched?.let { it.previewWatchers = (it.previewWatchers - 1).coerceAtLeast(0) }
+            watched = null
             watchingFrames = want
-            if (d == null) { preview.visibility = View.GONE; return }
-            if (want) {
-                d.previewWatchers++
-                preview.visibility = View.VISIBLE
-                scope.launch { d.frames.collect { b -> if (watchingFrames && b != null) preview.setImageBitmap(b) } }
-            } else d.previewWatchers = (d.previewWatchers - 1).coerceAtLeast(0)
+            if (!want || d == null) { if (d == null) preview.visibility = View.GONE; return }
+            d.previewWatchers++
+            watched = d
+            preview.visibility = View.VISIBLE
+            frameJob = scope.launch { d.frames.collect { b -> if (b != null) preview.setImageBitmap(b) } }
         }
 
         private fun focusable(on: Boolean) {
