@@ -123,3 +123,11 @@
 6. **模型自带联网搜索默认优先，Hoshino 搜索退为备用**：托管搜索就是同一个已审批的模型请求，不新增目的地，网络策略与审批不变。ChatGPT/Responses 路由加 `{"type":"web_search"}`（被拒再试 `web_search_preview`）；Chat Completions 用检测到的 `web_search_options`、`plugins:[{id:"web"}]` 或模型列表明确列出的联网变体名（不猜改模型名）；Anthropic 用 `web_search_20250305` 服务端工具。启用托管搜索时本次请求不提供 Hoshino 的 `web_search` 函数工具（不重复搜）；提供商拒绝托管搜索（HTTP 4xx，或流中在首个输出前失败）时自动改发原请求，Hoshino 搜索恢复可用，并记住该模型不可用。没有改动 `plugins/hoshino-m2` 的搜索工具注册。
 7. **流的展示**：pi-ai 不认识 `web_search_call`、`url_citation`、`server_tool_use`。插件把搜索调用改写为一段以 `🌐 ` 开头的思考/推理内容（App 显示为过程中的"联网搜索"步骤，回放给模型时剔除），把引用改写为回答末尾的 Markdown「来源」列表，均不报错。
 8. **能力探测**：Settings 的"检测"、或模型首次使用时，Kotlin `WebSearchProbe` 按 Responses web_search → web_search_preview → Chat web_search_options → plugins web → 列表中的联网变体（OpenAI 兼容）/ Anthropic 服务端工具的顺序发很小的请求，必须在回复里看到真实搜索证据（`web_search_call`、`url_citation`、`server_tool_use`…）才算可用，网关静默忽略未知字段不会被误判；429/401/5xx/网络错误记为"未定"而不是"不可用"。结果作为 provider 模型元数据 `webSearchMethod` 保存，设置里可查看并覆盖为自动/强制开/关；未知的 Chat 路由在已审批请求内顺带检测。中转站模型若检测到 Responses 方式，额外生成 `<id>--responses` 路由（同样用 pi-ai 标准 openai-responses），App 对该模型选这条路由。
+
+## 2026-10-31 M2.1 模型请求不再单独审批（补记）
+
+- **事实**：M2.1 提交 `03db186`（feat: add M2.1 instant sessions…）删除了 `plugins/android-policy` 里 `agent/request` 的逐次「模型网络请求」审批，并在原处写明理由：「Sending a user prompt to an explicitly enabled provider is already authorized. Tool/network side effects still use the tool approval policy above.」此后 M2.2–M2.6 五个发布版都沿用这一行为，当时没有在本文件记录。
+- **判断为有意的设计变更**：同一提交以注释替换而非误删；M2.1 的目标是即时会话（发送即开始，不再每条消息先弹卡）；用户在设置里显式添加并启用 provider、自己填 key，本身就是对「把提示词发给这个 provider」的授权。AGENTS.md 铁律「会改动用户文件、执行 shell、发网络请求的**工具**默认走审批」不受影响：`web_fetch`/`web_search`/写文件/shell 等工具调用仍按 `approval.json`（出厂 `manual`）审批；M2.7 的模型自带联网搜索也只是同一个模型请求，不新增目的地。
+- **与 M0 决定的关系**：M0 第 9 条「每个模型请求也逐次审批」是 M0 权限最小化阶段的决定，被 M2.1 取代。README「模型网络请求与 Agent 写操作默认审批」一句随之过时，待主代理发版时更新。
+- **测试**：`node-host/test/kernel.test.mjs` 原断言「出现 network 审批」自 M2.1 起一直失败（基线失败）。改为断言当前设计：普通模型请求**不**出现 `kind: network` 审批，同时**仍**出现 `write` 工具审批。没有删除断言。Android 侧 `DshHarnessClient` 里处理 `kind=network` 审批卡的分支保留（兼容旧插件/第三方插件仍可能发起该类审批）。
+

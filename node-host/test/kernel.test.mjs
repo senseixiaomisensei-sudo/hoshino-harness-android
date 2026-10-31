@@ -101,7 +101,10 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
     if(!denied)assert.ok(JSON.stringify(frames.slice(before)).includes('fixture Android'));
     turns++;
   }
-  assert.ok(approvals.some(a=>a.kind==='network'));assert.ok(approvals.some(a=>a.tool==='write'));
+  // M2.1（03db186）起，向用户已启用的 provider 发送提示词不再单独审批（见 docs/decisions.md「M2.1 模型请求不再单独审批（补记）」）；
+  // 工具的写入/网络副作用仍走工具审批。两条都断言，防止回退或误删工具审批。
+  assert.equal(approvals.some(a=>a.kind==='network'),false,'Plain model requests to an enabled provider must not raise a separate network approval');
+  assert.ok(approvals.some(a=>a.tool==='write'),'Tool writes still require approval');
   for(const [provider,model] of [['deepseek-max','deepseek-v4.1-flash-1017'],['claude-max','claude-sonnet-4-6'],['compatible-max','compatible-reasoner']]) {
     await rpc('session/selectModel',{sessionId,provider,model,reasoningEffort:'max'});
     const before=frames.length;
