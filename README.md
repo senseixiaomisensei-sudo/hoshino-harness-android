@@ -8,6 +8,7 @@
 
 - [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.8/Hoshino-Harness-0.2.1-m2.8-arm64-v8a.apk)（非调试 fast 构建）
 - [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8)
+- arm64 APK：75,818,353 字节，SHA-256 `33e6ff3f1e78ecd3516afe9fa16ccf41c5caa687515c46f674fe11223cabbacc`；签名证书 SHA-256 `e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1`；构建与验收 [Actions run 41157048968](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/41157048968)
 
 主要内容：**手机操作**——Hoshino 在后台虚拟屏上替你操作 App，你照常用主屏。
 
@@ -15,7 +16,7 @@
 - **读屏与操作**：无障碍读屏（压缩元素、稳定 ref、差异读屏），一次连续执行 1–20 步并由代码等待结果；开源文字识别 ONNX Runtime + PP-OCRv4，本机运行、模型按需下载并校验，不用 ML Kit / GMS / Firebase。
 - **接管与胶囊**：登录、验证码、密码、付款交给你（我来处理 / 处理好了 / 跳过）；悬浮胶囊可看小画面、停止、审批、插话。
 - **审批**沿用 m2.7 审批档（出厂手动）：不可逆步骤（发送、删除、下单、提交）逐步单独确认；用户主动开「无审批」时直接执行并记审计；**付款、密码、验证码、人机验证任何档位都交给你亲手完成**。
-- **体积代价**：ONNX Runtime 让 arm64 APK 增加约 6.6 MB（安装后约 +18.3 MB）。
+- **体积代价**：arm64 APK 比 m2.7 大 7,629,108 字节（约 7.3 MiB，主要是 ONNX Runtime 原生库；安装后解压约 +18.3 MB，真机待测）；OCR 模型按需下载，不计入 APK。
 
 需小米 15S Pro 真机验收（CI 未覆盖）：见 [docs/m2.8-phone-acceptance.md](docs/m2.8-phone-acceptance.md)。CI 已验证：编译与单测、arm64 真内核启动、x86_64 模拟器从旧版覆盖安装保留会话与配置、聊天与工具调用。
 
