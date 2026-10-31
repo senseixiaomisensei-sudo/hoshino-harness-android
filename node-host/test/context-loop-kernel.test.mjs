@@ -147,7 +147,7 @@ test('WP9-B context & loop quality on the original kernel', { timeout: 600000 },
 
   // ---- RT16: transient 503 retried on the same route; 401 explained
   const flaky = await prompt('flaky-fixture 再试试');
-  assert.equal(flaky.end.data.reason.kind, 'completed'); assert.equal(flaky.answer, '重试后成功。'); assert.equal(mock.counters.get('flaky'), 3);
+  assert.equal(flaky.end.data.reason.kind, 'completed', `${JSON.stringify(flaky.end)} flaky=${mock.counters.get('flaky')}`); assert.equal(flaky.answer, '重试后成功。'); assert.equal(mock.counters.get('flaky'), 3);
   const fatal = await prompt('fatal-fixture 再试试');
   assert.equal(fatal.end.data.reason.kind, 'error');
   await wait(() => notices.some(n => n.kind === 'failure' && n.failureKind === 'auth' && n.text.includes('API Key')));
