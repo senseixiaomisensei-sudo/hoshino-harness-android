@@ -55,5 +55,11 @@ interface IHoshinoPhoneShell {
     // 1=user is using it on the main screen (neither stopped nor started) 2=no launcher entry 3=error.
     // Own displays only.
     int restartApp(int displayId, String packageName) = 42;
+
+    // ---- m2.9.2 orientation: transaction codes 50-54 belong to the agent display shape (51-54 reserved). ----
+    // Resizes an own display to width x height (dpi kept by the caller) and points it at a new Surface of that size
+    // (VirtualDisplay.resize + setSurface), so the apps on it get a portrait/landscape configuration change.
+    // Never 0 (an older helper answers 0 = unsupported): 1=resized 3=error / not an own display.
+    int resizeDisplay(int displayId, in Surface surface, int width, int height, int dpi) = 50;
     void destroy() = 16777114;
 }

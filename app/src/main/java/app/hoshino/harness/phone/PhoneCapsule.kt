@@ -66,20 +66,21 @@ import kotlin.math.hypot
  *
  * Ball: the state ring (green = working, orange breathing = needs you, grey = idle) and the number of things waiting;
  * fades to 40 % after 3 s, can be dragged and snaps to the nearest edge (side and height ratio are remembered).
- * Double-tap sends the current main screen to the conversation (CU5). m2.8.1 rules kept: window add/remove is
- * debounced ([CapsuleVisibility]) and the ball stays up for the whole task (between steps too).
+ * m2.8.1 rules kept: window add/remove is debounced ([CapsuleVisibility]) and the ball stays up for the whole task.
  *
- * Tap expands it into the floating panel ([BallPanelModel]):
- *  - live picture of the agent display, zero-copy through [PreviewRelay] (GPU into a TextureView, at the user's frame
- *    rate 5–60 fps, [PhoneDisplayFps]); Bitmap fallback on ROMs where the relay is unavailable. Rendering stops when
- *    the panel collapses;
- *  - the picture resizes continuously (drag the corner handle or pinch), keeps the aspect ratio, and the panel moves by
- *    its header; size and position are remembered;
- *  - the current process: current step, the last few steps, status and elapsed time, stop;
- *  - approvals / questions / the agent's own handoff (CU4) and the steer box (CU3/RT18), as before;
- *  - 「接管」 pauses the agent ([ManualTakeover]): taps, long presses and swipes on the picture and text from the
- *    input row are mapped proportionally ([PreviewGeometry]) and injected into the agent display through the helper's
- *    existing inject calls; 「交还」 lets the agent continue and tells it what changed in one sentence.
+ * Gestures (m2.9.2, [TapClassifier]) on the ball, the title bar and the panel border only: single tap = control panel
+ * (stop, take over / hand back, frame rate, portrait / landscape / follow app, zoom reset, send screen), double tap =
+ * minimize to the ball (rendering stops). The single tap waits for the double-tap timeout; a drag never clicks.
+ *
+ * The panel ([BallPanelModel]):
+ *  - live picture of the agent display, zero-copy through [PreviewRelay] or the Bitmap fallback, both drawn through the
+ *    same [PreviewTransform] the touches are mapped with; portrait ⇄ landscape follows the display ([AgentDisplay.shape]);
+ *  - resizes from about ball size to nearly full screen (corner handle, 44 dp, or pinch), live LayoutParams updates,
+ *    size remembered per orientation, with or without a takeover;
+ *  - 自由操作 ([AutoTakeoverModel]): one-finger touches on the picture are injected at any time — the first touch takes
+ *    over and pauses the agent ([ManualTakeover]), and a few seconds after the user stops the agent continues (told what
+ *    changed in one sentence). 「接管」 keeps the takeover until 「交还」;
+ *  - approvals / questions / the agent's own handoff (CU4) and the steer box (CU3/RT18).
  * Hidden while Hoshino is in front, while the screen is locked, and when there is nothing to show (unless "常驻胶囊").
  *
  * Panel dragging follows Mika's OverlayFrame rule (cap/phone/a11y/OverlayHost.kt): it only becomes a drag after the
@@ -147,24 +148,36 @@ object PhoneCapsule {
         }
 
         // ---------- panel ----------
-        private val pad = px(12)
-        private val title = TextView(ctx).apply { setTextColor(Color.WHITE); textSize = 15f; maxLines = 1 }
-        private val elapsed = TextView(ctx).apply { setTextColor(Color.parseColor("#B3FFFFFF")); textSize = 12f; setPadding(px(6), 0, px(6), 0) }
+        private val pad = px(10)
+        private val title = TextView(ctx).apply { setTextColor(Color.WHITE); textSize = 14f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        private val elapsed = TextView(ctx).apply { setTextColor(Color.parseColor("#B3FFFFFF")); textSize = 12f; setPadding(px(6), 0, px(6), 0); maxLines = 1 }
+        private val minimizeButton = TextView(ctx).apply {
+            text = "—"; setTextColor(Color.WHITE); textSize = 16f; gravity = Gravity.CENTER
+            contentDescription = "最小化为悬浮球"
+            setOnClickListener { collapse() }
+        }
+        /** Title bar: drag = move, single tap = control panel, double tap = minimize (m2.9.2, [TapClassifier]). */
         private val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = px(HEADER_DP)
             addView(title, LinearLayout.LayoutParams(0, -2, 1f)); addView(elapsed)
-            addView(button("收起") { collapse() })
-            contentDescription = "拖动这里移动面板"
+            addView(minimizeButton, LinearLayout.LayoutParams(px(36), px(36)))
+            contentDescription = "拖动移动面板；单击打开控制面板；双击收回悬浮球"
         }
         private val liveView = TextureView(ctx).apply { isOpaque = true }
-        private val fallbackView = ImageView(ctx).apply { scaleType = ImageView.ScaleType.FIT_CENTER; visibility = View.GONE }
+        /** Bitmap fallback drawn through the same [PreviewTransform] as the touch mapping (ScaleType.MATRIX). */
+        private val fallbackView = ImageView(ctx).apply { scaleType = ImageView.ScaleType.MATRIX; visibility = View.GONE }
         private val placeholder = TextView(ctx).apply { text = "后台屏还没打开"; setTextColor(Color.GRAY); textSize = 12f; gravity = Gravity.CENTER }
         private val takeoverFrame = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(px(3), ORANGE) }
         private val frameOverlay = View(ctx).apply { background = takeoverFrame; visibility = View.GONE }
-        private val resizeHandle = TextView(ctx).apply {
-            text = "⤡"; setTextColor(Color.WHITE); textSize = 16f; gravity = Gravity.CENTER
-            background = GradientDrawable().apply { cornerRadius = px(8).toFloat(); setColor(Color.parseColor("#99000000")) }
-            contentDescription = "拖动调整预览大小"
+        /** Always-visible corner handle: ≥ 44 dp touch area, 28 dp visible mark (m2.9.2; was a dim 32 dp glyph). */
+        private val resizeHandle = FrameLayout(ctx).apply {
+            addView(TextView(ctx).apply {
+                text = "⤡"; setTextColor(Color.WHITE); textSize = 15f; gravity = Gravity.CENTER
+                background = GradientDrawable().apply { cornerRadius = px(8).toFloat(); setColor(Color.parseColor("#CC2F5BEA")); setStroke(px(1), Color.WHITE) }
+            }, FrameLayout.LayoutParams(px(28), px(28), Gravity.END or Gravity.BOTTOM).apply { rightMargin = px(4); bottomMargin = px(4) })
+            contentDescription = "拖动调整预览大小（也可双指捏合）"
+            elevation = px(4).toFloat()
         }
         private val previewBox = FrameLayout(ctx).apply {
             setBackgroundColor(Color.BLACK)
@@ -172,22 +185,24 @@ object PhoneCapsule {
             addView(liveView, FrameLayout.LayoutParams(-1, -1))
             addView(fallbackView, FrameLayout.LayoutParams(-1, -1))
             addView(frameOverlay, FrameLayout.LayoutParams(-1, -1))
-            addView(resizeHandle, FrameLayout.LayoutParams(px(32), px(32), Gravity.END or Gravity.BOTTOM))
+            addView(resizeHandle, FrameLayout.LayoutParams(px(HANDLE_DP), px(HANDLE_DP), Gravity.END or Gravity.BOTTOM))
         }
         private val fpsLabel = TextView(ctx).apply { setTextColor(Color.parseColor("#80FFFFFF")); textSize = 10f }
         private val current = TextView(ctx).apply { setTextColor(Color.WHITE); textSize = 13f }
         private val steps = TextView(ctx).apply { setTextColor(Color.parseColor("#CCFFFFFF")); textSize = 12f }
         private val reason = TextView(ctx).apply { setTextColor(Color.parseColor("#FFFFB74D")); textSize = 13f }
-        private val actions = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        // Clickable so taps on their text are not taken as taps on the panel border (which toggle the control panel).
+        private val actions = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; isClickable = true }
         private val input = editText("插话 / 回答（发给当前任务）").apply { imeOptions = EditorInfo.IME_ACTION_SEND }
         private val steerRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(input, LinearLayout.LayoutParams(0, -2, 1f)); addView(button("发送") { submit() })
         }
         private val takeInput = editText("输入到后台屏的文字").apply { imeOptions = EditorInfo.IME_ACTION_DONE }
+        private val takeoverHint = label("你在操作：直接在画面上点按 / 长按 / 滑动，AI 已暂停").apply { setTextColor(ORANGE) }
         private val takeoverBar = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; visibility = View.GONE
-            addView(label("接管中：在画面上点按 / 长按 / 滑动，AI 已暂停").apply { setTextColor(ORANGE) })
+            addView(takeoverHint)
             addView(LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 addView(takeInput, LinearLayout.LayoutParams(0, -2, 1f)); addView(button("输入") { sendTakeoverText() })
@@ -195,32 +210,49 @@ object PhoneCapsule {
             addView(row(button("返回") { sendKey(KeyEvent.KEYCODE_BACK) }, button("回车") { sendKey(KeyEvent.KEYCODE_ENTER) }, button("删除") { sendKey(KeyEvent.KEYCODE_DEL) }))
         }
         private val takeButton = button("接管") { toggleTakeover() }
+        private val orientationButtons = OrientationMode.entries.associateWith { m -> button(m.label) { controller.setOrientationMode(m) } }
+        private val fpsValue = TextView(ctx).apply { setTextColor(Color.WHITE); textSize = 13f; gravity = Gravity.CENTER }
+        /** The control panel (single tap on the ball / title bar): stop, take over / hand back, fps, orientation, zoom reset. */
+        private val controls = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; visibility = View.GONE; isClickable = true
+            addView(fpsLabel)
+            addView(current); addView(steps); addView(reason)
+            addView(row(*orientationButtons.values.toTypedArray()))
+            addView(row(button("帧率 −") { stepFps(-FpsMath.STEP) }, fpsValue, button("帧率 +") { stepFps(FpsMath.STEP) }))
+            addView(row(button("停止") { stopTask() }, takeButton, button("缩放复位") { resetZoom() }))
+            addView(takeoverBar); addView(steerRow)
+            addView(row(button("发此刻屏幕") { sendScreen() }))
+        }
         private val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(pad, px(10), pad, px(10))
-            background = GradientDrawable().apply { cornerRadius = px(18).toFloat(); setColor(Color.parseColor("#F2202027")) }
+            setPadding(pad, px(6), pad, pad)
+            background = GradientDrawable().apply { cornerRadius = px(16).toFloat(); setColor(Color.parseColor("#F2202027")) }
             addView(header)
-            addView(previewBox, LinearLayout.LayoutParams(px(DEFAULT_PREVIEW_DP), px(DEFAULT_PREVIEW_DP) * 2).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = px(6) })
-            addView(fpsLabel)
-            addView(current); addView(steps); addView(reason); addView(actions)
-            addView(takeoverBar); addView(steerRow)
-            addView(row(button("停止") { stopTask() }, takeButton, button("发此刻屏幕") { sendScreen() }))
+            addView(previewBox, LinearLayout.LayoutParams(px(DEFAULT_PREVIEW_DP), px(DEFAULT_PREVIEW_DP) * 2).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = px(4) })
+            addView(actions)
+            addView(controls)
         }
         private val cardParams = overlayParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.TOP or Gravity.START
             flags = flags or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
         }
-        private var previewW = prefs.getInt("previewW", px(DEFAULT_PREVIEW_DP))
+        private var previewW = savedPreviewW(DisplayOrientation.Portrait)
         private var dotAdded = false
         private var cardAdded = false
+        private var controlsShown = false
+        private val autoTakeover = AutoTakeoverModel()
+        private var autoJob: Job? = null
+        private val doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout().toLong()
 
         /** Which display the preview is bound to, and whether through Bitmaps (fallback) or the zero-copy relay. */
         private var bound: AgentDisplay? = null
+        private var boundShape: Pair<Int, Int>? = null
         private var usingFallback = false
         private var liveSurface: Surface? = null
         private var lastFrames = 0L
         private var lastFramesAt = 0L
         private var lastRate = 0L
+        private var lastBitmap: Bitmap? = null
 
         private val screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) { screenOn.value = i.action != Intent.ACTION_SCREEN_OFF }
@@ -232,6 +264,7 @@ object PhoneCapsule {
             installPanelDrag()
             installPreviewTouch()
             installResize()
+            fallbackView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyFallbackMatrix() }
             liveView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                 override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
                     val s = Surface(st)
@@ -263,16 +296,28 @@ object PhoneCapsule {
             }
             scope.launch {
                 controller.manual.active.collect { m ->
+                    if (m == null) { autoTakeover.ended(); autoJob?.cancel(); autoJob = null }
+                    else autoTakeover.startedElsewhere(System.currentTimeMillis())
                     model.takeoverChanged(m != null)
                     if (m != null && dotAdded && !cardAdded) expand()
                     showTakeover(m != null)
                     refreshVisibility()
                 }
             }
+            scope.launch { controller.orientationMode.collect { m -> orientationButtons.forEach { (k, b) -> b.alpha = if (k == m) 1f else 0.55f } } }
+            scope.launch { PhoneDisplayFps.of(ctx).fps.collect { fpsValue.text = "$it fps" } }
             scope.launch { runCatching { Hoshino.client.sessions.collect { refreshVisibility() } } }
             scope.launch { screenOn.collect { refreshVisibility() } }
             scope.launch { PhoneConsent.of(ctx).state.collect { refreshVisibility() } }
-            scope.launch { controller.display.collect { bindPreview() } }
+            // m2.9.2: rebind (and resize the window to the new aspect) whenever the display turns portrait ⇄ landscape.
+            scope.launch {
+                var shapeJob: Job? = null
+                controller.display.collect { d ->
+                    shapeJob?.cancel()
+                    bindPreview()
+                    shapeJob = d?.let { disp -> scope.launch { disp.shape.collect { shapeChanged(disp) } } }
+                }
+            }
         }
 
         fun foreground(pkg: String) { foreground.value = pkg; refreshVisibility() }
@@ -350,7 +395,7 @@ object PhoneCapsule {
             steps.visibility = if (s.recent.size > 1) View.VISIBLE else View.GONE
             reason.text = s.reason.orEmpty()
             reason.visibility = if (s.reason.isNullOrBlank()) View.GONE else View.VISIBLE
-            takeButton.text = if (manual) "交还" else "接管"
+            takeButton.text = when { !manual -> "接管"; autoTakeover.mode == AutoTakeoverModel.Mode.Auto -> "保持接管"; else -> "交还" }
             takeButton.isEnabled = manual || (takeover == null && controller.display.value != null)
             tick()
             actions.removeAllViews()
@@ -399,14 +444,53 @@ object PhoneCapsule {
             if (!on) takeInput.setText("")
         }
 
+        /** 「接管」 makes the takeover sticky (no automatic hand-back); 「交还」 ends it. */
         private fun toggleTakeover() {
-            if (controller.manual.active.value != null) {
-                controller.endManualTakeover()
-                focusable(false)
-                toast("已交还，AI 继续（已告诉它你改了什么）")
-                return
+            when (autoTakeover.button(System.currentTimeMillis())) {
+                AutoTakeoverModel.Action.Begin -> if (!controller.beginManualTakeover()) { autoTakeover.beginFailed(); toast(takeoverRefusal()) }
+                AutoTakeoverModel.Action.End -> { controller.endManualTakeover(); focusable(false); toast("已交还，AI 继续（已告诉它你改了什么）") }
+                AutoTakeoverModel.Action.None -> toast("已保持接管：点「交还」前 AI 不会继续")
             }
-            if (!controller.beginManualTakeover()) toast(if (PhoneTakeover.of(ctx).pending.value != null) "AI 正在请你处理一步，用上面的按钮" else "后台屏还没打开，暂时不能接管")
+            render(controller.state.value, approvals.value.size + questions.value.size, PhoneTakeover.of(ctx).pending.value, controller.manual.active.value != null)
+        }
+
+        private fun takeoverRefusal() = if (PhoneTakeover.of(ctx).pending.value != null) "AI 正在请你处理一步，用上面的按钮" else "后台屏还没打开，暂时不能操作"
+
+        /**
+         * 「自由操作」: a touch on the picture takes over at once (AI paused). Returns false when it cannot (no display,
+         * the agent's own hand-over pending); then nothing is injected.
+         */
+        private fun touchTakeover(now: Long): Boolean {
+            if (autoTakeover.touchDown(now) == AutoTakeoverModel.Action.Begin && !controller.beginManualTakeover()) {
+                autoTakeover.beginFailed(); toast(takeoverRefusal()); return false
+            }
+            autoJob?.cancel(); autoJob = null
+            return controller.manual.active.value != null
+        }
+
+        private fun touchReleased(now: Long) {
+            autoTakeover.touchUp(now)
+            scheduleAutoReturn()
+        }
+
+        /** Hands the display back to the AI after the idle time of an automatic takeover. */
+        private fun scheduleAutoReturn() {
+            autoJob?.cancel(); autoJob = null
+            val at = autoTakeover.nextCheckAt() ?: return
+            autoJob = scope.launch {
+                delay((at - System.currentTimeMillis()).coerceAtLeast(0) + 16)
+                if (autoTakeover.tick(System.currentTimeMillis()) == AutoTakeoverModel.Action.End) {
+                    controller.endManualTakeover(); focusable(false); toast("你停下了，AI 继续")
+                } else scheduleAutoReturn()
+            }
+        }
+
+        private fun ensureTakeover(): Boolean {
+            val now = System.currentTimeMillis()
+            if (controller.manual.active.value != null) { autoTakeover.activity(now); scheduleAutoReturn(); return true }
+            val ok = touchTakeover(now)
+            touchReleased(now)
+            return ok
         }
 
         // ---------- user input while taken over ----------
@@ -415,12 +499,12 @@ object PhoneCapsule {
             scope.launch { if (!controller.manualInput(kind, call)) toast("没有送达后台屏") }
         }
 
-        private fun sendKey(code: Int) = inject(ManualTakeover.Input.Key) { sh, id -> sh.injectKey(id, code) }
+        private fun sendKey(code: Int) { if (ensureTakeover()) inject(ManualTakeover.Input.Key) { sh, id -> sh.injectKey(id, code) } }
 
         /** Printable text key by key; anything else (e.g. Chinese) through the helper's borrowed clipboard + Ctrl+V. */
         private fun sendTakeoverText() {
             val text = takeInput.text?.toString().orEmpty()
-            if (text.isEmpty()) return
+            if (text.isEmpty() || !ensureTakeover()) return
             takeInput.setText("")
             inject(ManualTakeover.Input.Text) { sh, id ->
                 if (ShellText.typeable(text) && sh.injectText(id, text) == ShellText.TEXT_TYPED) true
@@ -441,13 +525,19 @@ object PhoneCapsule {
         private var pinchStartW = 0
         private var pinchScale = 1f
 
+        /**
+         * Picture touches. One finger: operates the agent display at any time (自由操作 takes over automatically on the
+         * first touch); two fingers: pinch to resize, never injected. Mapping goes through [PreviewTransform], the same
+         * transform the picture is drawn with.
+         */
         private fun installPreviewTouch() {
             val scale = ScaleGestureDetector(ctx, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 override fun onScaleBegin(d: ScaleGestureDetector): Boolean { pinching = true; stroking = false; pinchStartW = previewW; pinchScale = 1f; return true }
                 override fun onScale(d: ScaleGestureDetector): Boolean {
                     pinchScale *= d.scaleFactor
-                    val disp = controller.display.value ?: return true
-                    applyPreviewSize(PreviewGeometry.pinch(pinchStartW, pinchScale, disp.width, disp.height, limits()))
+                    val (sw, sh) = sourceSize()
+                    applyPreviewSize(PreviewGeometry.pinch(pinchStartW, pinchScale, sw, sh, limits()))
+                    autoTakeover.activity(System.currentTimeMillis())
                     return true
                 }
                 override fun onScaleEnd(d: ScaleGestureDetector) { savePanel() }
@@ -455,33 +545,45 @@ object PhoneCapsule {
             previewBox.setOnTouchListener { _, e ->
                 scale.onTouchEvent(e)
                 val disp = controller.display.value
-                val manual = controller.manual.active.value != null
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         pinching = false
                         stroking = false
-                        if (manual && disp != null) PreviewGeometry.mapToDisplay(e.x, e.y, previewBox.width, previewBox.height, disp.width, disp.height)?.let { (x, y) ->
+                        val hit = disp?.let { transform(it).toDisplay(e.x, e.y) }
+                        if (hit != null && touchTakeover(System.currentTimeMillis())) {
                             strokeX.clear(); strokeY.clear(); strokeT.clear()
                             strokeDown = e.eventTime; strokeMoved = 0f; strokeStartX = e.x; strokeStartY = e.y
-                            strokeX += x; strokeY += y; strokeT += 0L
+                            strokeX += hit.first; strokeY += hit.second; strokeT += 0L
                             stroking = true
-                        }
+                        } else if (hit != null) autoTakeover.touchUp(System.currentTimeMillis())
+                        touchCounted = hit != null
                     }
                     MotionEvent.ACTION_POINTER_DOWN -> stroking = false
                     MotionEvent.ACTION_MOVE -> if (stroking && !pinching && disp != null) {
                         for (h in 0 until e.historySize) addPoint(e.getHistoricalX(h), e.getHistoricalY(h), e.getHistoricalEventTime(h), disp)
                         addPoint(e.x, e.y, e.eventTime, disp)
                     }
-                    MotionEvent.ACTION_UP -> if (stroking && !pinching && disp != null) { addPoint(e.x, e.y, e.eventTime, disp); finishStroke(e.eventTime - strokeDown) }
-                    MotionEvent.ACTION_CANCEL -> stroking = false
+                    MotionEvent.ACTION_UP -> {
+                        if (stroking && !pinching && disp != null) { addPoint(e.x, e.y, e.eventTime, disp); finishStroke(e.eventTime - strokeDown) }
+                        stroking = false
+                        if (touchCounted) { touchCounted = false; touchReleased(System.currentTimeMillis()) }
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        stroking = false
+                        if (touchCounted) { touchCounted = false; touchReleased(System.currentTimeMillis()) }
+                    }
                 }
                 true
             }
         }
 
+        private var touchCounted = false
+
+        private fun transform(d: AgentDisplay) = PreviewTransform(d.width, d.height, previewBox.width, previewBox.height)
+
         private fun addPoint(vx: Float, vy: Float, time: Long, disp: AgentDisplay) {
             strokeMoved = maxOf(strokeMoved, hypot(vx - strokeStartX, vy - strokeStartY))
-            val (x, y) = PreviewGeometry.mapClamped(vx, vy, previewBox.width, previewBox.height, disp.width, disp.height)
+            val (x, y) = transform(disp).toDisplayClamped(vx, vy)
             strokeX += x; strokeY += y; strokeT += time - strokeDown
         }
 
@@ -503,28 +605,70 @@ object PhoneCapsule {
 
         // ---------- panel size and position ----------
 
-        private fun limits(): PreviewGeometry.Limits {
-            val dm = ctx.resources.displayMetrics
-            val maxW = (dm.widthPixels - 2 * pad - px(8)).coerceAtLeast(px(MIN_PREVIEW_DP))
-            val maxH = (dm.heightPixels - px(PANEL_CHROME_DP)).coerceAtLeast(px(MIN_PREVIEW_DP) * 2)
-            return PreviewGeometry.Limits(px(MIN_PREVIEW_DP), maxW, maxH)
+        private fun sourceSize(): Pair<Int, Int> {
+            val disp = controller.display.value
+            return if (disp != null) disp.width to disp.height
+            else ctx.resources.displayMetrics.let { minOf(it.widthPixels, it.heightPixels) to maxOf(it.widthPixels, it.heightPixels) }
         }
 
+        private fun currentOrientation(): DisplayOrientation = sourceSize().let { (w, h) -> OrientationPolicy.of(w, h) }
+
+        private fun prefKey(o: DisplayOrientation) = "previewW_" + o.key
+
+        private fun savedPreviewW(o: DisplayOrientation): Int =
+            prefs.getInt(prefKey(o), if (o == DisplayOrientation.Portrait) prefs.getInt("previewW", px(DEFAULT_PREVIEW_DP)) else px(DEFAULT_LANDSCAPE_DP))
+
+        /**
+         * From about ball size up to nearly the whole screen. Only the title bar (and the control panel or a pending
+         * question, when shown) is subtracted — before m2.9.2 a fixed ~300 dp of process lines left almost no range.
+         */
+        private fun limits(): PreviewGeometry.Limits {
+            val dm = ctx.resources.displayMetrics
+            val extra = (if (controlsShown) controls.height.takeIf { it > 0 } ?: px(CONTROLS_DP) else 0) + (if (actions.childCount > 0) actions.height else 0)
+            val chromeH = px(HEADER_DP) + px(6) + pad + px(4) + px(SCREEN_MARGIN_DP) + extra
+            return PreviewGeometry.limitsFor(dm.widthPixels, dm.heightPixels, 2 * pad + px(SCREEN_MARGIN_DP), chromeH, px(MIN_PREVIEW_DP))
+        }
+
+        /** Updates the picture box and the window's LayoutParams in place (live while dragging / pinching). */
         private fun applyPreviewSize(width: Int) {
-            val disp = controller.display.value
-            val (sw, sh) = if (disp != null) disp.width to disp.height else ctx.resources.displayMetrics.let { minOf(it.widthPixels, it.heightPixels) to maxOf(it.widthPixels, it.heightPixels) }
+            val (sw, sh) = sourceSize()
             previewW = PreviewGeometry.clampWidth(width, sw, sh, limits())
             val lp = previewBox.layoutParams as LinearLayout.LayoutParams
-            lp.width = previewW
-            lp.height = PreviewGeometry.heightFor(previewW, sw, sh)
-            previewBox.layoutParams = lp
-            cardParams.width = maxOf(previewW + 2 * pad, px(MIN_PANEL_DP))
+            val h = PreviewGeometry.heightFor(previewW, sw, sh)
+            if (lp.width != previewW || lp.height != h) {
+                lp.width = previewW
+                lp.height = h
+                previewBox.layoutParams = lp
+            }
+            cardParams.width = previewW + 2 * pad
+            elapsed.visibility = if (previewW < px(COMPACT_DP)) View.GONE else View.VISIBLE
             if (cardAdded) runCatching { wm.updateViewLayout(card, cardParams) }
+            applyFallbackMatrix()
+        }
+
+        private fun resetZoom() {
+            prefs.edit().remove(prefKey(currentOrientation())).apply()
+            applyPreviewSize(if (currentOrientation() == DisplayOrientation.Portrait) px(DEFAULT_PREVIEW_DP) else px(DEFAULT_LANDSCAPE_DP))
+            savePanel()
+        }
+
+        private fun stepFps(delta: Int) {
+            val fps = PhoneDisplayFps.of(ctx)
+            fps.set(fps.fps.value + delta)
+        }
+
+        private fun showControls(on: Boolean) {
+            controlsShown = on
+            controls.visibility = if (on) View.VISIBLE else View.GONE
+            if (on) focusable(false)
+            // Re-fit: the controls take room; the saved size comes back when they are folded away again.
+            applyPreviewSize(savedPreviewW(currentOrientation()))
+            card.post { clampPanel() }
         }
 
         private fun placePanel() {
             val dm = ctx.resources.displayMetrics
-            val w = cardParams.width.takeIf { it > 0 } ?: px(MIN_PANEL_DP)
+            val w = cardParams.width.takeIf { it > 0 } ?: px(DEFAULT_PREVIEW_DP)
             val savedX = prefs.getInt("panelX", -1)
             val savedY = prefs.getInt("panelY", -1)
             cardParams.x = if (savedX >= 0) savedX else (dm.widthPixels - w) / 2
@@ -534,7 +678,7 @@ object PhoneCapsule {
 
         private fun clampPanel() {
             val dm = ctx.resources.displayMetrics
-            val h = card.height.takeIf { it > 0 } ?: (PreviewGeometry.heightFor(previewW, 9, 20) + px(PANEL_CHROME_DP) / 2)
+            val h = card.height.takeIf { it > 0 } ?: (previewBox.layoutParams.height + px(HEADER_DP) + 2 * pad)
             val (x, y) = PreviewGeometry.clampPosition(cardParams.x, cardParams.y, cardParams.width.coerceAtLeast(1), h, dm.widthPixels, dm.heightPixels)
             cardParams.x = x; cardParams.y = y
             if (cardAdded) runCatching { wm.updateViewLayout(card, cardParams) }
@@ -542,33 +686,56 @@ object PhoneCapsule {
 
         private fun savePanel() {
             clampPanel()
-            prefs.edit().putInt("previewW", previewW).putInt("panelX", cardParams.x).putInt("panelY", cardParams.y).apply()
+            val e = prefs.edit().putInt("panelX", cardParams.x).putInt("panelY", cardParams.y)
+            // The size is remembered per orientation, and only the size the user chose without the controls open.
+            if (!controlsShown) e.putInt(prefKey(currentOrientation()), previewW)
+            e.apply()
         }
 
-        /** Header drag (Mika OverlayFrame rule: a drag only after the touch slop, deltas in screen coordinates). */
+        /**
+         * Title bar and border (the card's padding): drag moves the panel (Mika OverlayFrame rule: only past the touch
+         * slop, deltas in screen coordinates); single tap toggles the control panel; double tap minimizes to the ball.
+         * The single tap waits for the double-tap timeout, so a double tap never opens the controls first.
+         */
         private fun installPanelDrag() {
-            var downX = 0f; var downY = 0f; var startX = 0; var startY = 0; var dragging = false
-            header.setOnTouchListener { _, e ->
+            val taps = TapClassifier(touchSlop.toFloat(), doubleTapTimeout)
+            var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
+            var pending: Job? = null
+            val listener = View.OnTouchListener { _, e ->
+                val now = e.eventTime
                 when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startX = cardParams.x; startY = cardParams.y; dragging = false }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = e.rawX - downX; val dy = e.rawY - downY
-                        if (!dragging && hypot(dx, dy) > touchSlop) dragging = true
-                        if (dragging) { cardParams.x = startX + dx.toInt(); cardParams.y = startY + dy.toInt(); runCatching { wm.updateViewLayout(card, cardParams) } }
+                    MotionEvent.ACTION_DOWN -> { pending?.cancel(); taps.down(now, e.rawX, e.rawY); downX = e.rawX; downY = e.rawY; startX = cardParams.x; startY = cardParams.y }
+                    MotionEvent.ACTION_MOVE -> if (taps.move(e.rawX, e.rawY)) {
+                        cardParams.x = startX + (e.rawX - downX).toInt(); cardParams.y = startY + (e.rawY - downY).toInt()
+                        runCatching { wm.updateViewLayout(card, cardParams) }
                     }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (dragging) savePanel()
+                    MotionEvent.ACTION_UP -> {
+                        val wasDrag = taps.dragging
+                        when (taps.up(now)) {
+                            TapClassifier.Click.Double -> collapse()
+                            else -> taps.pendingUntil?.let { at ->
+                                pending = scope.launch {
+                                    delay((at - now).coerceAtLeast(0) + 8)
+                                    if (taps.flush(at) == TapClassifier.Click.Single) showControls(!controlsShown)
+                                }
+                            }
+                        }
+                        if (wasDrag) savePanel()
+                    }
+                    MotionEvent.ACTION_CANCEL -> { if (taps.dragging) savePanel(); taps.cancel() }
                 }
                 true
             }
+            header.setOnTouchListener(listener)
+            card.setOnTouchListener(listener)
         }
 
         private fun installResize() {
             var downX = 0f; var downY = 0f; var startW = 0
-            resizeHandle.setOnTouchListener { _, e ->
-                val disp = controller.display.value
-                val (sw, sh) = if (disp != null) disp.width to disp.height else 9 to 20
+            resizeHandle.setOnTouchListener { v, e ->
+                val (sw, sh) = sourceSize()
                 when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startW = previewW }
+                    MotionEvent.ACTION_DOWN -> { v.parent?.requestDisallowInterceptTouchEvent(true); downX = e.rawX; downY = e.rawY; startW = previewW }
                     MotionEvent.ACTION_MOVE -> applyPreviewSize(PreviewGeometry.resizeByCorner(startW, e.rawX - downX, e.rawY - downY, sw, sh, limits()))
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> savePanel()
                 }
@@ -586,17 +753,25 @@ object PhoneCapsule {
                 placeholder.text = if (d == null) "后台屏还没打开（任务开始后出现）" else ""
                 return
             }
-            if (bound === d) return
+            if (bound === d && boundShape == d!!.shape.value) return
             unbindPreview()
             bound = d
+            boundShape = d!!.shape.value
             placeholder.text = ""
-            applyPreviewSize(previewW)
-            if (d!!.zeroCopy) {
+            applyPreviewSize(savedPreviewW(d.orientation))
+            if (d.zeroCopy) {
                 usingFallback = false
                 liveView.visibility = View.VISIBLE
                 fallbackView.visibility = View.GONE
                 liveSurface?.let { s -> if (!d.attachPreview(s)) useFallback(d) }
             } else useFallback(d)
+        }
+
+        /** The display turned portrait ⇄ landscape: new aspect, new saved size, rebind (the relay may be gone). */
+        private fun shapeChanged(d: AgentDisplay) {
+            if (bound === d && boundShape != d.shape.value) { unbindPreview(); bindPreview() }
+            else if (bound == null && cardAdded) applyPreviewSize(savedPreviewW(d.orientation))
+            card.post { clampPanel() }
         }
 
         private fun useFallback(d: AgentDisplay) {
@@ -605,9 +780,24 @@ object PhoneCapsule {
             liveView.visibility = View.GONE
             fallbackView.visibility = View.VISIBLE
             d.previewWatchers++
-            d.previewNow()?.let(fallbackView::setImageBitmap)
+            d.previewNow()?.let(::showFrame)
             frameJob?.cancel()
-            frameJob = scope.launch { d.frames.collect { b -> if (b != null) fallbackView.setImageBitmap(b) } }
+            frameJob = scope.launch { d.frames.collect { b -> if (b != null) showFrame(b) } }
+        }
+
+        private fun showFrame(b: Bitmap) {
+            lastBitmap = b
+            fallbackView.setImageBitmap(b)
+            applyFallbackMatrix()
+        }
+
+        /** Draws the preview Bitmap into exactly the rectangle the touches are mapped through ([PreviewTransform]). */
+        private fun applyFallbackMatrix() {
+            val b = lastBitmap ?: return
+            val d = controller.display.value ?: return
+            if (fallbackView.width <= 0 || fallbackView.height <= 0) return
+            val t = PreviewTransform(d.width, d.height, fallbackView.width, fallbackView.height)
+            fallbackView.imageMatrix = android.graphics.Matrix().apply { setValues(t.bitmapMatrix(b.width, b.height)) }
         }
 
         private fun unbindPreview() {
@@ -617,16 +807,20 @@ object PhoneCapsule {
             else liveSurface?.let { d.detachPreview(it) }
             usingFallback = false
             bound = null
+            boundShape = null
+            lastBitmap = null
             lastFrames = 0; lastFramesAt = 0; lastRate = 0
         }
 
         // ---------- expand / collapse ----------
 
-        private fun expand() {
-            if (cardAdded) return
+        private fun expand(withControls: Boolean = false) {
+            if (cardAdded) { if (withControls && !controlsShown) showControls(true); return }
             if (model.mode == BallPanelModel.Mode.Ball) model.tapBall()
             if (model.mode != BallPanelModel.Mode.Panel) return
-            applyPreviewSize(previewW)
+            controlsShown = withControls
+            controls.visibility = if (withControls) View.VISIBLE else View.GONE
+            applyPreviewSize(savedPreviewW(currentOrientation()))
             placePanel()
             runCatching { wm.addView(card, cardParams); cardAdded = true }
             fadeJob?.cancel(); dot.alpha = 1f
@@ -636,8 +830,15 @@ object PhoneCapsule {
             card.post { clampPanel() }
         }
 
-        /** 「收起」: refused while the user has taken over (the picture is the only way to operate). */
+        /**
+         * Minimize to the ball (double tap / 「—」): stops rendering. An automatic takeover (自由操作) is handed back first;
+         * a takeover the user made sticky with 「接管」 is refused (the picture is the only way to operate).
+         */
         private fun collapse() {
+            if (autoTakeover.mode == AutoTakeoverModel.Mode.Auto && controller.manual.active.value != null) {
+                controller.endManualTakeover()
+                model.takeoverChanged(false)
+            }
             if (!model.collapse()) { toast("接管中不能收起，先点「交还」"); return }
             closePanel()
             refreshVisibility()
@@ -742,25 +943,37 @@ object PhoneCapsule {
             if (on) breath = scope.launch { while (true) { dot.animate().scaleX(1.08f).scaleY(1.08f).setDuration(700).start(); delay(700); dot.animate().scaleX(1f).scaleY(1f).setDuration(700).start(); delay(700) } }
         }
 
+        /**
+         * Ball: drag moves it (snaps to the edge, never a click); single tap opens the panel with its control panel; double
+         * tap minimizes (an open panel goes back to the ball and stops rendering). The single tap waits for the double-tap
+         * timeout ([ViewConfiguration.getDoubleTapTimeout]) so the two never both fire.
+         */
         private fun installDrag() {
-            val detector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
-                override fun onSingleTapConfirmed(e: MotionEvent): Boolean { if (cardAdded) collapse() else expand(); return true }
-                override fun onDoubleTap(e: MotionEvent): Boolean { sendScreen(); return true }
-            })
-            var downX = 0f; var downY = 0f; var startX = 0; var startY = 0; var dragging = false
+            val taps = TapClassifier(touchSlop.toFloat(), doubleTapTimeout)
+            var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
+            var pending: Job? = null
             dot.setOnTouchListener { _, e ->
-                detector.onTouchEvent(e)
+                val now = e.eventTime
                 when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startX = dotParams.x; startY = dotParams.y; dragging = false; dot.alpha = 1f; fadeJob?.cancel() }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = e.rawX - downX; val dy = e.rawY - downY
-                        if (dragging || dx * dx + dy * dy > touchSlop * touchSlop) {
-                            dragging = true
-                            dotParams.x = startX + dx.toInt(); dotParams.y = startY + dy.toInt()
-                            runCatching { wm.updateViewLayout(dot, dotParams) }
-                        }
+                    MotionEvent.ACTION_DOWN -> { pending?.cancel(); taps.down(now, e.rawX, e.rawY); downX = e.rawX; downY = e.rawY; startX = dotParams.x; startY = dotParams.y; dot.alpha = 1f; fadeJob?.cancel() }
+                    MotionEvent.ACTION_MOVE -> if (taps.move(e.rawX, e.rawY)) {
+                        dotParams.x = startX + (e.rawX - downX).toInt(); dotParams.y = startY + (e.rawY - downY).toInt()
+                        runCatching { wm.updateViewLayout(dot, dotParams) }
                     }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (dragging) snap() else scheduleFade()
+                    MotionEvent.ACTION_UP -> {
+                        val wasDrag = taps.dragging
+                        when (taps.up(now)) {
+                            TapClassifier.Click.Double -> { if (cardAdded) collapse(); scheduleFade() }
+                            else -> taps.pendingUntil?.let { at ->
+                                pending = scope.launch {
+                                    delay((at - now).coerceAtLeast(0) + 8)
+                                    if (taps.flush(at) == TapClassifier.Click.Single) { if (cardAdded) showControls(!controlsShown) else expand(withControls = true) }
+                                }
+                            }
+                        }
+                        if (wasDrag) snap() else scheduleFade()
+                    }
+                    MotionEvent.ACTION_CANCEL -> { if (taps.dragging) snap(); taps.cancel() }
                 }
                 true
             }
@@ -814,10 +1027,17 @@ object PhoneCapsule {
             const val FADE_AFTER_MS = 3_000L
             const val FADED = 0.4f
             const val DEFAULT_PREVIEW_DP = 180
-            const val MIN_PREVIEW_DP = 120
-            const val MIN_PANEL_DP = 280
-            /** Room left for header, process lines and buttons when the picture is made as tall as possible. */
-            const val PANEL_CHROME_DP = 300
+            const val DEFAULT_LANDSCAPE_DP = 320
+            /** Smallest picture: about the size of the ball (52 dp) plus a little, so it can be shrunk almost away. */
+            const val MIN_PREVIEW_DP = 64
+            const val HEADER_DP = 36
+            /** Corner handle touch area (≥ 32 dp asked; 44 dp given). */
+            const val HANDLE_DP = 44
+            /** Fallback height of the control panel before it was measured. */
+            const val CONTROLS_DP = 300
+            const val SCREEN_MARGIN_DP = 8
+            /** Below this picture width the title bar drops the elapsed time. */
+            const val COMPACT_DP = 150
             const val PASTE_SETTLE_MS = 300L
         }
     }

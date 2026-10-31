@@ -76,6 +76,12 @@ class PhoneController private constructor(private val context: Context) {
     /** Floating-panel takeover: while active every agent action waits (AI paused) and only the user's input goes in. */
     val manual = ManualTakeover()
     private var beforeManual: PhoneTaskState.Status? = null
+    private val shapePrefs = context.getSharedPreferences("phone_capsule", Context.MODE_PRIVATE)
+    private val _orientationMode = MutableStateFlow(OrientationMode.of(shapePrefs.getString("orientation", null)))
+    /** m2.9.2: 竖屏 / 横屏 / 跟随 App for the agent display (panel control, persisted). */
+    val orientationMode: StateFlow<OrientationMode> = _orientationMode.asStateFlow()
+    private val follower = OrientationFollower()
+    private var followJob: Job? = null
 
     init {
         // m2.9: a foreground service (with its ongoing notice) lives exactly as long as the agent display.
@@ -86,6 +92,59 @@ class PhoneController private constructor(private val context: Context) {
         }
         // User frame-rate setting (5–60 fps) follows the display as it is created and recreated.
         scope.launch { combine(_display, PhoneDisplayFps.of(context).fps) { d, fps -> d to fps }.collect { (d, fps) -> d?.userFps = fps } }
+        // m2.9.2: a new display starts in the picked orientation; Follow-App watches the app in front while it exists.
+        scope.launch {
+            combine(_display, _orientationMode) { d, m -> d to m }.collect { (d, m) ->
+                followJob?.cancel(); followJob = null; follower.reset()
+                if (d == null) return@collect
+                when (m) {
+                    OrientationMode.Portrait -> applyOrientation(d, DisplayOrientation.Portrait)
+                    OrientationMode.Landscape -> applyOrientation(d, DisplayOrientation.Landscape)
+                    OrientationMode.FollowApp -> followJob = scope.launch { while (true) { delay(FOLLOW_MS); followApp(d) } }
+                }
+            }
+        }
+    }
+
+    /** Panel pick. Fixed orientations apply at once; Follow-App applies from the next observation. */
+    fun setOrientationMode(mode: OrientationMode) {
+        shapePrefs.edit().putString("orientation", mode.key).apply()
+        _orientationMode.value = mode
+    }
+
+    private fun applyOrientation(d: AgentDisplay, o: DisplayOrientation): Boolean {
+        if (d.orientation == o) return true
+        val (w, h) = OrientationPolicy.sizeFor(o, d.shortSide, d.longSide)
+        val ok = d.resize(w, h)
+        consent.audit("agent display ${o.key} ${w}x$h ok=$ok")
+        if (!ok) _state.update { it.copy(reason = "后台屏横竖切换需要新版手机助手：到 设置 → 设置手机操作 重新连接助手后再试") }
+        return ok
+    }
+
+    private suspend fun followApp(d: AgentDisplay) {
+        if (_display.value !== d) return
+        val shell = services.shell.value ?: return
+        val pkg = runCatching { shell.topPackage(d.displayId) }.getOrNull()
+        val cls = runCatching { shell.topActivity(d.displayId) }.getOrNull()
+        val manifest = if (pkg != null && cls != null) runCatching {
+            @Suppress("DEPRECATION") context.packageManager.getActivityInfo(android.content.ComponentName(pkg, if (cls.startsWith(".")) pkg + cls else cls), 0).screenOrientation
+        }.getOrNull() else null
+        val window = appWindowSize(d.displayId)?.let { (w, h) -> OrientationPolicy.fromWindow(w, h, d.width, d.height) }
+        val target = OrientationPolicy.target(OrientationMode.FollowApp, d.orientation, OrientationPolicy.fromManifest(manifest), window)
+        val change = follower.observe(d.orientation, target) ?: return
+        // Never reshape the display under a running step: try again on the next observation.
+        if (!lock.tryLock()) return
+        try { applyOrientation(d, change) } finally { lock.unlock() }
+    }
+
+    /** Bounds of the largest application window on [displayId] (accessibility windows), or null. */
+    private fun appWindowSize(displayId: Int): Pair<Int, Int>? {
+        val svc = PhoneAccessibilityService.instance.value ?: return null
+        return runCatching {
+            svc.windowsOn(displayId).filter { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION }
+                .map { android.graphics.Rect().also(it::getBoundsInScreen) }
+                .maxByOrNull { it.width().toLong() * it.height() }?.let { it.width() to it.height() }
+        }.getOrNull()
     }
 
     suspend fun handle(body: JSONObject): JSONObject = try {
@@ -230,7 +289,9 @@ class PhoneController private constructor(private val context: Context) {
         _state.update { it.copy(sessionId = sessionId, status = PhoneTaskState.Status.Working, reason = null) }
         try {
             val before = s.last
-            val runner = StepRunner(GuardedPort(s, sessionId), { fp -> consumeGrant(sessionId, fp) }, { stops[sessionId] })
+            // m2.9.2: the kernel marks sessions under the user-enabled no-approval mode; nothing then stops for the user.
+            val bypass = if (body.optBoolean("no_approval", false)) NoApprovalBypass { why, pkg -> consent.audit("no-approval pass reason=$why pkg=${pkg ?: "?"}") } else null
+            val runner = StepRunner(GuardedPort(s, sessionId), { fp -> consumeGrant(sessionId, fp) }, noApproval = bypass, stopRequested = { stops[sessionId] })
             val r = runner.run(steps, body.optString("app_label").takeIf { it.isNotBlank() })
             for (x in r.results) x.timing?.let { t ->
                 val kind = steps[x.index].kind.name
@@ -426,6 +487,7 @@ class PhoneController private constructor(private val context: Context) {
             .put("builtin", services.builtin.engine.status.value.toString()).put("ocr", ocr?.ready == true)
             .put("ready", sdk >= BuiltinShellManager.MIN_SDK && a11y && shell != null)
             .put("task", _state.value.status.name)
+            .put("agent_display", _display.value?.let { d -> JSONObject().put("orientation", d.orientation.key).put("width", d.width).put("height", d.height).put("mode", _orientationMode.value.key).put("coordinates", "0..999 of the current orientation") } ?: JSONObject().put("mode", _orientationMode.value.key))
             .put("step_timing", telemetry.summary())
     }
 
@@ -455,6 +517,8 @@ class PhoneController private constructor(private val context: Context) {
         const val GRANT_MS = 120_000L
         const val WAKE_MS = 10 * 60_000L
         const val IDLE_MS = 5 * 60_000L
+        /** Follow-App observation interval (two agreeing observations switch, see [OrientationFollower]). */
+        const val FOLLOW_MS = 800L
         @Volatile private var instance: PhoneController? = null
         fun of(context: Context): PhoneController = instance ?: synchronized(this) { instance ?: PhoneController(context.applicationContext).also { instance = it } }
     }

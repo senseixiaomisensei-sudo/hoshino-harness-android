@@ -83,6 +83,21 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
         -1
     }
 
+    /** m2.9.2: portrait ⇄ landscape for the agent display (see the AIDL). The new Surface must already have the new size. */
+    override fun resizeDisplay(displayId: Int, surface: Surface, width: Int, height: Int, dpi: Int): Int = try {
+        val vd = synchronized(displays) { displays[displayId] }
+        if (vd == null || width <= 0 || height <= 0 || dpi <= 0) RESIZE_ERROR
+        else {
+            vd.surface = null
+            vd.resize(width, height, dpi)
+            vd.surface = surface
+            RESIZE_OK
+        }
+    } catch (t: Throwable) {
+        Log.e(TAG, "resizeDisplay failed", t)
+        RESIZE_ERROR
+    }
+
     private fun ownDisplay(displayId: Int): Boolean = synchronized(displays) { displayId in displays }
 
     override fun releaseDisplay(displayId: Int) {
@@ -417,6 +432,8 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
 
     companion object {
         private const val TAG = "HoshinoPhoneShell"
+        const val RESIZE_OK = 1
+        const val RESIZE_ERROR = 3
         const val HOST_BUILTIN = "builtin"
         const val HOST_SHIZUKU = "shizuku"
         private const val MAX_TASKS = 100
