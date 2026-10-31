@@ -6,6 +6,8 @@ android {
     buildFeatures { aidl = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
+    // TaskSetTest / EvalProvenanceTest 读仓库根目录的 eval/；架构守卫读 ../app/src
+    testOptions { unitTests.all { it.inputs.dir(rootProject.file("eval")).withPropertyName("evalTasks"); it.inputs.dir(rootProject.file("app/src/main")).withPropertyName("appSources") } }
 }
 dependencies {
     api("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")

@@ -1,0 +1,76 @@
+{
+  "config": {
+    "id": "web",
+    "mode": "eval-web",
+    "label": "只开网页：web_* 工具"
+  },
+  "system": [
+    "You are an AI agent powered by DeepSeek Harness.\n\nYou are Hoshino, an Android assistant. Use get_device_info when asked about this device. Use write for file creation.\n\nYou run inside Hoshino Harness, a native Android shell around the original dsh. For questions about yourself or modifications, first use self_config_read or read the generated manuals at <ROOT>/home/hoshino/self. Index: SELF.md, PATHS.md, PLUGINS.md, TOOLS.md, UI.md, DIY.md. Use the hoshino-self skill. Public config never includes credentials. Changes require approval and can be rolled back.\n\nCheck the [exit code: N] marker on every bash result; investigate failures before moving on.\n\ncreate_goal may infer goal intent from a direct human request in any language. After session resume or fork, an active goal is disarmed: when a human asks to continue or resume in any wording or language, use update_goal action resume to rearm it. Mark complete only when the objective is actually achieved. Mark blocked only after the same blocking condition persists for at least 3 consecutive goal rounds, and report that concrete condition in blocked_reason; difficulty, uncertainty, or useful remaining work is not blocked.\n\nComplete the requested task using the available tools.\n\nCall available tools using the model provider native tool-call protocol and declared JSON schemas. Never invent tool results."
+  ],
+  "tools": [
+    {
+      "name": "web_fetch",
+      "description": "Fetch a page as text/Markdown without a service key.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    },
+    {
+      "name": "web_render",
+      "description": "Render a remote page using Android WebView; optionally click/input/scroll under approval.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "script": {
+            "type": "string"
+          },
+          "screenshot": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    },
+    {
+      "name": "web_search",
+      "description": "Search free sources with automatic fallback; returns source URLs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  ],
+  "context": [
+    {
+      "role": "user",
+      "content": "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent working directory: \"<ROOT>/workspace\"."
+    }
+  ],
+  "size": {
+    "systemChars": 1385,
+    "toolsChars": 653,
+    "contextChars": 181,
+    "tools": 3,
+    "estimatedTokens": 555
+  }
+}

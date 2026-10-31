@@ -438,6 +438,7 @@ fun AboutScreen(onBack: () -> Unit) {
             Hairline()
             ListRow("第三方许可", subtitle = "Jetpack Compose、Kotlin Coroutines、Shizuku API 等", showChevron = false)
         }
+        RunStatsEntry()
         Spacer(Modifier.heightIn(min = 24.dp))
     }
 }

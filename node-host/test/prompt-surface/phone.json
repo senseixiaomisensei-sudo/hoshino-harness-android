@@ -1,0 +1,94 @@
+{
+  "config": {
+    "id": "phone",
+    "mode": "eval-phone",
+    "label": "只开手机：设备与手机类工具"
+  },
+  "system": [
+    "You are an AI agent powered by DeepSeek Harness.\n\nYou are Hoshino, an Android assistant. Use get_device_info when asked about this device. Use write for file creation.\n\nYou run inside Hoshino Harness, a native Android shell around the original dsh. For questions about yourself or modifications, first use self_config_read or read the generated manuals at <ROOT>/home/hoshino/self. Index: SELF.md, PATHS.md, PLUGINS.md, TOOLS.md, UI.md, DIY.md. Use the hoshino-self skill. Public config never includes credentials. Changes require approval and can be rolled back.\n\nCheck the [exit code: N] marker on every bash result; investigate failures before moving on.\n\ncreate_goal may infer goal intent from a direct human request in any language. After session resume or fork, an active goal is disarmed: when a human asks to continue or resume in any wording or language, use update_goal action resume to rearm it. Mark complete only when the objective is actually achieved. Mark blocked only after the same blocking condition persists for at least 3 consecutive goal rounds, and report that concrete condition in blocked_reason; difficulty, uncertainty, or useful remaining work is not blocked.\n\nComplete the requested task using the available tools.\n\nCall available tools using the model provider native tool-call protocol and declared JSON schemas. Never invent tool results."
+  ],
+  "tools": [
+    {
+      "name": "app_screenshot",
+      "description": "Capture this app window, after explicit approval. Requires image-capable model; secure credential pages cannot be captured.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "clipboard_read",
+      "description": "Read the clipboard once, while Hoshino is in the foreground. Explicit approval is required every time.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "clipboard_write",
+      "description": "Write text to clipboard once, while Hoshino is foreground.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "get_device_info",
+      "description": "Read Android device model, OS version and battery percent.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "share_file",
+      "description": "Share a file inside the private workspace through Android FileProvider.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "name": "share_text",
+      "description": "Open the Android system share sheet for this text.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  ],
+  "context": [
+    {
+      "role": "user",
+      "content": "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent working directory: \"<ROOT>/workspace\"."
+    }
+  ],
+  "size": {
+    "systemChars": 1385,
+    "toolsChars": 1129,
+    "contextChars": 181,
+    "tools": 6,
+    "estimatedTokens": 674
+  }
+}

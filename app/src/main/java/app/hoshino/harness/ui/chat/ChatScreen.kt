@@ -360,6 +360,7 @@ fun ChatScreen(
                             actions = messageActions,
                             modifier = Modifier.fillMaxWidth().weight(1f),
                         )
+                        RunSummary(currentId.orEmpty())
                         composerUi(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp, bottom = 10.dp).navigationBarsPadding())
                     }
                 }
