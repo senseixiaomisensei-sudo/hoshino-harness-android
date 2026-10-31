@@ -80,20 +80,24 @@ class M21AcceptanceTest {
   record(6,JSONObject().put("labels",org.json.JSONArray(labels)).put("originalTimestamps",expected).put("unknownHasNoNowFallback",true))
  }
  @Test fun case7MockChatGptOAuthStreamingRefreshAndQuota(){
-  val auth=ChatGptAuth.installForTest(context,ChatGptOAuthEndpoints("http://127.0.0.1:8099",callbackPort=0));val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);val events=ConcurrentLinkedQueue<HarnessEvent>();scope.launch(start=CoroutineStart.UNDISPATCHED){client.events.collect{events.add(it)}}
+  // Sign in with ChatGPT exactly as Mika: dynamic client registration, loopback callback, PKCE + nonce, RS256 ID token.
+  val auth=ChatGptAuth.installForTest(context,ChatGptOAuthEndpoints("http://127.0.0.1:8099","http://127.0.0.1:8099/v1"));val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);val events=ConcurrentLinkedQueue<HarnessEvent>();scope.launch(start=CoroutineStart.UNDISPATCHED){client.events.collect{events.add(it)}}
   ActivityScenario.launch(MainActivity::class.java).use{ready()
-   val url=auth.beginLogin();val connection=URL(url).openConnection(Proxy.NO_PROXY) as java.net.HttpURLConnection;connection.connectTimeout=2000;connection.readTimeout=10000;connection.instanceFollowRedirects=true;connection.inputStream.use{it.readBytes()};connection.disconnect()
-   ui.waitUntil(10000){auth.state.value.signedIn};val beforeToken=ProviderStore(context).resolve(ChatGptAuth.ACCESS)!!;runBlocking{auth.accessToken(true)};assertNotEquals(beforeToken,ProviderStore(context).resolve(ChatGptAuth.ACCESS));assertTrue(metrics().getInt("refreshes")>=1)
-   val vault=ProviderStore(context);val catalog=org.json.JSONArray(context.assets.open("codex-models.json").bufferedReader().use{it.readText()});val names=(0 until catalog.length()).map{catalog.getJSONObject(it).getString("id")};vault.save(dev.hoshino.bridge.Provider("openai-codex","openai-codex","http://127.0.0.1:8099/backend-api",names,JSONObject()),"")
-   runBlocking{client.setChatGptEnabled(true)};val model=client.providers.value.first{p->p.id=="openai-codex"}.models.first();val options=TurnOptions("standard",PermissionTier.WorkspaceWrite,ModelRef("openai-codex",model.id),ReasoningEffort.Medium,false)
-   val session=runBlocking{client.createSession("ws-default","standard",PermissionTier.WorkspaceWrite)};runBlocking{client.send(session.id,"m21 subscription stream",emptyList(),options)}
-   ui.waitUntil(60000){events.any{it is HarnessEvent.TurnFinished&&it.sessionId==session.id}}
-   assertTrue(events.any{it is HarnessEvent.AssistantDelta&&it.sessionId==session.id&&it.delta.contains("subscription reply")});assertTrue(events.any{it is HarnessEvent.ThinkingDelta&&it.sessionId==session.id&&it.delta.contains("reasoning")});assertTrue(events.any{it is HarnessEvent.UsageReported&&it.sessionId==session.id&&it.usage.inputTokens==42})
+   auth.beginLogin({url->Thread{val connection=URL(url).openConnection(Proxy.NO_PROXY) as java.net.HttpURLConnection;connection.connectTimeout=2000;connection.readTimeout=10000;connection.instanceFollowRedirects=true;runCatching{connection.inputStream.use{it.readBytes()}};connection.disconnect()}.start()})
+   ui.waitUntil(15000){auth.state.value.signedIn};val session=auth.session()!!;assertEquals("m21-issued-client",session.clientId);assertEquals("m21@example.test",session.email);assertTrue(session.planUsage)
+   val beforeToken=session.accessToken;runBlocking{auth.accessToken(true)};assertNotEquals(beforeToken,auth.session()!!.accessToken);assertTrue(metrics().getInt("refreshes")>=1)
+   runBlocking{client.setChatGptEnabled(true)};runBlocking{client.refreshChatGptModels()}
+   val provider=client.providers.value.first{p->p.id=="openai-codex"};assertEquals("http://127.0.0.1:8099/v1",provider.baseUrl);assertTrue(provider.models.any{it.id=="gpt-6.1-terra"&&it.contextLength==1050000})
+   val options=TurnOptions("standard",PermissionTier.WorkspaceWrite,ModelRef("openai-codex","gpt-6.1-terra"),ReasoningEffort.Medium,false)
+   val session1=runBlocking{client.createSession("ws-default","standard",PermissionTier.WorkspaceWrite)};runBlocking{client.send(session1.id,"m21 subscription stream",emptyList(),options)}
+   ui.waitUntil(60000){events.any{it is HarnessEvent.TurnFinished&&it.sessionId==session1.id}}
+   assertTrue(events.any{it is HarnessEvent.AssistantDelta&&it.sessionId==session1.id&&it.delta.contains("subscription reply")});assertTrue(events.any{it is HarnessEvent.ThinkingDelta&&it.sessionId==session1.id&&it.delta.contains("reasoning")});assertTrue(events.any{it is HarnessEvent.UsageReported&&it.sessionId==session1.id&&it.usage.inputTokens==42})
    metrics("/m21/limit");val failed=runBlocking{client.createSession("ws-default","standard",PermissionTier.WorkspaceWrite)};runBlocking{client.send(failed.id,"m21 quota fixture",emptyList(),options)};ui.waitUntil(60000){events.any{it is HarnessEvent.TurnFinished&&it.sessionId==failed.id}}
    val error=events.filterIsInstance<HarnessEvent.Notice>().firstOrNull{it.sessionId==failed.id&&it.id.startsWith("error:")};assertNotNull(error);assertTrue(error!!.text,error.text.contains("额度"))
-   val secret=vault.resolve(ChatGptAuth.ACCESS)!!;val refresh=vault.resolve(ChatGptAuth.REFRESH)!!
+   val secret=auth.session()!!.accessToken;val refresh=auth.session()!!.refreshToken
    for(file in File(context.filesDir,"dsh-home/sessions").walkTopDown().filter{it.isFile&&it.extension=="jsonl"}){val text=file.readText();assertFalse(text.contains(secret));assertFalse(text.contains(refresh))};assertFalse(client.runtime.state.value.logs.joinToString().contains(secret))
-   record(7,JSONObject().put("oauthPkceCallback",true).put("refreshes",metrics().getInt("refreshes")).put("codexRequests",metrics().getInt("codexRequests")).put("streamedTextAndReasoning",true).put("reportedInputTokens",42).put("quotaErrorSanitized",true).put("credentialsExcludedFromSessionLogs",true))
-  };scope.cancel();auth.logout()
+   assertTrue(runBlocking{auth.signOut()});assertFalse(auth.state.value.signedIn);assertEquals("m21-issued-client",auth.session()!!.clientId);assertTrue(metrics().getInt("revocations")>=1)
+   record(7,JSONObject().put("signInWithChatGpt",true).put("dynamicClientRegistration",true).put("idTokenVerified",true).put("refreshes",metrics().getInt("refreshes")).put("codexRequests",metrics().getInt("codexRequests")).put("streamedTextAndReasoning",true).put("reportedInputTokens",42).put("quotaErrorSanitized",true).put("credentialsExcludedFromSessionLogs",true).put("revoked",true))
+  };scope.cancel();auth.forget()
  }
 }

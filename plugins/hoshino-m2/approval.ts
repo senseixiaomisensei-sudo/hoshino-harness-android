@@ -6,7 +6,7 @@ import {Configuration,scopePolicy,resolveApproval,type Data} from './config.js';
 export async function approval(ctx:Context,config:Configuration,action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>){
  const sessionId=String(action.sessionId??'');const options=ctx.mobilePolicy.options.get(sessionId) as Data|undefined;
  const policy=scopePolicy(config.get('approval.json'),sessionId,ctx.androidBridge.bootstrap.workspace,String(options?.mode??'standard'));
- let result=resolveApproval(policy,action);let approver:string=result.decision;
+ let result=resolveApproval(policy,action);let approver:string=result.approver??result.decision;
  if(result.decision==='model'){
   try{
    const configured=policy.model??config.get('routing.json').approval;
@@ -24,8 +24,9 @@ export async function approval(ctx:Context,config:Configuration,action:Data,ask:
    result={decision:['allow','deny','ask'].includes(parsed.decision)?parsed.decision:'ask',reason:String(parsed.reason??'Approval model').slice(0,500)};approver='model';
   }catch{result={decision:policy.failure==='deny'?'deny':'ask',reason:'Approval model timed out or failed'};}
  }
+ // Only an `ask` reaches the Android approval card; allow/deny (incl. no-approval mode) never show one.
  const answer=result.decision==='ask'?await ask():{approved:result.decision==='allow',remember:false};
  await mkdir(join(config.root,'audit'),{recursive:true});
- await appendFile(join(config.root,'audit','approvals.jsonl'),JSON.stringify({at:new Date().toISOString(),sessionId,tool:action.tool,approver,reason:result.reason,decision:answer.approved?'allow':'deny'})+'\n');
+ await appendFile(join(config.root,'audit','approvals.jsonl'),JSON.stringify({at:new Date().toISOString(),sessionId,tool:action.tool,approver,mode:String(policy.mode??'manual'),reason:result.reason,decision:answer.approved?'allow':'deny'})+'\n');
  return answer;
 }

@@ -3,7 +3,11 @@ export interface Provider {
   id: string; type: 'anthropic' | 'openai-compatible' | 'openai-codex'; baseURL: string;
   apiKey: string; models: string[];
   headers?: Record<string,string>;
-  metadata?: { name?: string; models?: Array<{ id: string; contextLength?: number; maxOutput?: number; vision?: boolean; reasoning?: boolean; defaultEffort?: string }> };
+  metadata?: { name?: string; models?: Array<{ id: string; contextLength?: number; maxOutput?: number; vision?: boolean; reasoning?: boolean; defaultEffort?: string;
+    /** Wire reasoning levels the model documents, e.g. none/low/medium/high/xhigh/max. */
+    reasoningLevels?: string[];
+    /** Hosted web search override (auto/on/off) and the detected method id (see core-bridge WebSearchProbe). */
+    webSearchMode?: string; webSearchMethod?: string }> };
 }
 export interface Bootstrap { callbackPort: number; callbackToken: string; workspace: string; home: string; selfHome?: string; safeMode?: boolean }
 export class AndroidBridge {

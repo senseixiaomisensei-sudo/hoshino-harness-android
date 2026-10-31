@@ -19,6 +19,17 @@ interface HarnessClient {
     fun describeFailure(failure: Throwable): String = if(failure is UnsupportedOperationException) failure.message ?: "即将支持" else "操作未完成"
     /** Select the UI's active session without starting an Agent turn. */
     fun activateSession(sessionId: String) {}
+    /**
+     * 会话状态能否从内核持久化（dsh session JSONL）完整恢复。为 true 时 [SessionStore] 只在内存保留最近几个会话，
+     * 被淘汰的会话通过 [releaseSession] 释放、切回时由 [retainSession]/[activateSession] 重新订阅并重放。
+     */
+    val sessionRestoreSupported: Boolean get() = false
+    /** 内存淘汰：停止订阅该会话的事件流并忘掉去重状态，之后重新订阅会收到完整快照。 */
+    fun releaseSession(sessionId: String) {}
+    /** 被淘汰的会话再次被需要：重新订阅以从持久化恢复。 */
+    fun retainSession(sessionId: String) {}
+    /** 从会话日志读取某次工具调用的完整输出，写入缓存文件；不支持时返回 null（界面只显示内存里的尾部）。 */
+    suspend fun fullToolOutput(sessionId: String, callId: String): java.io.File? = null
     val preferredSessionId:String? get()=null
     val uiCustomization: StateFlow<UiCustomization> get() = DefaultUiCustomization.value
     val uiCustomizationError: StateFlow<String?> get() = DefaultUiCustomization.error
@@ -51,6 +62,18 @@ interface HarnessClient {
     suspend fun send(sessionId: String, text: String, attachments: List<Attachment>, options: TurnOptions)
     /** 插话：运行中把一条消息立即注入当前轮次上下文。 */
     suspend fun steer(sessionId: String, text: String)
+    /** 带附件的插话；不支持附件的实现只接受纯文字。 */
+    suspend fun steer(sessionId: String, text: String, attachments: List<Attachment>) { require(attachments.isEmpty()) { "插话暂不支持附件" }; steer(sessionId, text) }
+
+    // ---------- 会话管理与审批档（M2.7） ----------
+    /** 批量删除（确认后调用）；默认逐个删除。 */
+    suspend fun deleteSessions(sessionIds: List<String>) { for (id in sessionIds) deleteSession(id) }
+    suspend fun setPinned(sessionId: String, pinned: Boolean): Unit = throw UnsupportedOperationException("置顶即将支持")
+    /** 导出为 Markdown / JSON，保存到「下载/Hoshino」。 */
+    suspend fun exportSessionFile(sessionId: String, format: SessionExportFormat): ExportedSession = throw UnsupportedOperationException("导出即将支持")
+    /** 某会话（null = 新会话）当前的审批档。 */
+    suspend fun approvalState(sessionId: String?): ApprovalState = ApprovalState()
+    suspend fun setApprovalMode(sessionId: String?, mode: ApprovalMode, scope: ApprovalScope): ApprovalState = throw UnsupportedOperationException("审批设置需要真实内核")
     suspend fun stop(sessionId: String)
     suspend fun respondApproval(sessionId: String, approvalId: String, decision: ApprovalDecision)
     suspend fun answerQuestion(sessionId: String, questionId: String, answer: String)
@@ -70,6 +93,9 @@ interface HarnessClient {
     suspend fun testProvider(provider: Provider): Result<String>
     /** 从供应商 /models 接口拉取模型列表。 */
     suspend fun fetchModels(provider: Provider): List<ModelInfo>
+
+    /** Probe how [modelId] of the (possibly unsaved) [provider] can search the web on its own; returns the method id ("none" when unavailable). */
+    suspend fun probeWebSearch(provider: Provider, modelId: String): String = throw UnsupportedOperationException("当前内核不支持检测联网搜索")
     suspend fun setRouting(routing: ModelRouting)
 
     // ---------- Agent 预设 ----------
@@ -147,7 +173,8 @@ interface HarnessClient {
 sealed interface HarnessEvent {
     val sessionId: String
 
-    data class TurnStarted(override val sessionId: String, val turnId: String) : HarnessEvent
+    /** [at]：轮次开始的墙钟时间（dsh 事件的 time，重放时同样准确），用于把旧的文件交付记录按时间归到轮次。 */
+    data class TurnStarted(override val sessionId: String, val turnId: String, val at: Long = System.currentTimeMillis()) : HarnessEvent
     data class UserMessage(
         override val sessionId: String,
         val id: String,
@@ -169,6 +196,8 @@ sealed interface HarnessEvent {
         val input: String,
         val kind: ToolKind,
         val autoApproved: Boolean = false,
+        /** dsh 会话日志里的 toolCallId；用于按需从 JSONL 读取完整输出。 */
+        val callId: String? = null,
     ) : HarnessEvent
     data class ToolCallOutput(override val sessionId: String, val id: String, val delta: String) : HarnessEvent
     data class ToolCallFinished(override val sessionId: String, val id: String, val status: ToolStatus, val exitCode: Int? = null) : HarnessEvent
@@ -210,4 +239,6 @@ sealed interface HarnessEvent {
     data class UsageReported(override val sessionId: String, val turnId: String, val usage: Usage) : HarnessEvent
     data class ContextUsageChanged(override val sessionId: String, val usage: ContextUsage) : HarnessEvent
     data class TurnFinished(override val sessionId: String, val turnId: String, val cancelled: Boolean) : HarnessEvent
+    /** deliver_file 交付的文件；归入 [DeliveredFile.turnId] 对应的轮次（旧记录按 deliveredAt 归到最近轮次）。 */
+    data class FileDelivered(override val sessionId: String, val file: DeliveredFile) : HarnessEvent
 }

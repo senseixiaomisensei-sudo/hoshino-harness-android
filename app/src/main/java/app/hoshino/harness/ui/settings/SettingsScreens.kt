@@ -1,5 +1,6 @@
 package app.hoshino.harness.ui.settings
 
+import app.hoshino.harness.ui.chat.ChatDisplayPrefs
 import app.hoshino.harness.R
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
@@ -143,6 +144,16 @@ fun AppearanceScreen(app: AppViewModel, onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         )
         Text("English 文案需在 res/values-en/strings.xml 中补充。", style = t.caption, color = c.text3, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        // M2.7：对话显示
+        SectionLabel("对话")
+        val collapseApprovals by ChatDisplayPrefs.collapseApprovals.collectAsStateWithLifecycle()
+        GroupCard {
+            ListRow(
+                "审批后折叠",
+                subtitle = "处理过的审批卡从对话中消失，只在该轮「过程」里留一行小字；关闭则保留卡片（旧样式）",
+                trailing = { HSwitch(collapseApprovals, { ChatDisplayPrefs.setCollapseApprovals(it) }) },
+            )
+        }
     }
 }
 

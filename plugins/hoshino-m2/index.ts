@@ -2,11 +2,13 @@ import type {Context} from '../../node-host/src/platform.js';
 import {defineTool} from '@deepseek-ai/dsh-tools';
 import {readFile,writeFile,mkdir,readdir,lstat,appendFile} from 'node:fs/promises';
 import {join,dirname,relative} from 'node:path';
-import {Configuration,modes,defaults,interpolate,treeStamp,atomic,type Data} from './config.js';
+import {Configuration,modes,defaults,interpolate,treeStamp,atomic,scopePolicy,withApprovalMode,APPROVAL_MODES,type ApprovalMode,type Data} from './config.js';
+import {stopSummary,exportSession,forgetSessions} from './sessions.js';
 import {approval} from './approval.js';
 import {fetchPage,search,webUrl} from './web.js';
 import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,installPluginZip,gitOperation,ensureTools,exportBackup,restoreBackup,selfSnapshot,command} from './operations.js';
 import {marketInvoke} from './market.js';
+import {deliverRequest} from './deliver.js';
 import {UI_SCHEMA,validateOverrides} from '../hoshino-self/overrides.js';
 import {workspacePath} from '../android-policy/paths.js';
 import type {} from '@deepseek-ai/dsh-goal';
@@ -123,7 +125,7 @@ export async function apply(ctx:Context){
    case 'fetch':return fetchPage(String(args.url),{...config.get('search.json'),workspace});
    case 'render':webUrl(String(args.url));return bridge('web.render',args);
    case 'question':return originalCall('question',args);
-   case 'deliver':{const path=await workspacePath(workspace,String(args.path));const s=await lstat(path);if(!s.isFile())throw Error('Deliver a regular workspace file');return bridge('file.deliver',{sessionId:args.sessionId,path,name:args.name??path.split('/').at(-1),bytes:s.size});}
+   case 'deliver':{const path=await workspacePath(workspace,String(args.path));const s=await lstat(path);if(!s.isFile())throw Error('Deliver a regular workspace file');return bridge('file.deliver',deliverRequest(args,path,s.size));}
    case 'ensure-tools':return ensureTools(String(args.group),workspace);
    case 'install-plugin':return installPlugin(ctx,config,String(args.spec));
    case 'market':return marketInvoke(ctx,config,String(args.op),args);
@@ -163,6 +165,18 @@ export async function apply(ctx:Context){
    case 'sync-push':{const cfg=config.get('build.json');const path='/repos/'+cfg.repository+'/contents/hoshino-config.json';let sha:string|undefined;try{sha=(await github(path)).sha;}catch{}return github(path,'PUT',{message:'chore: sync public Hoshino configuration',content:Buffer.from(JSON.stringify(Object.fromEntries(config.values),null,2)).toString('base64'),...(sha?{sha}:{})});}
    case 'sync-pull':{const cfg=config.get('build.json');const result=await github('/repos/'+cfg.repository+'/contents/hoshino-config.json');return invoke('import-config',{content:Buffer.from(result.content,'base64').toString('utf8')});}
    case 'bridge':return bridge(String(args.action),args.request??{});
+   // ---- approval level (incl. user-enabled no-approval) and session management; see sessions.ts
+   case 'approval-state':{const sid=String(args.sessionId??'');const policy=config.get('approval.json');const mode=String((ctx.mobilePolicy.options.get(sid) as Data|undefined)?.mode??'standard');return {defaultMode:String(policy.mode??'manual'),sessionMode:sid?policy.scopes?.sessions?.[sid]?.mode??null:null,effective:String(scopePolicy(policy,sid,workspace,mode).mode??'manual'),modes:APPROVAL_MODES};}
+   case 'approval-mode':{
+    const sid=typeof args.sessionId==='string'&&args.sessionId?args.sessionId:undefined;const scope=String(args.scope??'session');const mode=args.mode==null?null:String(args.mode) as ApprovalMode;
+    let next=config.get('approval.json');
+    if(scope==='default'){if(mode===null)throw Error('Choose an approval mode');next=withApprovalMode(next,mode);if(sid)next=withApprovalMode(next,null,sid);}
+    else{if(!sid)throw Error('Missing session');next=withApprovalMode(next,scope==='clear'?null:mode,sid);}
+    await config.write('approval.json',next);return invoke('approval-state',{sessionId:sid??''});
+   }
+   case 'stop-summary':return stopSummary(ctx,config,args);
+   case 'session-export':return exportSession(ctx,root,args);
+   case 'sessions-forget':return forgetSessions(ctx,config,args);
    default:throw Error('Unknown M2 operation');
   }
  };
@@ -186,7 +200,7 @@ export async function apply(ctx:Context){
   ['plugin_market','Read-only: search the configured DSH plugin index (Plugins → Discover) or show one listed plugin with its versions and install source.',{query:{type:'string'},name:{type:'string'},source:{type:'string'},limit:{type:'number'}},'plugin-market'],
   ['plugin_install','Install an original Cordis/dsh plugin from npm, git, local directory or tgz.',{spec:{type:'string',required:true}},'install-plugin'],
  ];
- for(const [tool,description,parameters,action]of tools)ctx.tools.register(defineTool({name:tool,description,parameters:parameters as any,output:{schema:{type:'string'},render:(_,value)=>[{type:'text',text:value}]},async execute(args,exec){return JSON.stringify(await invoke(action,{...args,sessionId:exec.agent?.id}));}}));
+ for(const [tool,description,parameters,action]of tools)ctx.tools.register(defineTool({name:tool,description,parameters:parameters as any,output:{schema:{type:'string'},render:(_,value)=>[{type:'text',text:value}]},async execute(args,exec){return JSON.stringify(await invoke(action,{...args,sessionId:exec.agent?.id,...(action==='deliver'?{callId:exec.rootCallId??exec.callId}:{})}));}}));
 }
 
 

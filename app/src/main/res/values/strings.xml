@@ -14,7 +14,7 @@
     <string name="cd_more">更多</string>
     <string name="menu_rename">重命名</string>
     <string name="menu_fork">分叉会话</string>
-    <string name="menu_export">导出 ZIP</string>
+    <string name="menu_export">导出为 Markdown</string>
     <string name="menu_trajectory">Trajectory 视图</string>
     <string name="menu_context">上下文用量</string>
     <string name="menu_stats">会话统计</string>
@@ -38,7 +38,7 @@
 
     <!-- 输入框 -->
     <string name="composer_placeholder">描述任务，/ 调用命令，@ 引用文件</string>
-    <string name="composer_placeholder_running">继续输入，消息会进入排队…</string>
+    <string name="composer_placeholder_running">补充或改要求，会作为插话加入当前任务…</string>
     <string name="composer_commands">命令</string>
     <string name="composer_files">工作区文件</string>
     <string name="queued_n">排队 %1$d</string>

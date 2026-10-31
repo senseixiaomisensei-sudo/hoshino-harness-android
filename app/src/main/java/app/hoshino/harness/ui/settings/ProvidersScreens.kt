@@ -263,6 +263,9 @@ fun ProviderEditScreen(vm: ConfigViewModel, providerId: String, onBack: () -> Un
                         if (m.reasoning) {
                             Spacer(Modifier.width(4.dp)); Tag("推理 · 默认${m.defaultEffort.label}")
                         }
+                        if (m.webSearchMode != "off" && m.webSearchMethod.isNotEmpty() && m.webSearchMethod != "none") {
+                            Spacer(Modifier.width(4.dp)); Tag("自带联网")
+                        }
                         Spacer(Modifier.width(4.dp))
                         HIcon(HIcons.ChevronRight, size = 16.dp, tint = c.text3)
                     }
@@ -279,6 +282,7 @@ fun ProviderEditScreen(vm: ConfigViewModel, providerId: String, onBack: () -> Un
         ModelEditSheet(
             model = m,
             isNew = editIsNew,
+            onProbe = { id -> vm.client.probeWebSearch(draft(), id) },
             onSave = { nm ->
                 models = if (editIsNew) models + nm else models.map { if (it.id == m.id) nm else it }
                 editModel = null
@@ -302,6 +306,7 @@ fun ProviderEditScreen(vm: ConfigViewModel, providerId: String, onBack: () -> Un
 private fun ModelEditSheet(
     model: ModelInfo,
     isNew: Boolean,
+    onProbe: suspend (String) -> String,
     onSave: (ModelInfo) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
@@ -315,6 +320,12 @@ private fun ModelEditSheet(
     var vision by remember { mutableStateOf(model.vision) }
     var reasoning by remember { mutableStateOf(model.reasoning) }
     var effort by remember { mutableStateOf(model.defaultEffort) }
+    var searchMode by remember { mutableStateOf(dev.hoshino.bridge.WebSearchMode.of(model.webSearchMode)) }
+    var searchMethod by remember { mutableStateOf(model.webSearchMethod) }
+    var probing by remember { mutableStateOf(false) }
+    var probedId by remember { mutableStateOf(model.id) }
+    var probeError by remember { mutableStateOf<String?>(null) }
+    val probeScope = rememberCoroutineScope()
     HSheet(onDismiss = onDismiss, title = if (isNew) "添加模型" else "编辑模型") {
         Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             HTextField(id, { id = it }, label = "模型 ID", placeholder = "claude-sonnet-4-5", mono = true)
@@ -336,6 +347,26 @@ private fun ModelEditSheet(
                 Spacer(Modifier.height(6.dp))
                 Segmented(ReasoningEffort.entries, effort, { it.label }, { effort = it }, Modifier.fillMaxWidth(), enabled = reasoning)
             }
+            Column {
+                // Model-hosted web search: preferred over Hoshino's own search tool, which stays as the fallback.
+                Text("模型自带联网搜索", style = t.caption, color = c.text2)
+                Spacer(Modifier.height(6.dp))
+                Segmented(dev.hoshino.bridge.WebSearchMode.entries, searchMode, { it.label }, { searchMode = it }, Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("检测结果：" + dev.hoshino.bridge.WebSearchMethods.label(searchMethod), style = t.caption, color = c.text3, modifier = Modifier.weight(1f))
+                    HButton(if (probing) "检测中…" else "检测", {
+                        probing = true; probeError = null
+                        probeScope.launch {
+                            val target = id.trim()
+                            runCatching { onProbe(target) }.onSuccess { searchMethod = it; probedId = target }.onFailure { probeError = it.message ?: "检测失败" }
+                            probing = false
+                        }
+                    }, style = BtnStyle.Ghost, compact = true, enabled = !probing && id.isNotBlank())
+                }
+                probeError?.let { Text(it, style = t.caption, color = c.danger) }
+                Text("自动：使用检测到的方式，不可用时用 Hoshino 内置搜索；强制开：总是尝试模型自带搜索；关：只用内置搜索。检测会向该模型发送几次很小的请求。", style = t.caption, color = c.text3)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!isNew) HButton("删除", onDelete, Modifier.weight(1f), style = BtnStyle.Secondary)
                 HButton(
@@ -345,6 +376,7 @@ private fun ModelEditSheet(
                             ModelInfo(
                                 id.trim(), display.trim().ifBlank { id.trim() },
                                 ctx.toIntOrNull() ?: 0, maxOut.toIntOrNull() ?: 0, vision, reasoning, effort,
+                                searchMode.key, if (id.trim() == probedId) searchMethod else "",
                             ),
                         )
                     },

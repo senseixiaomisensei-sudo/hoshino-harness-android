@@ -101,14 +101,19 @@ test('original dsh: both protocols, streams, Android callback, built-in write, s
     if(!denied)assert.ok(JSON.stringify(frames.slice(before)).includes('fixture Android'));
     turns++;
   }
-  assert.ok(approvals.some(a=>a.kind==='network'));assert.ok(approvals.some(a=>a.tool==='write'));
+  // M2.1（03db186）起，向用户已启用的 provider 发送提示词不再单独审批（见 docs/decisions.md「M2.1 模型请求不再单独审批（补记）」）；
+  // 工具的写入/网络副作用仍走工具审批。两条都断言，防止回退或误删工具审批。
+  assert.equal(approvals.some(a=>a.kind==='network'),false,'Plain model requests to an enabled provider must not raise a separate network approval');
+  assert.ok(approvals.some(a=>a.tool==='write'),'Tool writes still require approval');
   for(const [provider,model] of [['deepseek-max','deepseek-v4.1-flash-1017'],['claude-max','claude-sonnet-4-6'],['compatible-max','compatible-reasoner']]) {
     await rpc('session/selectModel',{sessionId,provider,model,reasoningEffort:'max'});
     const before=frames.length;
     await rpc('session/prompt',{sessionId,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text:'你好'}]});
     await wait(()=>frames.slice(before).some(f=>f.value?.event?.type==='turn/end'));turns++;
     const request=mock.requests.at(-1).body;
-    if(provider==='claude-max') {assert.equal(request.output_config.effort,'max');assert.equal(request.thinking.type,'adaptive');}
+    // M2.3（064eaa0）起，非 api.anthropic.com 的 Anthropic 兼容端点（本测试的本机 mock 即是）收到的是通用 Messages 形状：
+    // 去掉 output_config/adaptive，max 档换算成显式 thinking 预算（anthropic-compat.ts BUDGET.max=16000）。见 docs/decisions.md。
+    if(provider==='claude-max') {assert.equal(request.output_config,undefined,'Third-party Anthropic endpoints get no Claude-only output_config');assert.equal(request.thinking.type,'enabled');assert.equal(request.thinking.budget_tokens,16000,'max effort maps to the largest explicit thinking budget');}
     else {assert.equal(request.reasoning_effort,'max');if(provider==='deepseek-max'){assert.equal(request.thinking.type,'enabled');assert.ok(request.max_tokens>=32768);}}
     assert.ok(request.max_tokens>=32768 || request.max_completion_tokens>=32768,'Max must retain a meaningful total thinking/answer budget');
   }

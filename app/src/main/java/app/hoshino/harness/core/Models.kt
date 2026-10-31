@@ -16,7 +16,7 @@ enum class PermissionTier(val label: String, val key: String, val description: S
 }
 
 enum class ReasoningEffort(val label: String, val key: String) {
-    Off("关", "off"), Low("低", "low"), Medium("中", "medium"), High("高", "high"), Max("max", "max")
+    Off("关", "off"), Low("低", "low"), Medium("中", "medium"), High("高", "high"), XHigh("超高", "xhigh"), Max("max", "max")
 }
 
 enum class ShizukuStatus(val label: String) {
@@ -40,7 +40,11 @@ data class SessionInfo(
     val running: Boolean = false,
     val archived: Boolean = false,
     val parentId: String? = null,
-)
+    /** 置顶时间（毫秒）；0 表示未置顶。 */
+    val pinnedAt: Long = 0L,
+) {
+    val pinned: Boolean get() = pinnedAt > 0L
+}
 
 enum class AttachmentKind(val label: String) { File("文件"), Image("图片"), Camera("拍照"), WorkspaceFile("工作区文件") }
 
@@ -136,6 +140,10 @@ data class ModelInfo(
     val vision: Boolean,
     val reasoning: Boolean,
     val defaultEffort: ReasoningEffort,
+    /** Model-hosted web search override: "auto" | "on" | "off" (see dev.hoshino.bridge.WebSearchMode). */
+    val webSearchMode: String = "auto",
+    /** Detected hosted-search method id, "none", or "" when not yet known (see dev.hoshino.bridge.WebSearchMethods). */
+    val webSearchMethod: String = "",
 )
 
 data class Provider(
