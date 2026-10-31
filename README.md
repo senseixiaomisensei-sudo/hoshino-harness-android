@@ -8,6 +8,7 @@
 
 - [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.3/Hoshino-Harness-0.2.1-m2.9.3-arm64-v8a.apk)（非调试 fast 构建）
 - [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.9.3)
+- arm64 APK：77,418,333 字节（比 m2.9.2 大 196,604 字节），SHA-256 `fc3986a157b2a813de68c0fd4ed001433193df99b7cb567903bacecf1608d443`；签名证书 SHA-256 `e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1`；构建与验收 [Actions run 41185999802](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/41185999802)
 
 主要内容（详见 [docs/m2.9.3-intent-inapp-screen.md](docs/m2.9.3-intent-inapp-screen.md)）：
 - **修复无法打开 App（意图误判）**：无审批会话跳过意图门；“讨论”改为一次性软提醒（坚持再调即执行）；插话重判；动作词补强；WeChat / weixin 等 22 个常用 App 别名；启动被系统拒绝时用 `--display` 重试，仍被拒报 `blocked_by_system`。
