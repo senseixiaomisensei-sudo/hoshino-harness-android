@@ -8,6 +8,7 @@
 
 - [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.8.2/Hoshino-Harness-0.2.1-m2.8.2-arm64-v8a.apk)（非调试 fast 构建）
 - [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8.2)
+- arm64 APK：75,924,673 字节（比 m2.8.1 大 43,008 字节），SHA-256 `f69a949734c5acbec591fd81d64e5175cc08bd89c6462a18287c335d0c751e80`；签名证书 SHA-256 `e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1`；构建与验收 [Actions run 41167475356](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/41167475356)
 
 修复：
 - **`phone_*` 手机工具从未加载**（m2.8 / m2.8.1）：`android-phone` 插件 Schema 缺 `additionalProperties` 导致插件未激活，AI 改用 `system_shell` 在主屏开 App；已修复，构建时缺内置工具直接失败，旧模式白名单也不再屏蔽 `phone_*`。
