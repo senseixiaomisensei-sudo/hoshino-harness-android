@@ -100,7 +100,8 @@ export type FailureFacts = { code?: string; status?: number; message?: string };
 export function classify(f: FailureFacts): FailureKind {
   const lower = String(f.message ?? '').toLowerCase();
   const code = String(f.code ?? '').toUpperCase();
-  const s = f.status;
+  // pi-ai (OpenAI-compatible / Anthropic routes) drops the HTTP status and reports it as the message prefix ("503: {...}").
+  const s = f.status ?? (/^\s*([1-5]\d\d)\b/.exec(String(f.message ?? '')) ? Number(/^\s*([1-5]\d\d)\b/.exec(String(f.message ?? ''))![1]) : undefined);
   if (code === 'CONTEXT_WINDOW_EXCEEDED' || ((s === 400 || s === 413) && has(lower, CONTEXT))) return 'context_too_long';
   if (code === 'QUOTA' || code === 'ACCOUNT_QUOTA' || ((s === 402 || s === 429 || s === 403) && has(lower, QUOTA))) return 'quota';
   if (code === 'INVALID_CREDENTIAL' || s === 401) return 'auth';
@@ -115,7 +116,12 @@ export function classify(f: FailureFacts): FailureKind {
   if (s === 429) return 'rate_limited';
   if (s !== undefined && s >= 500) return 'server';
   if (s === 408 || (s === undefined && has(lower, NETWORK))) return 'network';
-  if (code === 'EMPTY_RESPONSE') return 'bad_response';
+  // dsh canonical codes (dsh-llm DEFAULT_RETRYABLE_CODES, pi-ai/deepseek classifiers) when no status survived.
+  if (code === 'AUTH') return 'auth';
+  if (code === 'RATE_LIMIT') return 'rate_limited';
+  if (code === 'SERVER') return 'server';
+  if (code === 'TIMEOUT' || code === 'TRANSPORT') return 'network';
+  if (code === 'EMPTY_RESPONSE' || code === 'INVALID_REQUEST') return 'bad_response';
   return 'unknown';
 }
 /** Failures worth retrying the same route for a few seconds. */
@@ -139,6 +145,6 @@ export function userReason(kind: FailureKind, model: string, detail: string): st
 }
 /** Provider wording, trimmed: `error.message` / `message` / `msg` from JSON, or the text itself. */
 export function detail(message: string): string {
-  try { const o = JSON.parse(message); const e = o?.error; const t = (typeof e === 'object' ? e?.message : typeof e === 'string' ? e : undefined) ?? o?.message ?? o?.msg; if (typeof t === 'string') return t.trim().slice(0, 160); } catch { /* text */ }
+  try { const o = JSON.parse(message.replace(/^\s*[1-5]\d\d:\s*/, '')); const e = o?.error; const t = (typeof e === 'object' ? e?.message : typeof e === 'string' ? e : undefined) ?? o?.message ?? o?.msg; if (typeof t === 'string') return t.trim().slice(0, 160); } catch { /* text */ }
   return message.trim().replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').replace(/\bsk-[\w-]{8,}/g, '[redacted]').slice(0, 160);
 }

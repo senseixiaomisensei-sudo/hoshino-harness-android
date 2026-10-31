@@ -106,6 +106,12 @@ test('RT16 readable failure reasons for the seven classes (port of Mika ModelAcc
     [{ status: 400, message: 'This model does not support tools' }, 'tools_unsupported', '不支持调用工具'],
     [{ status: 429, message: 'You exceeded your current quota (insufficient_quota)' }, 'quota', '额度'],
     [{ code: 'CONTEXT_WINDOW_EXCEEDED', message: 'x' }, 'context_too_long', '上下文'],
+    // dsh pi-ai route shapes: no `status`, HTTP status as the message prefix, canonical code
+    [{ code: 'SERVER', message: '503: {"message":"upstream temporarily unavailable"}' }, 'server', '暂时出错'],
+    [{ code: 'AUTH', message: '401: {"error":{"message":"Incorrect API key provided"}}' }, 'auth', 'API Key'],
+    [{ code: 'RATE_LIMIT', message: 'Rate limit reached for requests' }, 'rate_limited', '限流'],
+    [{ code: 'TRANSPORT', message: 'stream ended before completion' }, 'network', '网络'],
+    [{ code: 'AUTH', message: '403: Model.AccessDenied: not activated' }, 'model_not_available', '没开通'],
   ];
   for (const [failure, kind, words] of cases) {
     assert.equal(classify(failure), kind, JSON.stringify(failure));
@@ -114,6 +120,7 @@ test('RT16 readable failure reasons for the seven classes (port of Mika ModelAcc
   assert.ok(isTransient('rate_limited') && isTransient('server') && isTransient('network') && !isTransient('quota') && !isTransient('auth'));
   assert.equal(detail('{"error":{"message":"bad key sk-abcdefghijk"}}'), 'bad key sk-abcdefghijk');
   assert.equal(detail('Bearer abc.def sk-abcdefghijklmn'), 'Bearer [redacted] [redacted]');
+  assert.equal(detail('503: {"message":"upstream temporarily unavailable"}'), 'upstream temporarily unavailable');
 });
 
 test('RT12 ladders and call identity', () => {
