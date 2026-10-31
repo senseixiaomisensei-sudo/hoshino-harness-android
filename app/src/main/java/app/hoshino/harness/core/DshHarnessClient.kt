@@ -637,6 +637,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     /** People-facing reason for a failed turn. ChatGPT plan errors arrive already explained by plugins/android-api. */
     private fun failureDetail(sid:String,failure:JSONObject?):String {
+        val base=providerFailureDetail(sid,failure)
+        val message=failure?.optString("message").orEmpty()
+        if(failure==null||!dev.hoshino.bridge.isTransportFailure(failure.optString("code"),message))return base
+        val proxyActive=runCatching{dev.hoshino.bridge.KernelNetwork.kernelProxyEnvironment(context).isNotEmpty()}.getOrDefault(false)
+        return base+"\n"+dev.hoshino.bridge.transportFailureHint(dev.hoshino.bridge.classifyTransportFailure(message),proxyActive)
+    }
+    private fun providerFailureDetail(sid:String,failure:JSONObject?):String {
         val raw=vault.redact(failure?.optString("message").orEmpty()).take(1500)
         if(metadata.getString("session-provider:$sid",null)!="openai-codex")return raw.ifBlank{"内核未返回错误详情"}
         val status=failure?.optInt("status")
