@@ -26,4 +26,5 @@ export function tierHiddenTools(tier:string|undefined):string[]{
 /** Session prompt for an authorized full-access session. The executor is Shizuku or the built-in wireless-debugging helper. */
 export const FULL_ACCESS_PROMPT='Full-access is authorized. For Android system commands use system_shell; it runs through Shizuku or the built-in wireless-debugging helper and returns its real uid and cwd. '+
   'Ordinary bash remains inside Alpine and file tools remain in the private workspace. System commands still require approval. '+
-  'To open or operate other apps prefer the phone_* tools (phone_launch_app, phone_do_steps) over system_shell.';
+  'To open or operate other apps use only the phone_* tools (phone_launch_app, phone_do_steps): they work on the background agent display, concurrently with the user\'s main screen. '+
+  'Never use system_shell for that: monkey, am start, cmd activity start, input and cmd statusbar act on the user\'s main screen and are refused.';
