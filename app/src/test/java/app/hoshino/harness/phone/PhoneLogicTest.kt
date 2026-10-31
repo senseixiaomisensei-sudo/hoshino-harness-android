@@ -6,6 +6,7 @@ import app.hoshino.harness.phone.ocr.OcrLine
 import app.hoshino.harness.phone.ocr.OcrMerge
 import app.hoshino.harness.phone.ocr.Pixels
 import app.hoshino.harness.phone.ocr.TreeQuality
+import app.hoshino.harness.phone.setup.PhoneSetupFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -135,32 +136,32 @@ class OcrLogicTest {
 }
 
 class PhoneSetupFlowTest {
-    private val base = app.hoshino.harness.phone.setup.PhoneSetupFlow.Input(
+    private val base = PhoneSetupFlow.Input(
         sdk = 35, consentConfirmed = false, shizukuReady = false, developerOptions = false, wirelessDebugging = false,
         paired = false, helperRunning = false, accessibility = false, ocrReady = false,
     )
-    private val flow = app.hoshino.harness.phone.setup.PhoneSetupFlow
+    private val flow = PhoneSetupFlow
 
     @Test fun consentComesBeforeAnySystemChange() {
-        assertEquals(flow.Step.Consent, flow.current(base))
-        assertEquals(flow.Step.Developer, flow.current(base.copy(consentConfirmed = true)))
+        assertEquals(PhoneSetupFlow.Step.Consent, flow.current(base))
+        assertEquals(PhoneSetupFlow.Step.Developer, flow.current(base.copy(consentConfirmed = true)))
     }
 
     @Test fun unreadableSwitchesNeverBlock() {
         val i = base.copy(consentConfirmed = true, developerOptions = null, wirelessDebugging = null, userSaysDeveloperOn = true)
-        assertEquals(flow.Step.Pairing, flow.current(i))
+        assertEquals(PhoneSetupFlow.Step.Pairing, flow.current(i))
     }
 
     @Test fun shizukuSkipsPairingAndOcrIsOptional() {
         val i = base.copy(consentConfirmed = true, shizukuReady = true, accessibility = true)
-        assertEquals(flow.Step.Done, flow.current(i))
-        assertEquals(flow.Mark.Optional, flow.marks(i)[flow.Step.Ocr])
+        assertEquals(PhoneSetupFlow.Step.Done, flow.current(i))
+        assertEquals(PhoneSetupFlow.Mark.Optional, flow.marks(i)[PhoneSetupFlow.Step.Ocr])
         assertNull(flow.likelyProblem(i))
     }
 
     @Test fun oldAndroidIsUnsupportedAndExplained() {
         val i = base.copy(sdk = 31)
-        assertEquals(flow.Step.Version, flow.current(i))
+        assertEquals(PhoneSetupFlow.Step.Version, flow.current(i))
         assertTrue(flow.likelyProblem(i)!!.contains("Android 13"))
     }
 
