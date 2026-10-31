@@ -99,6 +99,16 @@ class AgentDisplay(private val shell: IHoshinoPhoneShell, val width: Int, val he
         if (!hasFrame || bmp == null || bmp.isRecycled) null else Bitmap.createBitmap(bmp, 0, 0, width, height)
     }
 
+    /**
+     * A-1 (WP-1): coarse luma grid ([FrameMath.lumaGrid]) of the newest frame, read in place under the frame lock
+     * (no full-size copy), or null before the first frame. Cheap enough to poll every 100 ms while waiting.
+     */
+    fun frameSignature(): IntArray? = synchronized(frameLock) {
+        val bmp = fullFrame
+        if (!hasFrame || bmp == null || bmp.isRecycled) null
+        else runCatching { FrameMath.lumaGrid(width, height) { x, y -> bmp.getPixel(x, y) } }.getOrNull()
+    }
+
     /** Small copy for an immediate preview (capsule opens before the next frame arrives). */
     fun previewNow(): Bitmap? = synchronized(frameLock) {
         val bmp = fullFrame ?: return null
