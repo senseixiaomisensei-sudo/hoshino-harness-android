@@ -2,10 +2,25 @@ import {appendFile,mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import type {Context,Provider} from '../../node-host/src/platform.js';
 import {providerBaseURL} from '../android-api/provider-config.js';
-import {Configuration,scopePolicy,resolveApproval,riskOf,type Data} from './config.js';
+import {Configuration,scopePolicy,resolveApproval,riskOf,approvalSessionFor,type Data} from './config.js';
+/** [id, parent, grandparent…] through session headers (`parentSession`, set by dsh-subagent for spawned/forked children). */
+export function sessionChain(ctx:Context,sessionId:string):string[]{
+ const chain=[sessionId];const agents=(ctx as any).agents as {get?(id:string):any}|undefined;
+ for(let id=sessionId,i=0;id&&i<8;i++){let parent:unknown;try{parent=agents?.get?.(id)?.session?.header?.parentSession;}catch{parent=undefined;}
+  if(typeof parent!=='string'||!parent||chain.includes(parent))break;chain.push(parent);id=parent;}
+ return chain;
+}
+/** The approval policy that governs `sessionId` (its own override, else the nearest parent's, else the default). */
+export function policyFor(ctx:Context,config:Configuration,sessionId:string):{policy:Data;from:string}{
+ const base=config.get('approval.json');const from=approvalSessionFor(base,sessionChain(ctx,sessionId));
+ const options=(ctx.mobilePolicy.options.get(from)??ctx.mobilePolicy.options.get(sessionId)) as Data|undefined;
+ return {policy:scopePolicy(base,from,ctx.androidBridge.bootstrap.workspace,String(options?.mode??'standard')),from};
+}
+/** True when the user-enabled no-approval mode governs this session (subagents inherit it). */
+export function isNoApproval(ctx:Context,config:Configuration,sessionId:string):boolean{try{return policyFor(ctx,config,sessionId).policy.mode==='none';}catch{return false;}}
+
 export async function approval(ctx:Context,config:Configuration,action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>){
- const sessionId=String(action.sessionId??'');const options=ctx.mobilePolicy.options.get(sessionId) as Data|undefined;
- const policy=scopePolicy(config.get('approval.json'),sessionId,ctx.androidBridge.bootstrap.workspace,String(options?.mode??'standard'));
+ const sessionId=String(action.sessionId??'');const {policy,from}=policyFor(ctx,config,sessionId);
  let result=resolveApproval(policy,action);let approver:string=result.approver??result.decision;
  if(result.decision==='model'){
   try{
@@ -27,6 +42,6 @@ export async function approval(ctx:Context,config:Configuration,action:Data,ask:
  // Only an `ask` reaches the Android approval card; allow/deny (incl. no-approval mode) never show one.
  const answer=result.decision==='ask'?await ask():{approved:result.decision==='allow',remember:false};
  await mkdir(join(config.root,'audit'),{recursive:true});
- await appendFile(join(config.root,'audit','approvals.jsonl'),JSON.stringify({at:new Date().toISOString(),sessionId,tool:action.tool,approver,mode:String(policy.mode??'manual'),reason:result.reason,decision:answer.approved?'allow':'deny',...(riskOf(action)??{})})+'\n');
+ await appendFile(join(config.root,'audit','approvals.jsonl'),JSON.stringify({at:new Date().toISOString(),sessionId,tool:action.tool,approver,mode:String(policy.mode??'manual'),...(from!==sessionId?{inheritedFrom:from}:{}),reason:result.reason,decision:answer.approved?'allow':'deny',...(riskOf(action)??{})})+'\n');
  return answer;
 }

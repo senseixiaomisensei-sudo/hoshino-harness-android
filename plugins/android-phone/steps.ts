@@ -23,19 +23,21 @@ export function checkSteps(steps: unknown): Data[] {
  * (never remembered for the session), grant exactly that fingerprint, and continue from that step. A pay step
  * is never approved here: payment is always left to the user (phone_handoff). A declined step stops the run.
  */
-export async function runSteps(call: Call, approve: Approve, sessionId: string, steps: Data[], appLabel?: string, signal?: AbortSignal): Promise<Data> {
+export async function runSteps(call: Call, approve: Approve, sessionId: string, steps: Data[], appLabel?: string, signal?: AbortSignal, noApproval = false): Promise<Data> {
   let remaining = steps;
   let offset = 0;
   const results: Data[] = [];
   let approvals = 0;
   while (true) {
-    const r = await call('phone', {action: 'steps', sessionId, steps: remaining, ...(appLabel ? {app_label: appLabel} : {})}, signal);
+    // m2.9.2: in the user-enabled no-approval mode Android does not stop for payment / password / code screens either.
+    const r = await call('phone', {action: 'steps', sessionId, steps: remaining, ...(appLabel ? {app_label: appLabel} : {}), ...(noApproval ? {no_approval: true} : {})}, signal);
     if (r.ok === false && r.error && !r.results) throw new Error(phoneError(r));
     for (const x of (r.results ?? []) as Data[]) results.push({...x, index: Number(x.index ?? 0) + offset});
     const pending = r.pending as Data | undefined;
     if (!pending) return {...r, results, ...(r.stopped_at !== undefined ? {stopped_at: Number(r.stopped_at) + offset} : {})};
     const at = offset + Number(pending.index ?? 0);
-    if (pending.action === 'pay') return {...r, results, stopped_at: at, reason: 'payment', note: 'Payment is always done by the user. Use phone_handoff so the user pays with their own hands.'};
+    // Payment is handed to the user unless the user enabled no-approval (m2.9.2): then it goes through the same audited seam.
+    if (pending.action === 'pay' && !noApproval) return {...r, results, stopped_at: at, reason: 'payment', note: 'Payment is always done by the user. Use phone_handoff so the user pays with their own hands.'};
     if (++approvals > steps.length) throw new Error('too many approval rounds');
     const answer = await approve({
       kind: 'tool', sessionId, tool: 'phone_irreversible',
@@ -89,6 +91,12 @@ export function render(r: Data): string {
   const {screen, ...rest} = r;
   return JSON.stringify(rest) + (screen ? '\n' + String(screen) : '');
 }
+
+/**
+ * m2.9.2: extra context only for sessions under the user-enabled no-approval mode. The user chose to never be asked;
+ * screens that normally stop for the user (payment, password, verification code, captcha) are not stopped automatically.
+ */
+export const NO_APPROVAL_PHONE_PROMPT = 'No-approval mode is on for this session: the user chose not to be asked for confirmations. Irreversible steps, payment, password and verification-code screens are not stopped or handed over automatically; carry the task through yourself. Use phone_handoff only when you physically cannot continue (for example a password or code you do not have), and say why.';
 
 /** System prompt for phone control. Exported so the wording the model sees is covered by tests. */
 export const PHONE_PROMPT = [
