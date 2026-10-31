@@ -4,7 +4,7 @@ import {readFile,writeFile,mkdir,readdir,lstat,appendFile} from 'node:fs/promise
 import {join,dirname,relative} from 'node:path';
 import {Configuration,modes,defaults,interpolate,treeStamp,atomic,scopePolicy,withApprovalMode,APPROVAL_MODES,type ApprovalMode,type Data} from './config.js';
 import {stopSummary,exportSession,forgetSessions} from './sessions.js';
-import {approval} from './approval.js';
+import {approval,isNoApproval,policyFor} from './approval.js';
 import {fetchPage,search,webUrl} from './web.js';
 import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,installPluginZip,gitOperation,ensureTools,exportBackup,restoreBackup,selfSnapshot,command} from './operations.js';
 import {marketInvoke} from './market.js';
@@ -17,7 +17,9 @@ import type {} from '@deepseek-ai/dsh-subagent';
 import {createRequire} from 'node:module';
 import {createScope,type Scope} from '@deepseek-ai/dsh-scope';
 import {sessionToolDeny,modeAllows,inactiveBuiltinPlugins} from './tool-mask.js';
-export interface MobileM2 {config:Configuration;syncTools(sessionId:string):void;invoke(action:string,args:Data):Promise<any>;approve(action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>):Promise<{approved:boolean;remember?:boolean}>}
+export interface MobileM2 {config:Configuration;syncTools(sessionId:string):void;invoke(action:string,args:Data):Promise<any>;approve(action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>):Promise<{approved:boolean;remember?:boolean}>;
+ /** m2.9.2: the user-enabled no-approval mode governs this session (own override, else the nearest parent's, else the default). */
+ noApproval(sessionId:string):boolean}
 declare module '@deepseek-ai/cordis'{interface Context{mobileM2:MobileM2}}
 export const name='hoshino-m2';
 export const inject=['androidBridge','mobilePolicy','systemPrompt','tools','agents'];
@@ -167,7 +169,7 @@ export async function apply(ctx:Context){
    case 'sync-pull':{const cfg=config.get('build.json');const result=await github('/repos/'+cfg.repository+'/contents/hoshino-config.json');return invoke('import-config',{content:Buffer.from(result.content,'base64').toString('utf8')});}
    case 'bridge':return bridge(String(args.action),args.request??{});
    // ---- approval level (incl. user-enabled no-approval) and session management; see sessions.ts
-   case 'approval-state':{const sid=String(args.sessionId??'');const policy=config.get('approval.json');const mode=String((ctx.mobilePolicy.options.get(sid) as Data|undefined)?.mode??'standard');return {defaultMode:String(policy.mode??'manual'),sessionMode:sid?policy.scopes?.sessions?.[sid]?.mode??null:null,effective:String(scopePolicy(policy,sid,workspace,mode).mode??'manual'),modes:APPROVAL_MODES};}
+   case 'approval-state':{const sid=String(args.sessionId??'');const policy=config.get('approval.json');const mode=String((ctx.mobilePolicy.options.get(sid) as Data|undefined)?.mode??'standard');return {defaultMode:String(policy.mode??'manual'),sessionMode:sid?policy.scopes?.sessions?.[sid]?.mode??null:null,effective:String((sid?policyFor(ctx,config,sid).policy:scopePolicy(policy,sid,workspace,mode)).mode??'manual'),modes:APPROVAL_MODES};}
    case 'approval-mode':{
     const sid=typeof args.sessionId==='string'&&args.sessionId?args.sessionId:undefined;const scope=String(args.scope??'session');const mode=args.mode==null?null:String(args.mode) as ApprovalMode;
     let next=config.get('approval.json');
@@ -181,7 +183,7 @@ export async function apply(ctx:Context){
    default:throw Error('Unknown M2 operation');
   }
  };
- ctx.provide('mobileM2',{config,invoke,syncTools,approve:(action,ask)=>approval(ctx,config,action,ask)});
+ ctx.provide('mobileM2',{config,invoke,syncTools,approve:(action,ask)=>approval(ctx,config,action,ask),noApproval:(sid:string)=>isNoApproval(ctx,config,sid)});
  const tools:Array<[string,string,Data,string]>=[
   ['self_read','Read a public self file, including source working copy.',{path:{type:'string',required:true}},'read'],
   ['self_write','Write public self configuration, DSL, plugin or source, with checkpoint.',{path:{type:'string',required:true},content:{type:'string',required:true}},'write'],

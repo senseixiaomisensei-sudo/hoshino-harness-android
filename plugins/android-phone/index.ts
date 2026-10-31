@@ -3,7 +3,7 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { Context } from '../../node-host/src/platform.js';
 import type {} from '../android-policy/index.js';
 import { READ_TOOLS, readArgs } from './read.js';
-import { checkSteps, phoneError, phoneStatusText, render, runSteps, stepFor, PHONE_PROMPT, type Data } from './steps.js';
+import { checkSteps, phoneError, phoneStatusText, render, runSteps, stepFor, PHONE_PROMPT, NO_APPROVAL_PHONE_PROMPT, type Data } from './steps.js';
 
 /**
  * Phone control tools (m2.8). Every tool is a thin client of the Android single execution entry
@@ -37,6 +37,8 @@ export function apply(ctx: Context): void {
   const call = (method: string, body: Data, signal?: AbortSignal) => ctx.androidBridge.call<Data>(method, body, signal);
   const approve = (action: Data, signal?: AbortSignal) => ctx.androidBridge.call<{approved: boolean; remember?: boolean}>('approve', action, signal);
   const sid = (exec: {agent?: {id: string}}) => exec.agent?.id ?? '';
+  // m2.9.2: hoshino-m2 owns the approval policy; optional so this plugin still loads without it (then: never no-approval).
+  const noApproval = (id: string): boolean => { try { return (ctx as any).get?.('mobileM2')?.noApproval?.(id) === true; } catch { return false; } };
   const phone = async (action: string, args: Data, exec: {agent?: {id: string}; signal: AbortSignal}) => {
     const r = await call('phone', {action, sessionId: sid(exec), ...args}, exec.signal);
     if (r.ok === false && r.error && action !== 'handoff') throw new Error(phoneError(r));
@@ -67,10 +69,10 @@ export function apply(ctx: Context): void {
     ['phone_launch_app', 'open_app', 'Open an app (e.g. 抖音, WeChat) on the background agent display by package or label (never Hoshino itself), without disturbing the user\'s main screen. This is how to open apps; it needs no Shizuku and no full-access. The display is created on demand, so call it directly. Returns once the app is usable (past its splash screen) with opened_in_ms; cold=true restarts it from its first page.', {app: {type: 'string', required: true}, cold: {type: 'boolean', description: 'Force-stop and start fresh (only when the app has no task outside the agent display)'}, ...expect}],
     ['phone_wait', 'wait', 'Wait until text appears/disappears, an app is in front, or the screen is quiet.', {expect: {...EXPECT_SCHEMA, required: true}}],
   ];
-  for (const [tool, action, description, parameters] of single) text(tool, description, parameters, async (a, exec) => render(await runSteps(call, approve, sid(exec), checkSteps([stepFor(action, a)]), undefined, exec.signal)));
+  for (const [tool, action, description, parameters] of single) text(tool, description, parameters, async (a, exec) => render(await runSteps(call, approve, sid(exec), checkSteps([stepFor(action, a)]), undefined, exec.signal, noApproval(sid(exec)))));
   text('phone_do_steps', 'Run 1-20 known actions in a row without a round-trip per step; each step: {action: tap|long_press|type|clear|scroll|swipe|back|key|open_app|wait, ref?, target?, x?, y?, text?, enter?, direction?, key?, app?, cold?, expect?}. Stops early on choosers, screens that need the user, missing targets, or an irreversible step that needs approval.',
     {steps: {type: 'array', required: true, items: STEP_SCHEMA}, app_label: {type: 'string'}},
-    async (a, exec) => render(await runSteps(call, approve, sid(exec), checkSteps(a.steps), a.app_label ? String(a.app_label) : undefined, exec.signal)));
+    async (a, exec) => render(await runSteps(call, approve, sid(exec), checkSteps(a.steps), a.app_label ? String(a.app_label) : undefined, exec.signal, noApproval(sid(exec)))));
 
   // WP-4 (B-1): query / extract / find / collect loop on the phone and return once (read.ts validates first).
   for (const t of READ_TOOLS) text(t.name, t.description, t.parameters, (a, exec) => phone(t.action, (({action: _, ...rest}) => rest)(readArgs(t.action, a)), exec));
@@ -87,4 +89,5 @@ export function apply(ctx: Context): void {
   }));
 
   ctx.systemPrompt.context({name: 'hoshino-phone', order: 520, required: false, text: () => PHONE_PROMPT});
+  ctx.systemPrompt.context({name: 'hoshino-phone-no-approval', order: 521, required: false, text: () => { const id = ctx.agents.currentInitiator()?.id; return id && noApproval(id) ? NO_APPROVAL_PHONE_PROMPT : ''; }});
 }

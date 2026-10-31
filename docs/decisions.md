@@ -187,3 +187,9 @@
 - 系统提示：`PHONE_PROMPT` 写明所有 App 操作只在后台虚拟屏、与主屏并发、Hoshino 退到后台也继续，不要用 system_shell 操作 App；虚拟屏只在任务运行时创建，看不到额外 display 不代表没有该功能，直接调用 phone_launch_app。`FULL_ACCESS_PROMPT`、`system_shell` 与 `phone_launch_app` 描述同步。`phone_status` 未就绪时返回逐项设置指引（`phoneStatusText`）。
 
 测试：`m29-phone-tools.test.mjs`（真内核：standard / auto / goal 含 phone_*，chat 无工具；旧 `[]` 的 standard 与旧自定义白名单仍含 phone_*，旧白名单其余限制不变）；`m29-vd-guard.test.mjs`（命令守卫各写法、显式 agent display 放行、提示词、phone_status 指引、插件加载、模式白名单、doctor）；`m281.test.mjs` 中「白名单屏蔽 phone_*」的两条断言按新语义改为期望值（未删）；`PresetRowsTest`、`VirtualDisplayGuardTest`。未真机验证：前台服务后台启动是否被系统拒绝、App 复用主屏任务时的挪回、Hoshino 退后台/熄屏时虚拟屏持续渲染。
+
+## 2026-10-31 m2.9.2：无审批 = 彻底无审批（取代 M2.8「付款/密码/验证码任何档位都交给用户」）
+- 用户明确要求：选了无审批的会话（含其子 Agent）里任何审批/确认都不再弹出，全部自动通过并写审计；付款、密码、验证码、人机验证页面在无审批下也不再自动停下交给用户，照常执行（逐条审计，只记原因与包名）。
+- 默认仍是手动审批；无审批只能由用户主动开启，开启时弹一次风险说明，确认后不再问。
+- 不变：权限档、用户自写的 deny 规则、system_shell 主屏守卫、Android 系统自身的确认（APK 安装、运行时权限、Shizuku 授权）。
+- 详见 docs/m2.9.2-noapproval-preview.md。
