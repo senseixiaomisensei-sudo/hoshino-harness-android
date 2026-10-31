@@ -88,6 +88,7 @@ export function apply(ctx: Context): void {
     },
   }));
 
-  ctx.systemPrompt.context({name: 'hoshino-phone', order: 520, required: false, text: () => PHONE_PROMPT});
+  // Registration order: the no-approval note first so 'hoshino-phone' stays the plugin's last (main) context; `order` decides placement.
   ctx.systemPrompt.context({name: 'hoshino-phone-no-approval', order: 521, required: false, text: () => { const id = ctx.agents.currentInitiator()?.id; return id && noApproval(id) ? NO_APPROVAL_PHONE_PROMPT : ''; }});
+  ctx.systemPrompt.context({name: 'hoshino-phone', order: 520, required: false, text: () => PHONE_PROMPT});
 }
