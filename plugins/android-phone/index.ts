@@ -57,8 +57,8 @@ export function apply(ctx: Context): void {
   const single: Array<[string, string, string, Data]> = [
     ['phone_tap', 'tap', 'Tap an element (ref or visible text) or a 0..999 point on the agent display.', {...target, ...expect}],
     ['phone_long_press', 'long_press', 'Long-press an element or point.', {...target, ...expect}],
-    ['phone_type_text', 'type', 'Type text into a field (ref/target, else the focused field). Replaces its content. enter=true submits.', {...target, text: {type: 'string', required: true}, enter: {type: 'boolean'}, ...expect}],
-    ['phone_clear_text', 'clear', 'Clear a text field.', {...target}],
+    ['phone_type_text', 'type', 'Type text into a field (ref/target, else the focused field; x/y taps that point first and types into what takes focus, for fields missing from the element list). Replaces its content and reads it back. enter=true submits.', {...target, text: {type: 'string', required: true}, enter: {type: 'boolean'}, ...expect}],
+    ['phone_clear_text', 'clear', 'Clear a text field (ref/target, x/y, else the focused field).', {...target}],
     ['phone_scroll', 'scroll', 'Scroll a list (ref) or the screen: direction up/down/left/right.', {...target, direction: {type: 'string', required: true}, ...expect}],
     ['phone_swipe', 'swipe', 'Straight swipe from x,y to x2,y2 (0..999).', {x: {type: 'number', required: true}, y: {type: 'number', required: true}, x2: {type: 'number', required: true}, y2: {type: 'number', required: true}, duration_ms: {type: 'number'}, ...expect}],
     ['phone_back', 'back', 'Press Back on the agent display.', {...expect}],

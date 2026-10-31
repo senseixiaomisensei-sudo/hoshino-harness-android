@@ -1,8 +1,6 @@
 // Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.
 package app.hoshino.harness.phone
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Bundle
@@ -10,13 +8,18 @@ import android.os.SystemClock
 import android.view.Display
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import app.hoshino.harness.phone.ocr.OcrMerge
 import app.hoshino.harness.phone.ocr.PhoneOcr
 import app.hoshino.harness.phone.ocr.TreeQuality
 import dev.hoshino.bridge.phone.IHoshinoPhoneShell
+import dev.hoshino.bridge.phone.shell.ClipSwap
+import dev.hoshino.bridge.phone.shell.ShellText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
@@ -94,8 +97,8 @@ class AndroidPhoneScreen(
         when (step.kind) {
             StepKind.tap -> outcome(click(node, point(step, target)), "tap")
             StepKind.long_press -> outcome(longPress(node, point(step, target)), "long_press")
-            StepKind.type -> type(node, step.text.orEmpty(), step.enter)
-            StepKind.clear -> type(node, "", false)
+            StepKind.type -> typeStep(step, target, node, step.text.orEmpty(), step.enter)
+            StepKind.clear -> typeStep(step, target, node, "", false)
             StepKind.scroll -> outcome(scroll(node, step.direction ?: "down"), "scroll")
             StepKind.swipe -> outcome(swipe(px(step.x!!), py(step.y!!), px(step.x2!!), py(step.y2!!), step.durationMs ?: SWIPE_MS), "swipe")
             StepKind.back -> outcome(key(KeyEvent.KEYCODE_BACK), "back")
@@ -202,31 +205,230 @@ class AndroidPhoneScreen(
     }
 
     /**
-     * Input strategy (PH5): set the text on the node → if the app ignores it (web editors, self-drawn
-     * fields), paste through the clipboard into our own display and give the user's clipboard back →
-     * verify by reading the field again. No field → `no_focus`.
+     * Input strategy (PH5, WP-2). A point with no field under it → [typeAt]. Otherwise the field (ref/target,
+     * else the focused one) gets focus first, then [TypeFlow] writes and reads back, retrying once:
+     * native field SET_TEXT → paste → keys; WebView field paste → keys → SET_TEXT (unverified).
+     * The clipboard is borrowed through the helper only when the user's clip could be read (else untouched).
+     * No field at all → `no_focus` (or, with the keyboard up, the unseen path as at a point).
      */
-    private suspend fun type(target: AccessibilityNodeInfo?, text: String, enter: Boolean): ActionOutcome {
-        val field = target?.let { editableIn(it) } ?: focusedEditable()
-            ?: return ActionOutcome(false, "no_focus: no input field is focused; tap the field first")
+    private suspend fun typeStep(step: PhoneStep, target: UiElement?, node: AccessibilityNodeInfo?, text: String, enter: Boolean): ActionOutcome {
+        val field = node?.let { editableIn(it) }
+        val point = point(step, target)
+        if (field == null && step.ref == null && step.target == null && step.x != null && step.y != null && point != null) {
+            return typeAt(point.first, point.second, text, enter)
+        }
+        val f = field ?: focusedEditable()
+        if (f == null) {
+            if (display != null && keyboardUp()) return typeUnseen(text, enter, atPoint = false)
+            return ActionOutcome(false, "${TypeFlow.NO_FOCUS}: no input field is focused; tap the field first")
+        }
+        return typeInto(f, text, enter)
+    }
+
+    /**
+     * Typing at a point (Mika typeAt): tap it, let the screen settle; a focused field that shows up in the tree is
+     * typed into as usual, otherwise (self-drawn field) paste/keys are sent to the focus and the screen text is
+     * compared before/after. Nothing changed → `point_not_typed`.
+     */
+    private suspend fun typeAt(x: Int, y: Int, text: String, enter: Boolean): ActionOutcome {
+        val before = topPackage()
+        if (!touch(x, y, TAP_MS)) return ActionOutcome(false, "${TypeFlow.POINT_NOT_TYPED}: the tap at that point failed")
+        waitQuiet(TYPE_AT_QUIET_MS, TYPE_AT_SETTLE_MS)
+        val after = topPackage()
+        if (before != null && after != null && after != before) {
+            return ActionOutcome(false, "${TypeFlow.POINT_NOT_TYPED}: the tap opened $after instead of an input field; nothing was typed")
+        }
+        focusedEditable()?.let { return typeInto(it, text, enter) }
+        if (display == null) return ActionOutcome(false, "${TypeFlow.POINT_NOT_TYPED}: no input field took focus at that point")
+        return typeUnseen(text, enter, atPoint = true)
+    }
+
+    private suspend fun typeInto(start: AccessibilityNodeInfo, text: String, enter: Boolean): ActionOutcome {
+        var field = start
         if (field.isPassword) return ActionOutcome(false, "password: typing passwords is left to the user")
-        if (!field.isFocused) { field.performAction(AccessibilityNodeInfo.ACTION_FOCUS); field.performAction(AccessibilityNodeInfo.ACTION_CLICK); delay(150) }
-        val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
-        var how = "set_text"
-        val set = field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-        delay(120)
-        if (!set || !shows(field, text)) {
-            if (text.isEmpty() || display == null) return ActionOutcome(false, "field did not accept the text")
-            how = "paste"
-            if (!paste(text)) return ActionOutcome(false, "field did not accept the text (set_text and paste failed)")
-            delay(200)
-            if (!shows(field, text) && !shows(focusedEditable(), text)) return ActionOutcome(false, "point_not_typed: pasted, but the field does not show the text")
+        val web = inWebView(field)
+        // WebView editors only take paste/keys into the focused element: make sure the field holds focus first.
+        if (!ensureFocus(field, web)) return ActionOutcome(false, "${TypeFlow.NO_FOCUS}: the input field did not take focus; tap it first")
+        if (text.isEmpty()) return clearField(field, web)
+        val io = object : TypeFlow.Io {
+            override suspend fun setText(text: String): Boolean {
+                val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
+                return field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            }
+            override suspend fun paste(text: String): TypeFlow.Paste = withBorrowedClip(text) { s ->
+                val before = fieldTextOf(field)
+                selectAll(field)
+                val sent = field.performAction(AccessibilityNodeInfo.ACTION_PASTE) ||
+                    (display != null && runCatching { s.injectCtrlKey(displayId, KeyEvent.KEYCODE_A) && s.injectCtrlKey(displayId, KeyEvent.KEYCODE_V) }.getOrDefault(false))
+                // The app reads the clipboard asynchronously: keep ours until the field changed (or a short cap).
+                if (sent) pollUntil(PASTE_WAIT_MS) { fieldTextOf(field) != before }
+                sent
+            }
+            override suspend fun keys(text: String): TypeFlow.Keys {
+                val s = shell() ?: return TypeFlow.Keys.Failed
+                if (display == null) return TypeFlow.Keys.Failed
+                if (!ShellText.typeable(text)) return TypeFlow.Keys.Unmappable
+                if (!selectAll(field)) runCatching { s.injectCtrlKey(displayId, KeyEvent.KEYCODE_A) }
+                return keysResult(runCatching { s.injectText(displayId, text) }.getOrDefault(ShellText.TEXT_FAILED))
+            }
+            override suspend fun check(text: String): TypeFlow.Check {
+                delay(READBACK_MS)
+                if (shows(field, text)) return TypeFlow.Check.Shown
+                // Some apps swap the input view when its content changes: follow the focused one.
+                val now = focusedEditable()
+                if (shows(now, text)) { field = now!!; return TypeFlow.Check.Shown }
+                return TypeFlow.Check.NotShown
+            }
         }
-        if (enter) {
-            val ime = android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id
-            if (!field.performAction(ime)) key(KeyEvent.KEYCODE_ENTER)
+        val r = TypeFlow.run(io, text, web = web)
+        if (!r.ok) return ActionOutcome(false, r.detail)
+        if (enter) pressEnter(field)
+        return ActionOutcome(true, r.detail)
+    }
+
+    /** Fields not in the tree (self-drawn): paste/keys go to whatever holds focus on our display; checked by screen text. */
+    private suspend fun typeUnseen(text: String, enter: Boolean, atPoint: Boolean): ActionOutcome {
+        val s = shell() ?: return ActionOutcome(false, "helper_not_running")
+        if (text.isEmpty()) {
+            val ok = runCatching { s.injectCtrlKey(displayId, KeyEvent.KEYCODE_A) && s.injectKey(displayId, KeyEvent.KEYCODE_DEL) }.getOrDefault(false)
+            return ActionOutcome(ok, if (ok) "cleared_unverified" else "${TypeFlow.POINT_NOT_TYPED}: could not clear")
         }
-        return ActionOutcome(true, how)
+        var beforeTexts = visibleTexts()
+        var beforeHash = treeHash()
+        var beforeFrame = frameSignature()
+        val io = object : TypeFlow.Io {
+            override suspend fun setText(text: String) = false
+            override suspend fun paste(text: String): TypeFlow.Paste = withBorrowedClip(text) { sh ->
+                runCatching { sh.injectCtrlKey(displayId, KeyEvent.KEYCODE_A) }
+                val sent = runCatching { sh.injectCtrlKey(displayId, KeyEvent.KEYCODE_V) }.getOrDefault(false)
+                if (sent) pollUntil(PASTE_WAIT_MS) { FrameMath.differs(beforeFrame, frameSignature()) || treeHash() != beforeHash }
+                sent
+            }
+            override suspend fun keys(text: String): TypeFlow.Keys {
+                if (!ShellText.typeable(text)) return TypeFlow.Keys.Unmappable
+                runCatching { s.injectCtrlKey(displayId, KeyEvent.KEYCODE_A) }
+                return keysResult(runCatching { s.injectText(displayId, text) }.getOrDefault(ShellText.TEXT_FAILED))
+            }
+            override suspend fun check(text: String): TypeFlow.Check {
+                waitQuiet(READBACK_QUIET_MS, READBACK_CAP_MS)
+                val texts = visibleTexts()
+                val hash = treeHash()
+                val frame = frameSignature()
+                val result = when {
+                    TypeFlow.appeared(text, beforeTexts, texts) -> TypeFlow.Check.Shown
+                    hash != beforeHash || FrameMath.differs(beforeFrame, frame) -> TypeFlow.Check.Unverified
+                    else -> TypeFlow.Check.NotShown
+                }
+                beforeTexts = texts; beforeHash = hash; beforeFrame = frame
+                return result
+            }
+        }
+        val r = TypeFlow.run(io, text, unseen = true, atPoint = atPoint)
+        if (!r.ok) return ActionOutcome(false, r.detail)
+        if (enter) key(KeyEvent.KEYCODE_ENTER)
+        return ActionOutcome(true, r.detail)
+    }
+
+    private suspend fun clearField(field: AccessibilityNodeInfo, web: Boolean): ActionOutcome {
+        val ok = if (web) {
+            // SET_TEXT("") would not reach a web editor: select everything and delete.
+            val s = shell()
+            fieldTextOf(field).isEmpty() || (s != null && display != null &&
+                (selectAll(field) || runCatching { s.injectCtrlKey(displayId, KeyEvent.KEYCODE_A) }.getOrDefault(false)) &&
+                runCatching { s.injectKey(displayId, KeyEvent.KEYCODE_DEL) }.getOrDefault(false))
+        } else {
+            val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "") }
+            field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        }
+        delay(READBACK_MS)
+        if (!ok || !shows(field, "")) return ActionOutcome(false, "${TypeFlow.READBACK_MISMATCH}: the field is not empty")
+        return ActionOutcome(true, "cleared")
+    }
+
+    /**
+     * Borrows the clipboard through the helper for one paste and always gives it back. When the helper cannot read
+     * the user's clip it refuses ([TypeFlow.Paste.Unavailable]) and nothing on the clipboard was changed.
+     * One paste at a time across all screens. The app itself never reads or writes the clipboard.
+     */
+    private suspend fun withBorrowedClip(text: String, paste: suspend (IHoshinoPhoneShell) -> Boolean): TypeFlow.Paste {
+        val s = shell() ?: return TypeFlow.Paste.Failed
+        if (display == null) return TypeFlow.Paste.Failed
+        return CLIP_MUTEX.withLock {
+            val code = runCatching { s.setClipText(text) }.getOrDefault(ClipSwap.CLIP_FAILED)
+            // 0 = an older helper without this method: treat as unavailable, never as "set".
+            if (code != ClipSwap.CLIP_SET) return@withLock if (code == ClipSwap.CLIP_FAILED) TypeFlow.Paste.Failed else TypeFlow.Paste.Unavailable
+            PhoneLedger.borrowClipboard(context)
+            try {
+                if (paste(s)) TypeFlow.Paste.Done else TypeFlow.Paste.Failed
+            } finally {
+                runCatching { s.restoreClip() }
+                PhoneLedger.returnClipboard(context)
+            }
+        }
+    }
+
+    private fun keysResult(code: Int) = when (code) {
+        ShellText.TEXT_TYPED -> TypeFlow.Keys.Done
+        ShellText.TEXT_FAILED -> TypeFlow.Keys.Failed
+        // TEXT_UNMAPPABLE, or 0 from an older helper without injectText.
+        else -> TypeFlow.Keys.Unmappable
+    }
+
+    private suspend fun ensureFocus(field: AccessibilityNodeInfo, web: Boolean): Boolean {
+        if (refreshed(field)?.isFocused == true) return true
+        field.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        delay(FOCUS_WAIT_MS)
+        if (refreshed(field)?.isFocused == true) return true
+        field.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        delay(FOCUS_WAIT_MS)
+        if (refreshed(field)?.isFocused == true) return true
+        if (!web) return true // native SET_TEXT works without focus; paste/keys are verified by read-back anyway
+        // A web editor: tap its centre, which is what moves the DOM focus.
+        val r = android.graphics.Rect().also(field::getBoundsInScreen)
+        if (!r.isEmpty && display != null) { touch(r.centerX().coerceIn(0, width - 1), r.centerY().coerceIn(0, height - 1), TAP_MS); delay(FOCUS_WAIT_MS * 2) }
+        return refreshed(field)?.isFocused == true || focusedEditable()?.let { inWebView(it) } == true
+    }
+
+    private fun refreshed(n: AccessibilityNodeInfo): AccessibilityNodeInfo? = n.takeIf { runCatching { it.refresh() }.getOrDefault(false) }
+
+    private fun selectAll(field: AccessibilityNodeInfo): Boolean {
+        val len = fieldTextOf(field).length
+        if (len == 0) return true
+        val range = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, len)
+        }
+        return field.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, range)
+    }
+
+    private fun fieldTextOf(n: AccessibilityNodeInfo): String {
+        runCatching { n.refresh() }
+        return if (AccessibilityReader.showingHint(n)) "" else n.text?.toString().orEmpty()
+    }
+
+    private fun pressEnter(field: AccessibilityNodeInfo) {
+        val ime = AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id
+        if (!field.performAction(ime)) key(KeyEvent.KEYCODE_ENTER)
+    }
+
+    private suspend fun pollUntil(capMs: Long, done: () -> Boolean) {
+        val deadline = now() + capMs
+        while (now() < deadline && !runCatching(done).getOrDefault(false)) delay(POLL_MS)
+    }
+
+    private fun inWebView(n: AccessibilityNodeInfo) = ancestorOrSelf(n) { it.className?.toString() == WEB_VIEW } != null
+
+    private fun keyboardUp(): Boolean = service().windowsOn(displayId).any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+
+    private fun topPackage(): String? = runCatching { AccessibilityReader.topPackage(service().windowsOn(displayId)) }.getOrNull()
+
+    private fun treeHash(): Long = runCatching { AccessibilityReader.hash(service().windowsOn(displayId)) }.getOrDefault(0L)
+
+    private fun visibleTexts(): List<String> = runCatching { AccessibilityReader.read(service().windowsOn(displayId), width, height).texts }.getOrDefault(emptyList())
+
+    private fun frameSignature(): IntArray? {
+        val bmp = display?.latestFrameBitmap() ?: return null
+        return try { FrameMath.lumaGrid(bmp.width, bmp.height) { x, y -> bmp.getPixel(x, y) } } finally { bmp.recycle() }
     }
 
     private fun shows(n: AccessibilityNodeInfo?, text: String): Boolean {
@@ -234,24 +436,6 @@ class AndroidPhoneScreen(
         if (!runCatching { n.refresh() }.getOrDefault(false)) return false
         val shown = AccessibilityReader.fieldText(n) ?: return false
         return if (text.isEmpty()) shown.isEmpty() else shown.replace("\u00a0", " ").contains(text.trim().take(64))
-    }
-
-    /** Clipboard paste into our own display; the user's clip is restored afterwards (RT6). */
-    private suspend fun paste(text: String): Boolean {
-        val s = shell() ?: return false
-        val cm = context.getSystemService(ClipboardManager::class.java)
-        val saved = withContext(Dispatchers.Main) { runCatching { cm.primaryClip }.getOrNull() }
-        PhoneLedger.borrowClipboard(context)
-        try {
-            withContext(Dispatchers.Main) { cm.setPrimaryClip(ClipData.newPlainText("hoshino", text)) }
-            delay(80)
-            val ok = runCatching { s.injectCtrlKey(displayId, KeyEvent.KEYCODE_A) && s.injectCtrlKey(displayId, KeyEvent.KEYCODE_V) }.getOrDefault(false)
-            delay(150)
-            return ok
-        } finally {
-            withContext(Dispatchers.Main) { runCatching { if (saved != null) cm.setPrimaryClip(saved) else cm.clearPrimaryClip() } }
-            PhoneLedger.returnClipboard(context)
-        }
     }
 
     private fun editableIn(n: AccessibilityNodeInfo): AccessibilityNodeInfo? {
@@ -332,6 +516,18 @@ class AndroidPhoneScreen(
         const val SWIPE_POINTS = 12
         const val PLACEMENT_WAIT_MS = 1500L
         const val PLACEMENT_POLL_MS = 150L
+        const val READBACK_MS = 150L
+        const val READBACK_QUIET_MS = 300L
+        const val READBACK_CAP_MS = 1_500L
+        /** Mika waits up to 1.5 s for the app to read the clipboard before restoring it. */
+        const val PASTE_WAIT_MS = 1_500L
+        const val POLL_MS = 50L
+        const val FOCUS_WAIT_MS = 120L
+        const val TYPE_AT_QUIET_MS = 300L
+        const val TYPE_AT_SETTLE_MS = 1_500L
+        const val WEB_VIEW = "android.webkit.WebView"
+        /** One clipboard borrow at a time across every screen. */
+        private val CLIP_MUTEX = Mutex()
     }
 }
 

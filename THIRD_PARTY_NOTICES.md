@@ -95,6 +95,14 @@ Copyright 2026 wangzan101
   - `app/src/androidTest/java/com/wangzan101/mika/eval/EvalRunTest.kt`、`EvalProbes.kt` → `app/src/androidTest/java/app/hoshino/harness/eval/EvalRunTest.kt`、`EvalProbes.kt`（驱动换成 dsh 会话：`HarnessClient.send` + 事件流 + 会话日志；探针改用 UiAutomation/UiAutomator）
 - 未移植、本仓库新写（不带移植文件头）：`HoshinoCapabilities.kt`、`DshSessionLog.kt`、`RunTimingTracker.kt`、`DshRunFactsTest.kt`、`EvalProvenanceTest.kt`、`HoshinoCapabilitiesTest.kt`、`app/.../core/RunMetricsHub.kt`、`node-host/test/prompt-surface.test.mjs`（EV3）、`node-host/test/architecture.test.mjs`、`tools/eval/dual-run.py`、`tools/eval/compare.py`、`tools/license-gate.py`。
 
+### 剪贴板安全打字（分支 feat/m2.9-wp2-clipboard）
+
+- 使用方式：直接移植并改写，文件头部保留出处说明。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/.../cap/phone/shell/ShellClip.kt`（读/还原判断）、`ShellService.kt` 的 `setClipText/restoreClip/canReadClipboard/suppressOverlay/markSensitive` → `core-bridge/.../phone/shell/ShellClip.kt`（判断 + 新增可测的 `ClipSwap` 状态机）与 `PhoneShellService.kt`（shell 身份剪贴板、10 s 看门狗为本仓库新增）
+  - `app/src/test/.../cap/phone/shell/ShellClipTest.kt` → `core-bridge/src/test/.../phone/shell/ShellClipTest.kt`（另加 `ClipSwapTest`）
+  - `app/.../cap/phone/a11y/AndroidScreen.kt` 的 `typeText/typeAt/typeUnseen/inputText/inWebView`（思路）→ `app/.../phone/TypeFlow.kt`、`app/.../phone/AndroidPhoneScreen.kt`（逐字按键注入 `injectText` 为本仓库新增；不移植 `TypingPacing`）
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy

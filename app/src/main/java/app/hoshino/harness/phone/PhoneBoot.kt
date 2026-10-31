@@ -33,12 +33,11 @@ object PhoneBoot {
             override fun audit(event: String) = consent.audit(event)
             override fun wirelessDebuggingTurnedOn() = PhoneNotifier.wirelessDebuggingTurnedOn(app)
         }
-        PhoneLedger.recover(app)
         if (!services.supported()) return
         services.start()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         // RT6: apps muted by a task that crashed get their sound back as soon as a helper is available.
-        scope.launch { services.shell.filterNotNull().collect { s -> PhoneLedger.restoreAll(app, s) } }
+        scope.launch { services.shell.filterNotNull().collect { s -> PhoneLedger.restoreAll(app, s); PhoneLedger.recoverClipboard(app, s) } }
         scope.launch { consent.state.drop(1).collect { services.applyConsent() } }
     }
 }
