@@ -57,6 +57,10 @@ test('setup errors surface with the setup hint; steps are validated before reach
   // WP-2 typeAt: a point reaches Android for type/clear (the field may be missing from the element list).
   assert.deepEqual(stepFor('type', {text: 'hi', x: 500, y: 300}), {action: 'type', x: 500, y: 300, text: 'hi'});
   assert.deepEqual(stepFor('clear', {x: 10, y: 20}), {action: 'clear', x: 10, y: 20});
+  // WP-1 A-5: cold reaches Android only for open_app.
+  assert.deepEqual(stepFor('open_app', {app: 'com.x', cold: true}), {action: 'open_app', app: 'com.x', cold: true});
+  assert.deepEqual(stepFor('open_app', {app: 'com.x'}), {action: 'open_app', app: 'com.x'});
+  assert.deepEqual(stepFor('tap', {ref: 'e1', cold: true}), {action: 'tap', ref: 'e1'});
   assert.equal(render({ok: true, screen: 'screen x'}), '{"ok":true}\nscreen x');
 });
 

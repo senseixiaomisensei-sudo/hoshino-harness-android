@@ -117,6 +117,36 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
         if (ok) START_OK else START_ERROR
     }
 
+    /**
+     * launch_app cold=true (A-5, WP-1). Force-stops the app only when every task of it is on this agent display
+     * ([ColdStart]); otherwise starts it normally. Never touches the main screen or a display we do not own.
+     */
+    override fun restartApp(displayId: Int, packageName: String): Int = synchronized(launchLock) {
+        if (!ownDisplay(displayId)) return START_ERROR
+        val decision = try {
+            val displayField = TASK_INFO.getField("displayId")
+            val taskDisplays = allTasks().filter { packageName in packagesOf(it) }.map { displayField.getInt(it) }
+            ColdStart.decide(taskDisplays, displayId, inUseOnMainScreen(packageName))
+        } catch (t: Throwable) {
+            Log.e(TAG, "cannot inspect tasks", t)
+            return START_ERROR
+        }
+        if (context.packageManager.getLaunchIntentForPackage(packageName) == null) return START_NOT_FOUND
+        when (decision) {
+            ColdStart.IN_USE -> START_IN_USE_ON_MAIN
+            ColdStart.WARM -> startApp(displayId, packageName).let { if (it == START_OK) RESTART_WARM else it }
+            ColdStart.RESTART -> {
+                if (sh("am", "force-stop", "--user", "current", packageName).first != 0) return START_ERROR
+                startApp(displayId, packageName).let { if (it == START_OK) RESTART_COLD else it }
+            }
+        }
+    }
+
+    override fun topActivity(displayId: Int): String? = try {
+        if (!ownDisplay(displayId)) null
+        else tasksOn(displayId).firstOrNull()?.let { (TASK_INFO.getField("topActivity").get(it) as? ComponentName)?.className }
+    } catch (t: Throwable) { null }
+
     private fun packagesOf(task: Any): List<String> = listOf("baseActivity", "topActivity").mapNotNull {
         (TASK_INFO.getField(it).get(task) as? ComponentName)?.packageName
     }
@@ -399,6 +429,9 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
         const val START_IN_USE_ON_MAIN = 1
         const val START_NOT_FOUND = 2
         const val START_ERROR = 3
+        /** restartApp results (never 0: an older helper answers 0). */
+        const val RESTART_COLD = 10
+        const val RESTART_WARM = 11
         /** Navigation/editing keys only: never volume, power or home from here. */
         val ALLOWED_KEYS = setOf(4, 19, 20, 21, 22, 23, 61, 62, 66, 67, 84, 92, 93, 111, 112, 122, 123, 160)
         private val TASK_INFO: Class<*> by lazy { Class.forName("android.app.TaskInfo") }

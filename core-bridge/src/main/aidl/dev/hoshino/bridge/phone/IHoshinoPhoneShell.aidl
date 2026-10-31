@@ -45,5 +45,15 @@ interface IHoshinoPhoneShell {
     // Types printable text key by key into an own display (no clipboard). 1=typed 2=some character has no
     // key, nothing sent 3=failed.
     int injectText(int displayId, String text) = 18;
+
+    // ---- WP-1 wait / open app: transaction codes 41-45 belong to WP-1 (43-45 reserved). ----
+    // Class name of the top activity of the top task on an own display; null for other displays, no task, or an
+    // older helper (unknown codes answer an empty reply, which reads as null).
+    String topActivity(int displayId) = 41;
+    // launch_app cold=true. Never 0 (an older helper answers 0): 10=force-stopped and started fresh
+    // 11=started warm instead (the app has a task outside the agent display, so its process was not stopped)
+    // 1=user is using it on the main screen (neither stopped nor started) 2=no launcher entry 3=error.
+    // Own displays only.
+    int restartApp(int displayId, String packageName) = 42;
     void destroy() = 16777114;
 }
