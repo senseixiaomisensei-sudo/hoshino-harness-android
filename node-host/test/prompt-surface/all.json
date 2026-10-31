@@ -339,6 +339,37 @@
       }
     },
     {
+      "name": "phone_collect",
+      "description": "Read a whole list or chat in one call: scrolls on the phone, drops duplicates, returns each row once with a stable key. up = older chat history; pass cursor to continue.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "direction": {
+            "type": "string",
+            "enum": [
+              "down",
+              "up"
+            ]
+          },
+          "from_y": {
+            "type": "number"
+          },
+          "to_y": {
+            "type": "number"
+          },
+          "max_items": {
+            "type": "number"
+          },
+          "max_scrolls": {
+            "type": "number"
+          },
+          "cursor": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
       "name": "phone_do_steps",
       "description": "Run 1-20 known actions in a row without a round-trip per step; each step: {action: tap|long_press|type|clear|scroll|swipe|back|key|open_app|wait, ref?, target?, x?, y?, text?, enter?, direction?, key?, app?, expect?}. Stops early on choosers, screens that need the user, missing targets, or an irreversible step that needs approval.",
       "parameters": {
@@ -437,6 +468,64 @@
         "required": [
           "steps"
         ]
+      }
+    },
+    {
+      "name": "phone_extract",
+      "description": "Read the current screen as text, rows (with refs) or form (labels and values); from_y/to_y 0..999 limit the area.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "text",
+              "rows",
+              "form"
+            ]
+          },
+          "from_y": {
+            "type": "number"
+          },
+          "to_y": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "phone_find",
+      "description": "Scroll on the phone until an element matching text/id/role/inside shows; returns refs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "btn/input/text/list/switch/tab"
+          },
+          "inside": {
+            "type": "string",
+            "description": "Text of its row/container"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "down",
+              "up",
+              "left",
+              "right"
+            ]
+          },
+          "max_scrolls": {
+            "type": "number"
+          }
+        }
       }
     },
     {
@@ -617,6 +706,32 @@
         "required": [
           "key"
         ]
+      }
+    },
+    {
+      "name": "phone_query",
+      "description": "Find elements on the current screen by text/id/role/inside, with refs, container and row. No scrolling.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "btn/input/text/list/switch/tab"
+          },
+          "inside": {
+            "type": "string",
+            "description": "Text of its row/container"
+          },
+          "limit": {
+            "type": "number"
+          }
+        }
       }
     },
     {
@@ -1748,9 +1863,9 @@
   ],
   "size": {
     "systemChars": 2352,
-    "toolsChars": 34165,
+    "toolsChars": 35784,
     "contextChars": 1298,
-    "tools": 67,
-    "estimatedTokens": 9454
+    "tools": 71,
+    "estimatedTokens": 9859
   }
 }
