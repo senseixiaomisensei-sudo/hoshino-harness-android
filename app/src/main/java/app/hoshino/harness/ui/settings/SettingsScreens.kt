@@ -76,6 +76,9 @@ fun SettingsHomeScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (Str
     val kernel by vm.kernel.collectAsStateWithLifecycle()
     val startupContext=LocalContext.current
     var prewarm by remember{mutableStateOf(app.hoshino.harness.core.KernelPrewarm.enabled(startupContext))}
+    var proxyText by remember{mutableStateOf(dev.hoshino.bridge.KernelNetwork.appProxy(startupContext).orEmpty())}
+    var inheritProxy by remember{mutableStateOf(dev.hoshino.bridge.KernelNetwork.inheritSystemProxy(startupContext))}
+    var proxySaved by remember{mutableStateOf<String?>(null)}
     PageScaffold(stringResource(R.string.settings), onBack) {
         SectionLabel("通用")
         GroupCard {
@@ -88,6 +91,20 @@ fun SettingsHomeScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (Str
         }
         SectionLabel("内核常驻")
         GroupCard{ListRow("开机与更新后预热",subtitle="后台保留本地内核，重新打开立即连接",trailing={HSwitch(prewarm,{value->prewarm=value;app.hoshino.harness.core.KernelPrewarm.set(startupContext,value)})})}
+        SectionLabel("网络与代理")
+        GroupCard{
+            Column(Modifier.padding(horizontal=16.dp,vertical=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                HTextField(proxyText,{proxyText=it;proxySaved=null},label="应用内代理（可选）",placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7891",mono=true,
+                    hint=proxySaved ?: "留空即直连。对话请求走 HTTP 代理；SOCKS5 只对 shell 工具生效。国内直连失败时可换中转站或填代理。")
+                HButton("保存（重启内核后生效）",{
+                    val normalized=dev.hoshino.bridge.KernelNetwork.normalizeProxy(proxyText)
+                    if(proxyText.isNotBlank()&&normalized==null)proxySaved="格式不对：需要 http://主机:端口 或 socks5://主机:端口"
+                    else{dev.hoshino.bridge.KernelNetwork.setProxy(startupContext,normalized,inheritProxy);proxySaved="已保存，重启应用或内核后生效"}
+                },compact=true)
+            }
+            Hairline()
+            ListRow("继承系统代理",subtitle="未填应用内代理时，使用 Wi-Fi/系统设置里的 HTTP 代理",trailing={HSwitch(inheritProxy,{value->inheritProxy=value;dev.hoshino.bridge.KernelNetwork.setProxy(startupContext,dev.hoshino.bridge.KernelNetwork.normalizeProxy(dev.hoshino.bridge.KernelNetwork.appProxy(startupContext)),value)})})
+        }
         SectionLabel("权限与系统")
         GroupCard {
             ListRow(stringResource(R.string.settings_security), icon = HIcons.Shield, value = "Shizuku · ${shizuku.label}", showChevron = true, onClick = { onNavigate(Routes.SECURITY) })
