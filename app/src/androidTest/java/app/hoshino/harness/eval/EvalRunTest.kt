@@ -54,7 +54,7 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * `-e evalRun <名字> [-e evalSet <目录或 id 前缀,如 read/system、web>] [-e evalSplit tune|holdout] [-e evalChannel web|app]
  *  [-e evalOnTakeover cancel|wait] [-e evalAllowIrreversible true] [-e evalPriceIn <每百万输入单价> -e evalPriceOut <输出单价> [-e evalPriceCached <缓存单价>]]
- *  [-e evalProvider <供应商 id> -e evalModel <模型 id>] [-e evalEffort off|low|medium|high|max] [-e evalRunMissing true]`
+ *  [-e evalProvider <供应商 id> -e evalModel <模型 id>] [-e evalEffort off|low|medium|high|max] [-e evalRunMissing true] [-e evalNoAnswer wait|nudge]`
  *
  * - 题目在测试包 assets 的 `tasks/<类别>/…`（构建时直接取仓库 `eval/`）。不传 evalSet 跑除专项题集（skills、memory）以外的全部。
  * - 模型：evalProvider/evalModel，没给用设置里的主模型（模型路由 main）。两边双跑时给同一个模型。
@@ -63,7 +63,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * - 审批：Hoshino 默认每个改动/联网工具都要审批；评测器自动「允许一次」并计数（报告里「评测器自动回答的审批」）。
  *   不可逆类题默认不跑（要跑须传 evalAllowIrreversible=true，会真的发出/删除）。
  * - 追问（ask_user）：按题目 answers 的关键字自动回答；问的是登录/验证且没有预设回答时按「接管」处理（evalOnTakeover，默认取消）；
- *   其余没有预设回答的给一句固定的话让 Agent 自己按常理决定（Mika 没有预设回答时等到超时）。
+ *   其余没有预设回答的照 Mika 不回答、等到超时（`-e evalNoAnswer nudge` 时改回一句固定的话让 Agent 按常理自己定，两边就不再可比）。
  * - 结局：RT9 结局判定合并前按回答文字判（[DshRunFacts.judgeFromText]），报告里标注。
  * - 结果写到 App 外部文件目录 `eval/<evalRun>/`：summary.md、scores.jsonl、metrics.json、run.json（本次运行的元数据，对比报告用）、
  *   `<题 id>/session.jsonl`（这一题的 dsh 原版会话日志副本）。不要提交进仓库。
@@ -83,6 +83,8 @@ class EvalRunTest {
         require(onTakeover == "cancel" || onTakeover == "wait") { "evalOnTakeover must be cancel or wait" }
         val allowIrreversible = args.getString("evalAllowIrreversible") == "true"
         val runMissing = args.getString("evalRunMissing") == "true"
+        val noAnswer = args.getString("evalNoAnswer") ?: "wait"
+        require(noAnswer == "wait" || noAnswer == "nudge") { "evalNoAnswer must be wait or nudge" }
         val evalSplit = args.getString("evalSplit")?.takeIf { it.isNotBlank() }
         require(evalSplit == null || evalSplit in EvalTasks.PARTITIONS) { "evalSplit must be tune or holdout" }
         val split = args.getString("split")
@@ -127,7 +129,7 @@ class EvalRunTest {
             val unmet = t.requires.map(probes::requirementMet).filter { !it.first }.map { it.second }
             if (unmet.isNotEmpty()) { skipped += t.id to unmet.joinToString(";"); continue }
 
-            val (task, observed0) = runOne(client, t, run, model, effort, onTakeover, probes, File(out, t.id), t.session?.let { s -> sessions[s] }) { sid -> t.session?.let { sessions[it] = sid } }
+            val (task, observed0) = runOne(client, t, run, model, effort, onTakeover, noAnswer, probes, File(out, t.id), t.session?.let { s -> sessions[s] }) { sid -> t.session?.let { sessions[it] = sid } }
             val observed = if (missing.isNotEmpty() && observed0.failReason == null && Scoring.score(task, observed0).failedChecks.isNotEmpty())
                 observed0.copy(failReason = HoshinoCapabilities.skipReason(missing)) else observed0
             val score = Scoring.score(task, observed)
@@ -136,21 +138,21 @@ class EvalRunTest {
         }
 
         File(out, "summary.md").writeText(EvalReport.markdown(run, "${model.providerId}/${model.modelId}", scores, skipped, prices,
-            flags = "effort=${effort.key}", judging = JUDGING, capabilities = have))
+            flags = "effort=${effort.key},noAnswer=$noAnswer", judging = JUDGING, capabilities = have))
         File(out, "metrics.json").writeText(EvalReport.metricsJson(scores))
         File(out, "run.json").writeText(JSONObject().apply {
             put("engine", RunMetrics.ENGINE); put("run", run); put("model", "${model.providerId}/${model.modelId}"); put("effort", effort.key)
             put("device", Build.MANUFACTURER + " " + Build.MODEL); put("android", Build.VERSION.RELEASE); put("abi", Build.SUPPORTED_ABIS.firstOrNull() ?: "")
             put("appVersion", context.packageManager.getPackageInfo(context.packageName, 0).versionName); put("dsh", client.kernel.value.dshVersion)
             put("capabilities", JSONArray(have.sorted())); put("judging", JUDGING); put("startedAt", startedAt); put("endedAt", System.currentTimeMillis())
-            put("evalSet", args.getString("evalSet") ?: JSONObject.NULL); put("evalSplit", evalSplit ?: JSONObject.NULL); put("channel", channel ?: JSONObject.NULL)
+            put("evalSet", args.getString("evalSet") ?: JSONObject.NULL); put("evalSplit", evalSplit ?: JSONObject.NULL); put("channel", channel ?: JSONObject.NULL); put("noAnswer", noAnswer)
             put("ran", scores.size); put("skipped", JSONArray(skipped.map { (id, why) -> JSONObject().put("id", id).put("reason", why) }))
         }.toString(2))
     }
 
     /** 跑一题：开新会话（同一 session 的题接着同一个会话），发目标，自动处理审批与追问，等这一轮结束，从会话日志取事实。 */
     private fun runOne(
-        client: DshHarnessClient, t: EvalTask, run: String, model: ModelRef, effort: ReasoningEffort, onTakeover: String,
+        client: DshHarnessClient, t: EvalTask, run: String, model: ModelRef, effort: ReasoningEffort, onTakeover: String, noAnswer: String,
         probes: EvalProbes, dir: File, reuse: String?, remember: (String) -> Unit,
     ): Pair<EvalTask, Observed> {
         val before = mutableMapOf<String, String>()
@@ -194,8 +196,8 @@ class EvalRunTest {
                                 tookOver.set(true)
                                 if (onTakeover == "cancel") launch { runCatching { client.stop(sid) } }
                             }
-                            onTakeover == "wait" -> Unit
-                            else -> launch { runCatching { client.answerQuestion(sid, e.id, NO_PRESET_ANSWER) } }
+                            noAnswer == "nudge" -> launch { runCatching { client.answerQuestion(sid, e.id, NO_PRESET_ANSWER) } }
+                            else -> Unit // 照 Mika：没有预设回答就不回答，等到超时
                         }
                     }
                     is HarnessEvent.QuestionAnswered -> tracker.waitEnded(sid, e.id, now)

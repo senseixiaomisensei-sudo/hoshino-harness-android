@@ -1,3 +1,4 @@
+// Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.
 package dev.hoshino.bridge.metrics
 
 import java.util.Locale
