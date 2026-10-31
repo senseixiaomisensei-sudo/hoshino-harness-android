@@ -16,6 +16,7 @@ import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
@@ -44,6 +45,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -78,6 +80,7 @@ object PhoneCapsule {
     fun foregroundChanged(pkg: String) { host?.foreground(pkg) }
 
     private data class Approval(val sessionId: String, val id: String, val title: String, val command: String, val oneShot: Boolean)
+    private data class RenderKey(val state: PhoneTaskState, val count: Int, val takeover: PhoneTakeover.Pending?, val approvalId: String?, val questionId: String?)
     private data class Question(val sessionId: String, val id: String, val text: String, val options: List<String>)
 
     @SuppressLint("ClickableViewAccessibility", "SetTextI18n")
@@ -97,6 +100,10 @@ object PhoneCapsule {
         private var watched: AgentDisplay? = null
         private var fadeJob: Job? = null
         private var breath: Job? = null
+        private var hideJob: Job? = null
+        private val visibility = CapsuleVisibility()
+        private var lastNeedsYou = false
+        private val touchSlop = ViewConfiguration.get(ctx).scaledTouchSlop
         private val dp = ctx.resources.displayMetrics.density
         private fun px(v: Int) = (v * dp).toInt()
 
@@ -136,7 +143,7 @@ object PhoneCapsule {
             })
             addView(LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
-                addView(button("停止") { stopTask() }); addView(button("发此刻屏幕") { sendScreen() }); addView(button("收起") { collapse() })
+                addView(button("停止") { stopTask() }); addView(button("发此刻屏幕") { sendScreen() }); addView(button("收起") { collapse(); refreshVisibility() })
             })
         }
         private val cardParams = overlayParams(px(312), ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER }
@@ -153,9 +160,16 @@ object PhoneCapsule {
             input.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_SEND) { submit(); true } else false }
             scope.launch { runCatching { Hoshino.client.events.collect(::onEvent) } }
             scope.launch {
-                combine(controller.state, approvals, questions, PhoneTakeover.of(ctx).pending, foreground) { s, a, q, t, _ -> Triple(s, a.size + q.size + (if (t != null) 1 else 0), t) }
-                    .collect { (s, count, takeover) -> render(s, count, takeover) }
+                // Visibility is driven separately (debounced); render only when what is drawn changes.
+                combine(controller.state, approvals, questions, PhoneTakeover.of(ctx).pending) { s, a, q, t -> RenderKey(s, a.size + q.size + (if (t != null) 1 else 0), t, a.firstOrNull()?.id, q.firstOrNull()?.id) }
+                    .distinctUntilChanged()
+                    .collect { k -> render(k.state, k.count, k.takeover) }
             }
+            scope.launch {
+                combine(controller.state, approvals, questions, PhoneTakeover.of(ctx).pending, foreground) { _, _, _, _, _ -> Unit }
+                    .collect { refreshVisibility() }
+            }
+            scope.launch { runCatching { Hoshino.client.sessions.collect { refreshVisibility() } } }
             scope.launch { screenOn.collect { refreshVisibility() } }
             scope.launch { PhoneConsent.of(ctx).state.collect { refreshVisibility() } }
             scope.launch { controller.display.collect { watchFrames() } }
@@ -173,30 +187,44 @@ object PhoneCapsule {
             }
         }
 
-        private fun wanted(): Boolean {
-            val keyguard = ctx.getSystemService(KeyguardManager::class.java).isKeyguardLocked
-            if (!screenOn.value || keyguard || foreground.value == ctx.packageName) return false
+        /** (want, hideImmediately). Screen off / locked hide at once; everything else goes through the debounce. */
+        private fun wanted(): Pair<Boolean, Boolean> {
+            val keyguard = runCatching { ctx.getSystemService(KeyguardManager::class.java).isKeyguardLocked }.getOrDefault(false)
+            if (!screenOn.value || keyguard) return false to true
+            if (foreground.value == ctx.packageName) return false to false
             val s = controller.state.value
-            val busy = s.status != PhoneTaskState.Status.Idle || approvals.value.isNotEmpty() || questions.value.isNotEmpty() || PhoneTakeover.of(ctx).pending.value != null
-            return busy || PhoneConsent.of(ctx).state.value.capsuleAlways
+            // The controller drops to Idle between steps; while its session's turn is still running the task is on.
+            val turnRunning = s.sessionId != null && runCatching { Hoshino.client.sessions.value.firstOrNull { it.id == s.sessionId }?.running == true }.getOrDefault(false)
+            val busy = s.status != PhoneTaskState.Status.Idle || turnRunning || approvals.value.isNotEmpty() || questions.value.isNotEmpty() || PhoneTakeover.of(ctx).pending.value != null
+            // An open card is never pulled away from under the user's finger.
+            return (busy || cardAdded || PhoneConsent.of(ctx).state.value.capsuleAlways) to false
         }
 
+        /** The dot window is added once and removed once per debounced change; state only updates its content. */
         private fun refreshVisibility() {
-            val show = wanted()
-            if (show && !dotAdded) { runCatching { wm.addView(dot, dotParams); dotAdded = true }; scheduleFade() }
-            if (!show) { collapse(); if (dotAdded) { runCatching { wm.removeView(dot) }; dotAdded = false } }
+            val (want, immediate) = wanted()
+            val d = visibility.update(want, System.currentTimeMillis(), immediate)
+            hideJob?.cancel(); hideJob = null
+            d.recheckAt?.let { at -> hideJob = scope.launch { delay((at - System.currentTimeMillis()).coerceAtLeast(0) + 16); refreshVisibility() } }
+            if (d.changed) {
+                if (d.shown && !dotAdded) { runCatching { wm.addView(dot, dotParams); dotAdded = true }; scheduleFade() }
+                if (!d.shown) { collapse(); if (dotAdded) { runCatching { wm.removeView(dot) }; dotAdded = false } }
+            } else if (d.shown && !dotAdded) {
+                runCatching { wm.addView(dot, dotParams); dotAdded = true }
+            }
             _visible.value = dotAdded
             watchFrames()
         }
 
         private fun render(s: PhoneTaskState, count: Int, takeover: PhoneTakeover.Pending?) {
-            refreshVisibility()
             val needsYou = count > 0 || s.status == PhoneTaskState.Status.NeedsUser || s.status == PhoneTaskState.Status.Approval || takeover != null
             ring.setStroke(px(3), when { needsYou -> ORANGE; s.status == PhoneTaskState.Status.Working -> GREEN; else -> GREY })
             badge.text = if (count > 0) count.toString() else ""
             badge.background = if (count > 0) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(ORANGE) } else null
             breathe(needsYou)
-            if (needsYou) { dot.alpha = 1f; scheduleFade() }
+            // Only wake the dot when it starts needing you; re-flashing on every emission was the "blinking".
+            if (needsYou && !lastNeedsYou) scheduleFade()
+            lastNeedsYou = needsYou
             title.text = when (s.status) {
                 PhoneTaskState.Status.Working -> "正在操作 " + (s.app ?: "")
                 PhoneTaskState.Status.NeedsUser -> "需要你处理"
@@ -346,7 +374,7 @@ object PhoneCapsule {
 
         private fun installDrag() {
             val detector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
-                override fun onSingleTapConfirmed(e: MotionEvent): Boolean { if (cardAdded) collapse() else expand(); return true }
+                override fun onSingleTapConfirmed(e: MotionEvent): Boolean { if (cardAdded) { collapse(); refreshVisibility() } else expand(); return true }
                 override fun onDoubleTap(e: MotionEvent): Boolean { sendScreen(); return true }
             })
             var downX = 0f; var downY = 0f; var startX = 0; var startY = 0; var dragging = false
@@ -356,7 +384,7 @@ object PhoneCapsule {
                     MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startX = dotParams.x; startY = dotParams.y; dragging = false; dot.alpha = 1f; fadeJob?.cancel() }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = e.rawX - downX; val dy = e.rawY - downY
-                        if (dragging || dx * dx + dy * dy > px(8) * px(8)) {
+                        if (dragging || dx * dx + dy * dy > touchSlop * touchSlop) {
                             dragging = true
                             dotParams.x = startX + dx.toInt(); dotParams.y = startY + dy.toInt()
                             runCatching { wm.updateViewLayout(dot, dotParams) }
@@ -394,6 +422,8 @@ object PhoneCapsule {
         private fun toast(text: String) { Toast.makeText(ctx, text, Toast.LENGTH_SHORT).show() }
 
         fun dispose() {
+            hideJob?.cancel()
+            visibility.reset()
             runCatching { ctx.unregisterReceiver(screenReceiver) }
             collapse()
             if (dotAdded) runCatching { wm.removeView(dot) }

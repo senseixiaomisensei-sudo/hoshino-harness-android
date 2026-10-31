@@ -67,10 +67,21 @@ class PhoneAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val displayId = displayOf(event)
         if (displayId == Display.DEFAULT_DISPLAY && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            event.packageName?.toString()?.let { _foreground.value = it; PhoneCapsule.foregroundChanged(it) }
+            val pkg = event.packageName?.toString()
+            if (CapsuleVisibility.countsAsForeground(pkg, windowIsApplication(event.windowId)) && pkg != _foreground.value) {
+                _foreground.value = pkg
+                PhoneCapsule.foregroundChanged(pkg!!)
+            }
         }
         if (displayId == Display.INVALID_DISPLAY || events.subscriptionCount.value == 0) return
         events.tryEmit(DisplayEvent(displayId, event.eventType, event.packageName?.toString()))
+    }
+
+    /** Type of the event's window on the main screen: true = app window, false = overlay/IME/system, null = unknown. */
+    private fun windowIsApplication(windowId: Int): Boolean? {
+        if (windowId == -1) return null
+        val w = runCatching { windows.orEmpty().firstOrNull { it.id == windowId } }.getOrNull() ?: return null
+        return w.type == AccessibilityWindowInfo.TYPE_APPLICATION
     }
 
     override fun onInterrupt() = Unit
