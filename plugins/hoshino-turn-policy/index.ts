@@ -225,7 +225,18 @@ export function apply(ctx: Context) {
   // ---------------------------------------------------------------- RT16: retry transient failures briefly, then let the fallback route take over.
   ctx.on('agent/request-error', async (payload: any, next: () => Promise<any>) => {
     const { agent, failure, signal } = payload;
-    if (!settings.retry.enabled || signal.aborted) return next();
+    if (signal.aborted) return next();
+    // RT11 (empty reply): dsh reports a completed response with no content as EMPTY_RESPONSE before any assistant message
+    // exists, so agent/turn-stopping never sees it. Append the reminder to the surface and retry the request once; the
+    // loop rebuilds the request from the surface on retry. A second empty reply ends the turn with the original error.
+    if (failure?.code === 'EMPTY_RESPONSE' && settings.turnPolicy.empty) {
+      const s = stateOf(agent, payload.turn);
+      if (s.nudges.has('empty') || s.stopped) return next();
+      s.nudges.add('empty');
+      try { agent.session.append('user/message', notice('hoshino-turn-policy', 'empty reply', NUDGE.empty), { surfaceOp: 'append' }); } catch { return next(); }
+      return { kind: 'retry' };
+    }
+    if (!settings.retry.enabled) return next();
     const kind = classify(failure);
     if (!isTransient(kind)) return next();
     const s = stateOf(agent, payload.turn);
