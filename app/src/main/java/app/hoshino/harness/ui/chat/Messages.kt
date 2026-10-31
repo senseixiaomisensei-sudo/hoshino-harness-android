@@ -173,6 +173,7 @@ private fun UserBubble(item: ChatItem.User) {
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
+        if (item.steer) SteerStatusLine(item.id)
     }
 }
 
