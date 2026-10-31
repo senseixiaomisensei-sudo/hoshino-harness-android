@@ -67,6 +67,9 @@ class ApprovalModeTest {
         assertTrue(ApprovalModeRules.RISK_TEXT.contains("工作区"))
         assertTrue(ApprovalModeRules.SYSTEM_LIMITS.contains("安装 APK"))
         assertTrue(ApprovalModeRules.SYSTEM_LIMITS.contains("Shizuku"))
+        // M2.8: the risk text says which phone steps run unasked and which never do.
+        assertTrue(ApprovalModeRules.RISK_TEXT.contains(ApprovalModeRules.PHONE_LIMITS))
+        for (word in listOf("付款", "密码", "验证码", "不可逆")) assertTrue(word, ApprovalModeRules.PHONE_LIMITS.contains(word))
     }
 }
 

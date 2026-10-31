@@ -56,3 +56,59 @@ test('setup errors surface with the setup hint; steps are validated before reach
   assert.deepEqual(stepFor('type', {text: 'hi', enter: true, ref: 'e2', junk: 1}), {action: 'type', ref: 'e2', text: 'hi', enter: true});
   assert.equal(render({ok: true, screen: 'screen x'}), '{"ok":true}\nscreen x');
 });
+
+// M2.8 approval semantics for phone steps, through the same hoshino-m2 approval seam every plugin uses.
+import {mkdtemp, readFile, rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {Configuration, resolveApproval, withApprovalMode, riskOf, PHONE_IRREVERSIBLE_TOOL} from '../dist/plugins/hoshino-m2/config.js';
+import {approval} from '../dist/plugins/hoshino-m2/approval.js';
+
+const irreversible = {sessionId: 's', tool: PHONE_IRREVERSIBLE_TOOL, command: 'send: tap "发送" @ com.tencent.mm', arguments: {step: 'type e3 text(5 chars)', action: 'send', matched: '发送', app: 'com.tencent.mm', once: true}};
+
+test('irreversible phone steps: asked by default and under 高危确认 even in auto; no-approval lets them through', () => {
+  assert.equal(resolveApproval({mode: 'manual', highRiskAsk: true}, irreversible).decision, 'ask');
+  assert.equal(resolveApproval({mode: 'auto', highRiskAsk: true}, irreversible).decision, 'ask');
+  assert.equal(resolveApproval({mode: 'rules', highRiskAsk: true, rules: [{tool: PHONE_IRREVERSIBLE_TOOL, decision: 'allow'}]}, irreversible).decision, 'ask');
+  assert.equal(resolveApproval({mode: 'auto', highRiskAsk: false}, irreversible).decision, 'allow');
+  const none = resolveApproval({mode: 'none', highRiskAsk: true}, irreversible);
+  assert.equal(none.decision, 'allow'); assert.equal(none.approver, 'auto-none');
+  // The user's own deny rule is still a guard in no-approval mode.
+  assert.equal(resolveApproval({mode: 'none', rules: [{tool: PHONE_IRREVERSIBLE_TOOL, decision: 'deny'}]}, irreversible).decision, 'deny');
+  // Audit label carries kind and package only, never the step text or matched words.
+  assert.deepEqual(riskOf(irreversible), {risk: 'irreversible:send', app: 'com.tencent.mm', once: true});
+  assert.equal(riskOf({tool: 'bash'}), undefined);
+});
+
+test('no-approval: an irreversible step proceeds without a card and is audited; payment still goes to the user', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hh-phone-none-'));
+  try {
+    const config = new Configuration(root); await config.reload();
+    await config.write('approval.json', withApprovalMode(config.get('approval.json'), 'none', 's'));
+    const ctx = {mobilePolicy: {options: new Map()}, androidBridge: {bootstrap: {workspace: '/work'}}};
+    let cards = 0;
+    const approve = (action) => approval(ctx, config, action, async () => { cards++; return {approved: false}; });
+    let round = 0;
+    const {calls, call} = fakePhone((method, body) => {
+      if (body.action === 'grant') return {ok: true};
+      round++;
+      if (round === 1) return {ok: false, results: [], pending: {index: 0, step: 'tap "发送"', action: 'send', matched: '发送', fingerprint: fp, app: 'com.tencent.mm'}};
+      return {ok: true, completed: true, results: [{index: 0, step: 'tap "发送"', ok: true}]};
+    });
+    const r = await runSteps(call, approve, 's', checkSteps([{action: 'tap', target: '发送'}]));
+    assert.equal(r.completed, true); assert.equal(cards, 0);
+    assert.equal(calls.filter(c => c.body.action === 'grant').length, 1);
+    const audit = (await readFile(join(root, 'audit/approvals.jsonl'), 'utf8')).trim().split('\n').map(l => JSON.parse(l));
+    assert.equal(audit.length, 1);
+    assert.equal(audit[0].approver, 'auto-none'); assert.equal(audit[0].risk, 'irreversible:send'); assert.equal(audit[0].app, 'com.tencent.mm');
+    assert.equal(JSON.stringify(audit[0]).includes('发送'), false, 'no screen words in the audit');
+    // Payment: never sent to the approval seam, even in no-approval.
+    const pay = fakePhone(() => ({ok: false, results: [], pending: {index: 0, step: 'tap', action: 'pay', matched: '立即支付', fingerprint: fp}}));
+    const p = await runSteps(pay.call, approve, 's', checkSteps([{action: 'tap', target: '立即支付'}]));
+    assert.equal(p.reason, 'payment'); assert.equal(pay.calls.filter(c => c.body.action === 'grant').length, 0);
+    assert.equal((await readFile(join(root, 'audit/approvals.jsonl'), 'utf8')).trim().split('\n').length, 1, 'payment did not reach the approval seam');
+    // Another session still on the shipped default (manual) gets the card.
+    const other = await approve({...irreversible, sessionId: 'other'});
+    assert.equal(cards, 1); assert.equal(other.approved, false);
+  } finally { await rm(root, {recursive: true, force: true}); }
+});

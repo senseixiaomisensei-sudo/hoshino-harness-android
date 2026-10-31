@@ -9,6 +9,10 @@ import { checkSteps, render, runSteps, stepFor, type Data } from './steps.js';
  * (PhoneController, bridge method `phone`). Approval: all phone_* tools go through android-policy's
  * existing approval seam (default manual) and share one "allow for this session" decision; irreversible steps
  * additionally need a one-shot approval bound to that step on that screen (see steps.ts).
+ * Approval modes (hoshino-m2 resolveApproval): irreversible steps count as high risk, so with 高危确认 on they are asked
+ * per step even in auto mode; in the user-enabled no-approval mode they proceed and are audited (approver=auto-none,
+ * risk=irreversible:<kind>). Payment and password/captcha/verification-code screens never reach the approval seam:
+ * they stop on the Android side and go to phone_handoff in every mode (docs/decisions.md 2026-10-31 M2.8).
  */
 export const name = 'android-phone';
 export const inject = ['tools', 'androidBridge', 'attachments', 'llm', 'systemPrompt', 'agents'];
@@ -64,6 +68,6 @@ export function apply(ctx: Context): void {
 
   ctx.systemPrompt.context({name: 'hoshino-phone', order: 520, required: false, text: () => [
     'Phone control: apps run on a background agent display; the user keeps using the main screen. Start with phone_status if unsure, phone_observe to read (refs stay valid across reads), then act; prefer phone_do_steps with expect conditions for known sequences.',
-    'Sending, deleting, ordering and submitting ask the user once for that exact step on that exact screen. Payment, passwords, captchas and verification codes are always handed to the user with phone_handoff. Never operate Hoshino itself. Call phone_finish when done.',
+    'Sending, deleting, ordering and submitting go through the user\'s approval policy for that exact step on that exact screen (by default the user is asked once per step; a declined step must not be retried). Payment, passwords, captchas and verification codes are always handed to the user with phone_handoff, in every approval mode including no-approval. Never operate Hoshino itself. Call phone_finish when done.',
   ].join('\n')});
 }
