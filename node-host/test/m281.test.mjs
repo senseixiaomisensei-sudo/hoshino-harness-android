@@ -35,9 +35,11 @@ test('system_shell is hidden from the tool list unless the session is full-acces
   assert.deepEqual(sessionToolDeny(all, undefined, 'workspace-write'), ['system_shell']);
   assert.deepEqual(sessionToolDeny(all, undefined, undefined), ['system_shell']);
   assert.deepEqual(sessionToolDeny(all, undefined, 'full-access'), []);
-  // A mode allow-list still applies on top of the tier.
-  assert.deepEqual(sessionToolDeny(all, ['read', 'system_shell'], 'full-access'), ['bash', 'phone_launch_app', 'phone_status']);
-  assert.deepEqual(sessionToolDeny(all, ['read', 'system_shell'], 'workspace-write'), ['bash', 'system_shell', 'phone_launch_app', 'phone_status']);
+  // A mode allow-list still applies on top of the tier. m2.9: an allow-list never hides phone_* (a list saved before
+  // phone control existed cannot name it; docs/decisions.md 2026-10-31 M2.9), only the chat mode is tool-less.
+  assert.deepEqual(sessionToolDeny(all, ['read', 'system_shell'], 'full-access'), ['bash']);
+  assert.deepEqual(sessionToolDeny(all, ['read', 'system_shell'], 'workspace-write'), ['bash', 'system_shell']);
+  assert.deepEqual(sessionToolDeny(all, {id: 'chat', tools: []}, 'workspace-write'), all);
 });
 
 test('phone setup errors are readable, point at the setup page and rule out Shizuku', () => {

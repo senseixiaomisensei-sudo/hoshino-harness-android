@@ -16,7 +16,7 @@ import type {} from '@deepseek-ai/dsh-schedule';
 import type {} from '@deepseek-ai/dsh-subagent';
 import {createRequire} from 'node:module';
 import {createScope,type Scope} from '@deepseek-ai/dsh-scope';
-import {sessionToolDeny} from './tool-mask.js';
+import {sessionToolDeny,modeAllows,inactiveBuiltinPlugins} from './tool-mask.js';
 export interface MobileM2 {config:Configuration;syncTools(sessionId:string):void;invoke(action:string,args:Data):Promise<any>;approve(action:Data,ask:()=>Promise<{approved:boolean;remember?:boolean}>):Promise<{approved:boolean;remember?:boolean}>}
 declare module '@deepseek-ai/cordis'{interface Context{mobileM2:MobileM2}}
 export const name='hoshino-m2';
@@ -42,7 +42,7 @@ export async function apply(ctx:Context){
  ctx.effect(()=>()=>{ctx.androidBridge.call=originalCall;});
  const modeFor=(sid:string)=>{const o=ctx.mobilePolicy.options.get(sid) as Data|undefined;return (config.get('modes.json').modes??modes).find((m:Data)=>m.id===o?.mode)??modes[1]!;};
  const toolMasks=new Map<string,{scope:Scope;release?:()=>void}>();let syncingTools=false;
- const syncTools=(id:string)=>{if(syncingTools)return;const item=toolMasks.get(id);if(!item)return;syncingTools=true;try{item.release?.();item.release=undefined;const mode=modeFor(id);const deny=sessionToolDeny(ctx.tools.definitions().map(t=>t.name),mode.tools,ctx.mobilePolicy.options.get(id)?.tier);if(deny.length)item.release=item.scope.ctx.tools.restrict({deny});}finally{syncingTools=false;}};
+ const syncTools=(id:string)=>{if(syncingTools)return;const item=toolMasks.get(id);if(!item)return;syncingTools=true;try{item.release?.();item.release=undefined;const mode=modeFor(id);const deny=sessionToolDeny(ctx.tools.definitions().map(t=>t.name),mode,ctx.mobilePolicy.options.get(id)?.tier);if(deny.length)item.release=item.scope.ctx.tools.restrict({deny});}finally{syncingTools=false;}};
  ctx.on('agent/created',({agent})=>{toolMasks.set(agent.id,{scope:createScope(ctx,agent)});syncTools(agent.id);return undefined;});
  ctx.on('agent/disposed',({agent})=>{const item=toolMasks.get(agent.id);toolMasks.delete(agent.id);if(item)void item.scope.dispose();});
  ctx.on('tools/change',()=>{if(!syncingTools)for(const id of toolMasks.keys())syncTools(id);});
@@ -80,7 +80,7 @@ export async function apply(ctx:Context){
   const tolerate=(target:Data)=>{if(!target||typeof target!=='object')return;const vars=(target.variables??={}) as Record<string,string>;for(const item of [...(target.sections??[]),...(target.contexts??[])] as Data[]){if(item?.interpolate===false||typeof item?.text!=='string')continue;for(const m of item.text.matchAll(/\{\{([a-z][a-z0-9_]*)\}\}/g))if(!Object.hasOwn(vars,m[1]))vars[m[1]]='{{'+m[1]+'}}';}};
   tolerate(assembly as Data);const result=await next();tolerate(result as Data);return result;
  });
- ctx.on('tools/pre-execute',async(exec,next)=>{const mode=modeFor(exec.agent?.id??'');if(Array.isArray(mode.tools)&&!mode.tools.includes(exec.name))return {kind:'deny',reason:'Tool excluded by Agent mode'};if(mode.readOnly&&!['read','read_image','get_device_info','self_read','self_inspect','self_doctor','self_diff','skill','self_config_read','plugin_market'].includes(exec.name))return {kind:'deny',reason:'Read-only mode'};return next();});
+ ctx.on('tools/pre-execute',async(exec,next)=>{const mode=modeFor(exec.agent?.id??'');if(!modeAllows(mode,exec.name))return {kind:'deny',reason:'Tool excluded by Agent mode'};if(mode.readOnly&&!['read','read_image','get_device_info','self_read','self_inspect','self_doctor','self_diff','skill','self_config_read','plugin_market'].includes(exec.name))return {kind:'deny',reason:'Read-only mode'};return next();});
  let stamp='';let checking=false;let backgroundReady=false;void ctx.androidBridge.whenReady.then(async()=>{stamp=await treeStamp(root);backgroundReady=true;}).catch(()=>{});
  const timer=setInterval(()=>{if(!backgroundReady||checking)return;checking=true;void(async()=>{const current=await treeStamp(root);if(current!==stamp){const previous=stamp;stamp=current;await refresh();if(!safe){const control=ctx.get('hoshinoControl');if(control){await control.invoke('reload',{plugin:'skills'});const disabled=JSON.parse(await readFile(join(root,'config/disabled-plugins.json'),'utf8').catch(()=>'[]'));for(const entry of await readdir(join(root,'plugins'),{withFileTypes:true}).catch(()=>[])){if(!entry.isDirectory()||disabled.includes(entry.name))continue;const prefix=join(root,'plugins',entry.name);if(current.split('\n').filter(s=>s.startsWith(prefix)).join('\n')!==previous.split('\n').filter(s=>s.startsWith(prefix)).join('\n'))await control.invoke('reload',{plugin:entry.name}).catch(()=>{});}}}await originalCall('self-changed',{});}})().catch(()=>{}).finally(()=>{checking=false;});},1500).unref();
  ctx.effect(()=>()=>clearInterval(timer));
@@ -119,8 +119,8 @@ export async function apply(ctx:Context){
    case 'reload':await refresh();await originalCall('self-changed',{});return {reloaded:true,errors:Object.fromEntries(config.errors)};
    case 'snapshot':return {id:await selfSnapshot(root),workspaceCheckpoint:await checkpoint(root,workspace)};
    case 'rollback-workspace':{try{await lstat(join(root,'checkpoints',String(args.id)));return restoreCheckpoint(root,workspace,String(args.id));}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;return ctx.hoshinoControl.invoke('rollback',{id:args.id});}}
-   case 'doctor':return {kernel:'ready',dsh:'0.2.2-alpha.2',node:process.version,configErrors:Object.fromEntries(config.errors),bridge:await bridge('capabilities'),safeMode:ctx.androidBridge.bootstrap.safeMode??false};
-   case 'config':{const name=String(args.name);if(args.value!==undefined){await config.write(name,args.value);await originalCall('self-changed',{});}return config.get(name);}
+   case 'doctor':{const inactive=inactiveBuiltinPlugins(ctx.tools.definitions().map(t=>t.name));return {kernel:inactive.length?'degraded':'ready',inactivePlugins:inactive,...(inactive.length?{inactiveHint:'These built-in plugins did not activate (their tools are missing from every session). The kernel stderr has the original error ("did not activate"); report it instead of telling the user the feature does not exist.'}:{}),dsh:'0.2.2-alpha.2',node:process.version,configErrors:Object.fromEntries(config.errors),bridge:await bridge('capabilities'),safeMode:ctx.androidBridge.bootstrap.safeMode??false};}
+   case 'config':{const name=String(args.name);if(args.value!==undefined){await config.write(name,args.value);if(name==='modes.json')for(const id of toolMasks.keys())syncTools(id);await originalCall('self-changed',{});}return config.get(name);}
    case 'prompt-preview':{const sid=String(args.sessionId??'');const assembly=await ctx.systemPrompt.assemble({hoshinoSessionId:sid} as any);return {layers:await promptLayers(sid),sections:assembly.sections,contexts:assembly.contexts,tools:assembly.tools.map(t=>t.name),variables:assembly.variables,tokenEstimate:Math.ceil(JSON.stringify(assembly.sections).length/4),tokenCountKind:'estimate'};}
    case 'search':return search(String(args.query),config.get('search.json'));
    case 'fetch':return fetchPage(String(args.url),{...config.get('search.json'),workspace});
