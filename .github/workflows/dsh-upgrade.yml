@@ -76,8 +76,16 @@ jobs:
         with: { pattern: dsh-upgrade-runtime-*, path: ., merge-multiple: true }
       - uses: actions/download-artifact@v4
         with: { name: dsh-upgrade-proot, path: app/src/main }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
+      - name: Install the locked host dependencies (pure-JS packages added since the reused runtime)
+        working-directory: node-host
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      # m2.9: WP9-B loads original dsh sub-packages (dsh-compaction-basic etc.) that the reused
+      # run-40687337006 runtime predates. --extend-host refreshes our host/plugins like --refresh-host
+      # and adds missing locked pure-JS packages; a changed target-native package still fails the build.
       - name: Refresh our host and plugins for both ABIs
-        run: python3 rootfs/prepare.py --refresh-host
+        run: python3 rootfs/prepare.py --extend-host
       - name: Import every plugin from the packaged runtimes
         run: python3 rootfs/verify-packed.py
       - name: Restore the original update-compatible signing key
