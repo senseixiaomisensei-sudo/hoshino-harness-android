@@ -114,12 +114,15 @@ object PreviewGeometry {
 }
 
 /**
- * The one display ↔ preview transform (m2.9.2). Fit-centre into the rounded [PreviewGeometry.fitViewport]; the Bitmap
+ * The one display ↔ preview transform (m2.9.2; m2.9.3 adds the optional in-app [zoom] on top). Fit-centre into the rounded [PreviewGeometry.fitViewport]; the Bitmap
  * fallback draws through [bitmapMatrix] and the GL relay sets its viewport to [viewport], touches go back through
  * [toDisplay]. Round trip display → view → display is exact for every pixel centre (error ≤ 1 px by construction).
  */
-data class PreviewTransform(val srcW: Int, val srcH: Int, val viewW: Int, val viewH: Int) {
-    val viewport: PxRect = PreviewGeometry.fitViewport(srcW, srcH, viewW, viewH)
+data class PreviewTransform(val srcW: Int, val srcH: Int, val viewW: Int, val viewH: Int, val zoom: PreviewZoom = PreviewZoom.IDENTITY) {
+    /** The unzoomed fit rectangle (m2.9.2). */
+    val fit: PxRect = PreviewGeometry.fitViewport(srcW, srcH, viewW, viewH)
+    /** m2.9.3: the fit rectangle after the in-app zoom/pan ([PreviewZoom]); identical to [fit] when not zoomed. */
+    val viewport: PxRect = zoom.apply(fit)
     private val valid = srcW > 0 && srcH > 0 && viewport.w > 0 && viewport.h > 0
 
     /** Centre of display pixel (x, y) in view coordinates. */

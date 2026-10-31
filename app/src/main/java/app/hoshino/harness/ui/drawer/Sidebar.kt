@@ -175,7 +175,7 @@ fun Sidebar(
                 if (showTools) {
                     ordered(listOf(
                         SidebarNav(Routes.TERMINAL,null,stringResource(R.string.nav_terminal)),
-                        SidebarNav(Routes.FILES,null,"文件"),SidebarNav(Routes.SCREENSHOT,null,"截图预览"),
+                        SidebarNav(Routes.FILES,null,"文件"),SidebarNav(Routes.SCREENSHOT,null,"截图预览"),SidebarNav(Routes.VIRTUAL_SCREEN,null,"虚拟屏"),
                         SidebarNav(Routes.HOOKS,null,stringResource(R.string.nav_hooks)),
                         SidebarNav(Routes.INSPECTOR,null,stringResource(R.string.nav_inspector)),
                         SidebarNav(Routes.WEB,null,stringResource(R.string.nav_web)),

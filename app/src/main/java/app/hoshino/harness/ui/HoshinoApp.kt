@@ -120,6 +120,7 @@ fun HoshinoApp() {
             composable(Routes.SHIZUKU) { ShizukuScreen(viewModel(), back) }
             composable(Routes.PHONE) { PhoneCapabilitiesScreen(viewModel(), back) }
             composable(Routes.PHONE_SETUP) { PhoneSetupScreen(back) }
+            composable(Routes.VIRTUAL_SCREEN) { app.hoshino.harness.ui.phone.VirtualScreenPage(back) }
             composable(Routes.KERNEL) { KernelScreen(viewModel(), back) }
             composable(Routes.DATA) { DataPrivacyScreen(viewModel(), back) }
             composable(Routes.CREDENTIALS) { CredentialsScreen(viewModel(), back) }
