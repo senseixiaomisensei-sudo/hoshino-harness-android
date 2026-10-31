@@ -44,6 +44,8 @@ class ProotKernelLauncher : KernelLauncher {
         val home = File(context.filesDir, "dsh-home").apply { mkdirs() }
         val hoshino = File(context.filesDir,"hoshino").apply { mkdirs() }
         runCatching{val record=File(hoshino,"runtime-process.json");if(record.isFile){val saved=JSONObject(record.readText());val pid=saved.getInt("pid");require(pid>1);val proc=File("/proc/$pid");if(proc.isDirectory){val command=File(proc,"cmdline").readText();val stat=File(proc,"stat").readText();val ticks=stat.substring(stat.lastIndexOf(')')+2).split(' ')[19];if(ticks==saved.getString("startTicks")&&command.contains("/opt/hoshino/node-host/dist/node-host/src/main.js")){android.os.Process.killProcess(pid);Thread.sleep(300)}}}}
+        // An orphaned node from a killed launch keeps the flock on session.lock ("is already owned by an active write handle").
+        runCatching{val n=KernelRecovery.reapOrphanKernels();if(n>0){onDiagnostic("host: reaped $n orphan kernel(s)");Thread.sleep(300)}}
         val source=File(hoshino,"source").apply{mkdirs()}
         if(source.listFiles().isNullOrEmpty())runCatching{
             java.util.zip.ZipInputStream(context.assets.open("harness-source.zip")).use{zip->
@@ -63,7 +65,7 @@ class ProotKernelLauncher : KernelLauncher {
             "-b", "${resolv.path}:/etc/resolv.conf",
             "-w", "/root/workspace", "/usr/bin/env", "HOME=/root", "PATH=/root/.hoshino/tools/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "DSH_TELEMETRY_DISABLED=1",
             "LD_PRELOAD=/opt/hoshino/libandroid-compat.so") + proxyEnv.map { (k, v) -> "$k=$v" } +
-            listOf("/usr/bin/node") + KernelNetwork.NODE_NETWORK_FLAGS + listOf("/opt/hoshino/node-host/dist/node-host/src/main.js")
+            listOf("/usr/bin/node", "--max-old-space-size=" + KernelRecovery.nodeHeapMiB(totalRam(context))) + KernelNetwork.NODE_NETWORK_FLAGS + listOf("/opt/hoshino/node-host/dist/node-host/src/main.js")
         val builder = ProcessBuilder(args).directory(context.filesDir).redirectErrorStream(true)
         builder.environment().apply {
             put("PROOT_TMP_DIR", tmp.path); put("PROOT_LOADER", "$lib/libproot-loader.so")
@@ -105,6 +107,7 @@ fun classifyDiagnostic(line: String): String {
     line.contains("ptrace",ignoreCase=true) && (line.contains("failed",ignoreCase=true) || line.contains("error",ignoreCase=true)) -> "proot: ptrace failed"
     line.contains("proot warning: signal 11 received") -> "proot: tracer SIGSEGV"
     line.contains("proot warning: signal 31 received") -> "proot: tracer SIGSYS"
+    line.contains("heap out of memory") || line.contains("Allocation failed") -> "kernel: FATAL ERROR JavaScript heap out of memory"
     line.contains("did not activate") -> "dsh: plugin activation failed"
     line.contains("Kernel required service") -> "dsh: required service unavailable"
     line.contains("proot error:") -> "proot: runtime error"
@@ -112,3 +115,5 @@ fun classifyDiagnostic(line: String): String {
     else -> "kernel: diagnostic (payload suppressed)"
     }
 }
+
+private fun totalRam(context: Context): Long = runCatching{val info=android.app.ActivityManager.MemoryInfo();(context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(info);info.totalMem}.getOrDefault(4L shl 30)
