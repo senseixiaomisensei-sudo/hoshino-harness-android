@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: [codex/m2]
   push:
-    branches: ['feat/**', 'fix/**', 'perf/**', 'refactor/**', 'test/**', 'docs/**']
+    branches: ['feat/**', 'integ/**', 'fix/**', 'perf/**', 'refactor/**', 'test/**', 'docs/**']
   workflow_dispatch:
 permissions:
   contents: read
