@@ -128,8 +128,9 @@ internal data class ProcessSummary(
 ) {
     fun title(durationMs: Long): String {
         val status = if (waiting) "等待审批" else if (running) "运行中" else if (failed) "失败" else "已完成"
-        val approvalsText = (if (approvals > 0) " · 审批 $approvals" else "") + (if (autoApproved > 0) " · 自动放行 $autoApproved" else "")
-        return if (running) "$action · $tools 步 · ${formatDuration(durationMs)} · $status"
+        val autoText = if (autoApproved > 0) " · 自动放行 $autoApproved" else ""
+        val approvalsText = (if (approvals > 0) " · 审批 $approvals" else "") + autoText
+        return if (running) "$action · $tools 步 · ${formatDuration(durationMs)}$autoText · $status"
         else "已运行 $tools 步 · ${formatDuration(durationMs)}${if (files > 0) " · 改了 $files 个文件" else ""}$approvalsText · $status"
     }
 
