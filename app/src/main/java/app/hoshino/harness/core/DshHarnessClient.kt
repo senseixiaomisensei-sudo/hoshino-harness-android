@@ -138,6 +138,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                 publish(HarnessEvent.QuestionAsked(sid,id,"需要你的输入",body.getString("question"),(0 until options.length()).map{QuestionOption(it.toString(),options.getString(it))},true));M2Notifications.question(context,sid,id,body.getString("question"))
                 return try{val value=withTimeout(290000){answer.await()};publish(HarnessEvent.QuestionAnswered(sid,id,value));JSONObject().put("answer",value)}finally{questions.remove(id);M2Notifications.dismiss(context,id)}
             }
+            "phone" -> return app.hoshino.harness.phone.PhoneController.of(context).handle(body.put("sessionId",body.optString("sessionId").ifEmpty{activeSession}))
             "restart-after-turn" -> {restartAfter.add(body.getString("sessionId"));return JSONObject()}
             "file-diff" -> {
                 val before=body.optString("before","");val after=body.getString("after")
