@@ -4,7 +4,7 @@ android {
     compileSdk { version = release(37) { minorApiLevel = 0 } }
     defaultConfig {
         applicationId = "dev.hoshino.app"; minSdk = 29; targetSdk = 37
-        versionCode = 210; versionName = "0.2.1-m2.8"
+        versionCode = 211; versionName = "0.2.1-m2.8.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
