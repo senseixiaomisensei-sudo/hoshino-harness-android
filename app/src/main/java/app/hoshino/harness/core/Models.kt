@@ -16,7 +16,7 @@ enum class PermissionTier(val label: String, val key: String, val description: S
 }
 
 enum class ReasoningEffort(val label: String, val key: String) {
-    Off("关", "off"), Low("低", "low"), Medium("中", "medium"), High("高", "high"), Max("max", "max")
+    Off("关", "off"), Low("低", "low"), Medium("中", "medium"), High("高", "high"), XHigh("超高", "xhigh"), Max("max", "max")
 }
 
 enum class ShizukuStatus(val label: String) {
@@ -140,6 +140,10 @@ data class ModelInfo(
     val vision: Boolean,
     val reasoning: Boolean,
     val defaultEffort: ReasoningEffort,
+    /** Model-hosted web search override: "auto" | "on" | "off" (see dev.hoshino.bridge.WebSearchMode). */
+    val webSearchMode: String = "auto",
+    /** Detected hosted-search method id, "none", or "" when not yet known (see dev.hoshino.bridge.WebSearchMethods). */
+    val webSearchMethod: String = "",
 )
 
 data class Provider(

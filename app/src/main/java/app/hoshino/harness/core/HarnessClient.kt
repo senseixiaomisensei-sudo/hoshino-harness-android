@@ -93,6 +93,9 @@ interface HarnessClient {
     suspend fun testProvider(provider: Provider): Result<String>
     /** 从供应商 /models 接口拉取模型列表。 */
     suspend fun fetchModels(provider: Provider): List<ModelInfo>
+
+    /** Probe how [modelId] of the (possibly unsaved) [provider] can search the web on its own; returns the method id ("none" when unavailable). */
+    suspend fun probeWebSearch(provider: Provider, modelId: String): String = throw UnsupportedOperationException("当前内核不支持检测联网搜索")
     suspend fun setRouting(routing: ModelRouting)
 
     // ---------- Agent 预设 ----------

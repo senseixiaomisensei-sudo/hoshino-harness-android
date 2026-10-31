@@ -30,7 +30,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val shizuku=shizukuConnection.state.map { ShizukuStatus.valueOf(it.name) }.stateIn(scope,SharingStarted.Eagerly,ShizukuStatus.valueOf(shizukuConnection.state.value.name))
     override suspend fun refreshShizuku(){shizukuConnection.refresh()}
     override suspend fun requestShizukuPermission()=withContext(Dispatchers.Main){shizukuConnection.requestPermission()}
-    val chatGptAuth=dev.hoshino.bridge.ChatGptAuth.get(context)
+    /** Resolved on each use so a debug test fixture installed later (ChatGptAuth.installForTest) is the one in effect. */
+    val chatGptAuth:dev.hoshino.bridge.ChatGptAuth get()=dev.hoshino.bridge.ChatGptAuth.get(context)
     val runtime=NativeKernel(context,callbackHandler=::callback)
     private val eventBus=MutableSharedFlow<HarnessEvent>(extraBufferCapacity=1024)
     override val events=eventBus.asSharedFlow()
@@ -50,6 +51,12 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private val routingRow=MutableStateFlow(ModelRouting())
     override val routing=routingRow.asStateFlow()
     override val catalog=listOf(CatalogProvider("anthropic","Anthropic",ProviderProtocol.Anthropic,"https://api.anthropic.com"),CatalogProvider("openai","OpenAI",ProviderProtocol.OpenAICompatible,"https://api.openai.com/v1"),CatalogProvider("deepseek","DeepSeek",ProviderProtocol.OpenAICompatible,"https://api.deepseek.com/v1"),CatalogProvider("ollama","Ollama",ProviderProtocol.OpenAICompatible,"http://127.0.0.1:11434/v1"),CatalogProvider("custom","自定义供应商",ProviderProtocol.OpenAICompatible,""))
+    private val probedSearch=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    init {
+        // Upgrade from the retired Codex-CLI login: move the provider to the Responses route at api.openai.com/v1.
+        // ChatGptAuth already cleared the old tokens once and asks the user to sign in again.
+        vault.list().firstOrNull{it.id=="openai-codex"}?.takeIf{it.baseURL!=chatGptAuth.endpoints.apiBase}?.let{old->runCatching{saveChatGptProvider(old.metadata.optBoolean("enabled",false))};providerRows.value=readProviders()}
+    }
     private val approvals=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<ApprovalDecision>>()
     private val approvalOwners=java.util.concurrent.ConcurrentHashMap<String,String>()
     /** 每个会话最近一次读到的审批档（用于把无审批下的工具调用标成自动放行）。 */
@@ -57,8 +64,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     private val steerTrackers=java.util.concurrent.ConcurrentHashMap<String,SteerTracker>()
     private val questions=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<String>>()
     private val seen=mutableMapOf<String,MutableSet<Int>>()
-    // 流式累积用 StringBuilder：旧实现 text+=delta 每个 token 复制整段，O(n²)。
-    private data class Live(val id: String,val started: Long=android.os.SystemClock.elapsedRealtime(),val text: StringBuilder=StringBuilder(),val thinking: StringBuilder=StringBuilder())
+    // 流式累积用 StringBuilder：旧实现 text+=delta 每个 token 复制整段，O(n²)。steps 为托管联网搜索步骤计数（M2.7 chatgpt-search）。
+    private data class Live(val id: String,val started: Long=android.os.SystemClock.elapsedRealtime(),val text: StringBuilder=StringBuilder(),val thinking: StringBuilder=StringBuilder(),var steps: Int=0)
     private val live=mutableMapOf<String,Live>()
     private val calls=mutableMapOf<String,String>()
     private val capacities=java.util.concurrent.ConcurrentHashMap<String,Int>()
@@ -227,7 +234,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                         val l=live.getOrPut(sid) { Live("a:${f.getString("attemptId")}") };val chunk=f.getJSONObject("chunk");val delta=chunk.optString("text")
                         when(chunk.optString("type")) {
                             "text-delta" -> { l.text.append(delta);publish(HarnessEvent.AssistantDelta(sid,l.id,delta)) }
-                            "reasoning-delta" -> { l.thinking.append(delta);publish(HarnessEvent.ThinkingDelta(sid,"r:${l.id}",delta)) }
+                            "reasoning-delta" -> if(HostedSearchSteps.isStep(delta))HostedSearchSteps.events(sid,"ws:${l.id}:${l.steps++}",delta).forEach{publish(it)} else { l.thinking.append(delta);publish(HarnessEvent.ThinkingDelta(sid,"r:${l.id}",delta)) }
                         }
                     }
                     "end" -> live[sid]?.let { l -> if(l.text.isNotEmpty())publish(HarnessEvent.AssistantDone(sid,l.id));if(l.thinking.isNotEmpty())publish(HarnessEvent.ThinkingDone(sid,"r:${l.id}",android.os.SystemClock.elapsedRealtime()-l.started)) }
@@ -257,7 +264,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                     // dsh TurnEndReasonMap.error contains `error: LlmFailure`.
                     val failure=reason.optJSONObject("error")
                     val facts=listOfNotNull(failure?.optString("code")?.takeIf { it.isNotBlank() },failure?.optInt("status")?.takeIf { it in 100..599 }?.let { "HTTP $it" }).joinToString(" · ")
-                    val detail=if(metadata.getString("session-provider:$sid",null)=="openai-codex"&&failure?.optInt("status") in setOf(401,403))"ChatGPT 登录已失效，请到设置 → 模型 → ChatGPT 订阅重新登录"else if(metadata.getString("session-provider:$sid",null)=="openai-codex"&&failure?.optInt("status")==429)"ChatGPT 订阅额度已用尽或受到限流，请稍后重试；模型设置中可重新登录"else vault.redact(failure?.optString("message").orEmpty()).take(1500).ifBlank { "内核未返回错误详情" }
+                    val detail=failureDetail(sid,failure)
                     publish(HarnessEvent.Notice(sid,"error:$seq","请求未完成${if(facts.isBlank()) "" else "（$facts）"}：$detail"))
                 }
             }
@@ -278,9 +285,12 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             "session/title" -> sessionRows.update { list -> list.map { if(it.id==sid)it.copy(title=data.optString("title",it.title)) else it } }
             "assistant/message" -> {
                 data.optJSONObject("usage")?.let{usage->val u=tokenTurns.getOrPut(sid){TurnTokens(event.optLong("time",System.currentTimeMillis()))};u.reported=true;u.input+=usage.optInt("inputTokens");u.output+=usage.optInt("outputTokens");u.cache+=usage.optInt("cacheReadTokens");u.reasoning+=usage.optInt("reasoningTokens")}
-                val message=data.getJSONObject("message");val text=content(message.optJSONArray("content"),"text");val reasoning=content(message.optJSONArray("content"),"reasoning")
+                val message=data.getJSONObject("message");val text=content(message.optJSONArray("content"),"text")
+                // Model-hosted search steps (see HostedSearchSteps) are process items, not thinking text.
+                val (steps,reasoning)=HostedSearchSteps.split(message.optJSONArray("content")?.rows()?.filter{it.optString("type")=="reasoning"}?.map{it.optString("text")}.orEmpty())
                 val l=live.remove(sid)
                 if(l==null) {
+                    steps.forEachIndexed{i,step->HostedSearchSteps.events(sid,"ws:$id:$i",step).forEach{publish(it)}}
                     if(reasoning.isNotEmpty()) {publish(HarnessEvent.ThinkingDelta(sid,"r:$id",reasoning));publish(HarnessEvent.ThinkingDone(sid,"r:$id",0))}
                     if(text.isNotEmpty()) {publish(HarnessEvent.AssistantDelta(sid,id,text));publish(HarnessEvent.AssistantDone(sid,id))}
                 } else {
@@ -370,7 +380,11 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             upsertProvider(provider.copy(models=provider.models.map{if(it.id==model.modelId)it.copy(reasoning=true,defaultEffort=options.effort,maxOutput=maxBudget) else it}))
         require(attachments.none{it.kind==AttachmentKind.Image || it.kind==AttachmentKind.Camera} || modelInfo.vision){"当前模型未开启视觉，请在模型设置开启或切换模型"}
         control("session-options",JSONObject().put("sessionId",sessionId).put("tier",options.tier.key).put("planMode",options.planMode).put("mode",options.presetId).put("model",model.modelId))
-        val selection=JSONObject().put("sessionId",sessionId).put("provider",model.providerId).put("model",model.modelId)
+        // A relay model whose hosted search was detected on Responses is served by its "<id>--responses" route (plugins/android-api/routes.ts).
+        val route=if(provider.protocol==ProviderProtocol.OpenAICompatible&&provider.id!="openai-codex"&&modelInfo.webSearchMode!="off"&&modelInfo.webSearchMethod.startsWith("responses:"))provider.id+"--responses" else model.providerId
+        // First use of a model whose hosted search is unknown: one small capability probe in the background.
+        if(provider.id!="openai-codex"&&modelInfo.webSearchMode!="off"&&modelInfo.webSearchMethod.isEmpty()&&probedSearch.add(provider.id+"/"+modelInfo.id))scope.launch{runCatching{probeWebSearch(provider,modelInfo.id)}}
+        val selection=JSONObject().put("sessionId",sessionId).put("provider",route).put("model",model.modelId)
         // dsh exposes no reasoning capability for a non-reasoning model; even
         // sending "off" then causes session/model-unavailable before any HTTP call.
         if(providerRows.value.firstOrNull{it.id==model.providerId}?.models?.firstOrNull{it.id==model.modelId}?.reasoning==true)
@@ -418,7 +432,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
      * 然后由插件补一段「停止后的交代」写进 inbox（下一轮「继续」能读到），界面从持久化事件画出来。
      */
     override suspend fun stop(sessionId: String) {
-        val draft=live[sessionId]?.text.orEmpty()
+        // live 归事件协程所有；这里只读一次快照，读失败就不带草稿。
+        val draft=runCatching{live[sessionId]?.text?.toString()}.getOrNull().orEmpty()
         api().rpc("session/cancel",JSONObject().put("sessionId",sessionId))
         for(item in steerTrackers[sessionId]?.unconsumed().orEmpty())runCatching{api().rpc("session/updateQueue",JSONObject().put("sessionId",sessionId).put("itemId",item).put("action",JSONObject().put("kind","remove")))}
         scope.launch {
@@ -527,28 +542,82 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     private fun readProviders(): List<Provider> = vault.list().map { p ->
         val m=p.metadata;val configured=m.optJSONArray("models")?.rows()?.associateBy { it.getString("id") }.orEmpty()
-        Provider(p.id,m.optString("name",p.id),m.optString("catalogId",p.id),if(p.type=="anthropic")ProviderProtocol.Anthropic else ProviderProtocol.OpenAICompatible,p.baseURL,if(vault.hasSecret(p.credentialRef)||p.type=="openai-codex"&&chatGptAuth.state.value.signedIn)"••••••••" else "",m.optJSONArray("headerRefs")?.rows()?.map { it.getString("name") to "••••••••" }.orEmpty(),m.optBoolean("enabled",true),p.models.map { id -> val d=configured[id];ModelInfo(id,d?.optString("displayName",id) ?: id,d?.optInt("contextLength",128000) ?: 128000,d?.optInt("maxOutput",4096) ?: 4096,d?.optBoolean("vision",false) ?: false,d?.optBoolean("reasoning",p.type=="anthropic") ?: (p.type=="anthropic"),runCatching { ReasoningEffort.valueOf(d?.optString("defaultEffort") ?: if(p.type=="anthropic")"Medium" else "Off") }.getOrDefault(ReasoningEffort.Off)) })
+        Provider(p.id,m.optString("name",p.id),m.optString("catalogId",p.id),if(p.type=="anthropic")ProviderProtocol.Anthropic else ProviderProtocol.OpenAICompatible,p.baseURL,if(vault.hasSecret(p.credentialRef)||p.type=="openai-codex"&&chatGptAuth.state.value.signedIn)"••••••••" else "",m.optJSONArray("headerRefs")?.rows()?.map { it.getString("name") to "••••••••" }.orEmpty(),m.optBoolean("enabled",true),p.models.map { id -> val d=configured[id];ModelInfo(id,d?.optString("displayName",id) ?: id,d?.optInt("contextLength",128000) ?: 128000,d?.optInt("maxOutput",4096) ?: 4096,d?.optBoolean("vision",false) ?: false,d?.optBoolean("reasoning",p.type=="anthropic") ?: (p.type=="anthropic"),runCatching { ReasoningEffort.valueOf(d?.optString("defaultEffort") ?: if(p.type=="anthropic")"Medium" else "Off") }.getOrDefault(ReasoningEffort.Off),d?.optString("webSearchMode","auto")?.ifBlank{"auto"} ?: "auto",d?.optString("webSearchMethod","").orEmpty()) })
+    }
+    private fun priorModel(prior: StoredProvider?, id: String) = prior?.metadata?.optJSONArray("models")?.rows()?.firstOrNull { it.optString("id")==id }
+    private fun chatGptOfflineModels()=JSONArray(context.assets.open("codex-models.json").bufferedReader().use{it.readText()})
+    /** The Sign-in-with-ChatGPT provider: standard Responses at api.openai.com/v1 (Mika's route); models from the plan's list when known. */
+    private fun saveChatGptProvider(enabled:Boolean,models:JSONArray?=null){
+        val stored=vault.list().firstOrNull{it.id=="openai-codex"}
+        val rows=models ?: stored?.takeIf{it.baseURL==chatGptAuth.endpoints.apiBase}?.metadata?.optJSONArray("models")?.takeIf{it.length()>0} ?: chatGptOfflineModels()
+        val previous=stored?.metadata?.optJSONArray("models")?.rows()?.associateBy{it.optString("id")}.orEmpty()
+        // Keep the user's per-model hosted-search override across model list refreshes.
+        for(row in rows.rows())previous[row.optString("id")]?.let{old->row.put("webSearchMode",old.optString("webSearchMode","auto"))}
+        val metadata=JSONObject().put("name","ChatGPT").put("catalogId","openai-codex").put("enabled",enabled).put("models",rows)
+        vault.save(StoredProvider("openai-codex","openai-codex",chatGptAuth.endpoints.apiBase,rows.rows().map{it.getString("id")},metadata),"")
     }
     suspend fun setChatGptEnabled(enabled:Boolean){
-        val stored=vault.list().firstOrNull{it.id=="openai-codex"}
-        val models=JSONArray(context.assets.open("codex-models.json").bufferedReader().use{it.readText()})
-        val metadata=JSONObject().put("name","ChatGPT 订阅（实验）").put("catalogId","openai-codex").put("enabled",enabled).put("models",models)
-        vault.save(stored?.copy(metadata=metadata)?:StoredProvider("openai-codex","openai-codex","https://chatgpt.com/backend-api",models.rows().map{it.getString("id")},metadata),"")
+        saveChatGptProvider(enabled)
         providerRows.value=readProviders();if(runtime.state.value.phase=="已连接")api().reloadProviders()
     }
+    /** After sign-in: the plan's own model list (GET /v1/models) merged with offline metadata; gpt-6.1-terra appears when the plan lists it. */
+    suspend fun refreshChatGptModels(){
+        val stored=vault.list().firstOrNull{it.id=="openai-codex"} ?: return
+        val listed=runCatching{chatGptAuth.listModels()}.getOrNull() ?: return
+        val merged=dev.hoshino.bridge.chatgpt.ChatGptModels.merge(listed,chatGptOfflineModels())
+        if(merged.length()==0)return
+        saveChatGptProvider(stored.metadata.optBoolean("enabled",true),merged)
+        providerRows.value=readProviders();if(runtime.state.value.phase=="已连接")runCatching{api().reloadProviders()}
+    }
+    fun beginChatGptLogin(openBrowser:(String)->Unit)=chatGptAuth.beginLogin(openBrowser){refreshChatGptModels()}
     override suspend fun upsertProvider(provider: Provider) {
-        if(provider.id=="openai-codex") {val stored=vault.list().firstOrNull{it.id==provider.id}?:error("请通过 ChatGPT 订阅入口启用");vault.save(stored.copy(metadata=JSONObject(stored.metadata.toString()).put("enabled",provider.enabled)),"");providerRows.value=readProviders();if(runtime.state.value.phase=="已连接")api().reloadProviders();return}
+        if(provider.id=="openai-codex") {
+            val stored=vault.list().firstOrNull{it.id==provider.id}?:error("请通过 ChatGPT 入口启用")
+            val metadata=JSONObject(stored.metadata.toString()).put("enabled",provider.enabled)
+            // Only the per-model hosted-search override is editable here; the model list comes from the plan.
+            val modes=provider.models.associate{it.id to it.webSearchMode}
+            metadata.optJSONArray("models")?.rows()?.forEach{row->modes[row.optString("id")]?.let{row.put("webSearchMode",it)}}
+            vault.save(stored.copy(metadata=metadata),"");providerRows.value=readProviders();if(runtime.state.value.phase=="已连接")api().reloadProviders();return
+        }
 
         require(provider.protocol!=ProviderProtocol.OpenAIResponses) { "OpenAI Responses 即将支持" }
         val id=provider.id.takeIf { it.matches(Regex("[a-z][a-z0-9-]*")) } ?: "p-"+provider.id.lowercase().replace(Regex("[^a-z0-9-]"),"-")
         val prior=vault.list().firstOrNull { it.id==id };val oldRefs=prior?.metadata?.optJSONArray("headerRefs")?.rows().orEmpty()
         val oldValues=oldRefs.associate { it.getString("name") to vault.resolve(it.getString("ref")) }
         val headers=JSONArray(provider.headers.mapIndexed { i,pair -> val ref="HEADER_"+id.uppercase().replace('-','_')+"_$i";if(pair.second!="••••••••")vault.putSecret(ref,pair.second) else oldValues[pair.first]?.let { vault.putSecret(ref,it) };JSONObject().put("name",pair.first).put("ref",ref) })
-        val metadata=JSONObject().put("name",provider.name).put("catalogId",provider.catalogId).put("enabled",provider.enabled).put("headerRefs",headers).put("models",JSONArray(provider.models.map { m -> JSONObject().put("id",m.id).put("displayName",m.displayName).put("contextLength",m.contextLength).put("maxOutput",m.maxOutput).put("vision",m.vision).put("reasoning",m.reasoning).put("defaultEffort",m.defaultEffort.name) }))
+        val metadata=JSONObject().put("name",provider.name).put("catalogId",provider.catalogId).put("enabled",provider.enabled).put("headerRefs",headers).put("models",JSONArray(provider.models.map { m -> JSONObject().put("id",m.id).put("displayName",m.displayName).put("contextLength",m.contextLength).put("maxOutput",m.maxOutput).put("vision",m.vision).put("reasoning",m.reasoning).put("defaultEffort",m.defaultEffort.name).put("webSearchMode",m.webSearchMode).put("webSearchMethod",m.webSearchMethod).apply{priorModel(prior,m.id)?.optJSONArray("reasoningLevels")?.let{put("reasoningLevels",it)}} }))
         vault.save(StoredProvider(id,if(provider.protocol==ProviderProtocol.Anthropic)"anthropic" else "openai-compatible",provider.baseUrl,provider.models.map { it.id },metadata),provider.apiKey.takeUnless { it=="••••••••" }.orEmpty())
         providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)api().reloadProviders()
     }
-    override suspend fun deleteProvider(providerId: String) { vault.delete(providerId);providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)api().reloadProviders() }
+    override suspend fun deleteProvider(providerId: String) {
+        if(providerId=="openai-codex"){runCatching{chatGptAuth.signOut()};chatGptAuth.forget()}
+        vault.delete(providerId);providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)api().reloadProviders()
+    }
+    /** People-facing reason for a failed turn. ChatGPT plan errors arrive already explained by plugins/android-api. */
+    private fun failureDetail(sid:String,failure:JSONObject?):String {
+        val raw=vault.redact(failure?.optString("message").orEmpty()).take(1500)
+        if(metadata.getString("session-provider:$sid",null)!="openai-codex")return raw.ifBlank{"内核未返回错误详情"}
+        val status=failure?.optInt("status")
+        return when {
+            status==401 -> "ChatGPT 登录已失效，请到设置 → 模型 → ChatGPT 重新登录"
+            raw.contains("Plus 或 Pro")||raw.contains("套餐") -> raw
+            status==403 -> "这个 ChatGPT 账号不能在 Hoshino 使用套餐额度（需要 ChatGPT Plus 或 Pro；免费版和 Go 不支持）"
+            status==429 -> "ChatGPT 套餐额度已用完或受到限流，请稍后重试"
+            failure?.optString("code").orEmpty().contains("CREDENTIAL",true)||raw.contains("api key",true) -> chatGptAuth.state.value.error ?: "ChatGPT 未登录或登录已失效，请到设置 → 模型 → ChatGPT 登录"
+            else -> raw.ifBlank{"内核未返回错误详情"}
+        }
+    }
+    override suspend fun probeWebSearch(provider: Provider, modelId: String): String {
+        if(provider.id=="openai-codex")return dev.hoshino.bridge.WebSearchMethods.RESPONSES
+        val stored=vault.list().firstOrNull { it.id==provider.id }
+        val key=if(provider.apiKey=="••••••••"||provider.apiKey.isBlank())stored?.let { vault.resolve(it.credentialRef) }.orEmpty() else provider.apiKey
+        val existing=stored?.metadata?.optJSONArray("headerRefs")?.rows()?.associate { it.getString("name") to vault.resolve(it.getString("ref")).orEmpty() }.orEmpty()
+        val headers=provider.headers.associate { it.first to if(it.second=="••••••••")existing[it.first].orEmpty() else it.second }
+        val result=dev.hoshino.bridge.WebSearchProbe().probe(if(provider.protocol==ProviderProtocol.Anthropic)"anthropic" else "openai-compatible",provider.baseUrl,modelId,key,headers,provider.models.map{it.id})
+        val method=result.method ?: throw IllegalStateException("暂时无法判断联网搜索能力："+vault.redact(result.attempts.lastOrNull()?.let{"${it.method} · HTTP ${it.status} ${it.detail}"}.orEmpty()).take(300))
+        if(stored!=null&&vault.updateModel(provider.id,modelId){it.put("webSearchMethod",method)}){providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)runCatching{api().reloadProviders()}}
+        return method
+    }
     override suspend fun setProviderEnabled(providerId: String,enabled: Boolean) { upsertProvider(providerRows.value.first { it.id==providerId }.copy(enabled=enabled)) }
     override suspend fun setRouting(routing: ModelRouting) {
         routingRow.value=routing

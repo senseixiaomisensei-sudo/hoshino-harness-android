@@ -56,6 +56,16 @@ class ProviderStore(private val context: Context) {
         writeConfig(list().filterNot { it.id==id })
     }
     @Synchronized fun removeSecret(ref:String){encrypted.edit().remove(ref).commit()}
+    /** Edit one model's metadata row in place (e.g. its detected hosted-search method); false when the provider/model is unknown. */
+    @Synchronized fun updateModel(providerId: String, modelId: String, update: (JSONObject) -> Unit): Boolean {
+        val all=list();val p=all.firstOrNull { it.id==providerId } ?: return false
+        if(modelId !in p.models)return false
+        val meta=JSONObject(p.metadata.toString());val models=meta.optJSONArray("models") ?: JSONArray().also { meta.put("models",it) }
+        val row=(0 until models.length()).mapNotNull { models.optJSONObject(it) }.firstOrNull { it.optString("id")==modelId } ?: JSONObject().put("id",modelId).also { models.put(it) }
+        update(row)
+        writeConfig(all.map { if(it.id==providerId)it.copy(metadata=meta) else it })
+        return true
+    }
     fun hasSecret(ref: String) = encrypted.contains(ref)
     fun runtimeJson(provider: Provider): JSONObject {
         val headers=JSONObject();val refs=provider.metadata.optJSONArray("headerRefs") ?: JSONArray()
@@ -63,8 +73,12 @@ class ProviderStore(private val context: Context) {
         return provider.json().put("headers",headers)
     }
     fun redact(text: String): String {
-        return redactCredentials(text,encrypted.all.keys.mapNotNull { ref -> runCatching { resolve(ref) }.getOrNull() })
+        // Structured secrets (the ChatGPT session JSON) are redacted field by field as well as whole.
+        return redactCredentials(text,encrypted.all.keys.mapNotNull { ref -> runCatching { resolve(ref) }.getOrNull() }.flatMap { value -> listOf(value)+secretFields(value) })
     }
+    private fun secretFields(value: String): List<String> = if (!value.startsWith("{")) emptyList() else runCatching {
+        val o=JSONObject(value);o.keys().asSequence().mapNotNull { o.opt(it) as? String }.filter { it.length>=16 }.toList()
+    }.getOrDefault(emptyList())
     @Synchronized fun resolve(ref: String): String? {
         val value = encrypted.getString(ref, null) ?: return null
         val bytes = Base64.decode(value, Base64.NO_WRAP)
