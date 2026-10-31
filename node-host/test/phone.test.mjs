@@ -54,6 +54,9 @@ test('setup errors surface with the setup hint; steps are validated before reach
   assert.throws(() => checkSteps([{action: 'rm'}]), /unknown action/);
   assert.throws(() => checkSteps(Array.from({length: 21}, () => ({action: 'back'}))), /1\.\.20/);
   assert.deepEqual(stepFor('type', {text: 'hi', enter: true, ref: 'e2', junk: 1}), {action: 'type', ref: 'e2', text: 'hi', enter: true});
+  // WP-2 typeAt: a point reaches Android for type/clear (the field may be missing from the element list).
+  assert.deepEqual(stepFor('type', {text: 'hi', x: 500, y: 300}), {action: 'type', x: 500, y: 300, text: 'hi'});
+  assert.deepEqual(stepFor('clear', {x: 10, y: 20}), {action: 'clear', x: 10, y: 20});
   assert.equal(render({ok: true, screen: 'screen x'}), '{"ok":true}\nscreen x');
 });
 
