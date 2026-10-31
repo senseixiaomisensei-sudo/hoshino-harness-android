@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.map
 import app.hoshino.harness.core.ApprovalModeRules
 import app.hoshino.harness.core.ApprovalScope
 import app.hoshino.harness.core.ApprovalState
-import app.hoshino.harness.ui.components.HCheckbox
 import app.hoshino.harness.ui.components.HDialog
 import app.hoshino.harness.ui.components.HIcon
 import app.hoshino.harness.ui.components.HSheet
@@ -150,22 +149,17 @@ fun ApprovalSheet(
     }
 }
 
-/** 首次开启无审批的一次性风险说明（可勾选不再提示）。 */
+/** 首次开启无审批的一次性风险说明（m2.9.2：确认一次即永久记住，之后不再弹）。 */
 @Composable
 fun NoApprovalRiskDialog(scope: ApprovalScope, onConfirm: (neverAskAgain: Boolean) -> Unit, onDismiss: () -> Unit) {
     val c = HoshinoTheme.colors
-    var never by remember { mutableStateOf(false) }
     HDialog(
         title = if (scope == ApprovalScope.Default) "把无审批设为默认？" else "为本会话开启无审批？",
         onDismiss = onDismiss,
-        confirmText = "开启无审批",
-        onConfirm = { onConfirm(never) },
+        confirmText = "我了解风险，开启",
+        onConfirm = { onConfirm(ApprovalModeRules.NO_APPROVAL_ACK_FOREVER) },
         danger = true,
     ) {
         Text(ApprovalModeRules.RISK_TEXT, style = HoshinoTheme.type.body, color = c.text2)
-        Row(Modifier.clickable { never = !never }, verticalAlignment = Alignment.CenterVertically) {
-            HCheckbox(never, { never = it })
-            Text("我了解风险，以后不再提示", style = HoshinoTheme.type.caption, color = c.text2)
-        }
     }
 }

@@ -55,6 +55,16 @@ export function withApprovalMode(policy:Data,mode:ApprovalMode|null,sessionId?:s
  else next.scopes.sessions[sessionId]={...prior,mode};
  return next;
 }
+/**
+ * m2.9.2: which session's approval override applies to an action. A subagent (spawn / fork_agent) runs in its own
+ * child session, which never has an override of its own, so before m2.9.2 a 无审批 parent still produced approval
+ * cards from its children (the default `manual` applied to the child id). `chain` is [own id, parent, grandparent…]
+ * (session header `parentSession`); the nearest session with its own override wins, else the own id (= default).
+ */
+export function approvalSessionFor(policy:Data,chain:readonly string[]):string{
+ for(const id of chain)if(id&&policy?.scopes?.sessions?.[id]?.mode!=null)return id;
+ return chain[0]??'';
+}
 /** Drop every per-session trace (approval override) for deleted sessions. */
 export function forgetSessionsInApproval(policy:Data,ids:string[]):Data{const next=structuredClone(policy??{}) as Data;if(next.scopes?.sessions)for(const id of ids)delete next.scopes.sessions[id];return next;}
 export function matchRule(rule:Data,action:Data):boolean{

@@ -186,6 +186,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         if(method!="approve")error("手机能力即将支持")
         val session=body.optString("sessionId").ifEmpty { activeSession }
         check(session.isNotEmpty())
+        // m2.9.2: a no-approval session never shows a card here (the kernel already allows; this is the Android-side backstop).
+        ApprovalModeRules.autoAnswer(approvalStates.value[session])?.let { return JSONObject().put("approved",true).put("remember",false).put("auto","none") }
         val id=UUID.randomUUID().toString();val decision=CompletableDeferred<ApprovalDecision>();approvals[id]=decision;approvalOwners[id]=session
         val network=body.optString("kind")=="network"
         val detail=if(network) "向所选模型接口发送本次上下文" else vault.redact(listOf(body.optString("path"),body.optString("before"),body.optString("after"),body.optJSONObject("arguments")?.toString(2).orEmpty()).filter {it.isNotBlank() && it!="null"}.joinToString("\n").take(12000))

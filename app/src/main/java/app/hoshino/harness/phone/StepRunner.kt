@@ -46,6 +46,9 @@ interface ChangeProbe {
 /** [openedInMs]: open_app only (A-5), from the launch request until the app was usable (or the wait ended). */
 data class ActionOutcome(val ok: Boolean, val detail: String? = null, val openedInMs: Long? = null)
 
+/** m2.9.2: receives each stop that the user-enabled no-approval mode let through (reason like "payment", package). */
+fun interface NoApprovalBypass { fun record(reason: String, packageName: String?) }
+
 /** Approval for one irreversible step, issued by the policy in the kernel and consumed exactly once. */
 fun interface ApprovalGate { fun consume(fingerprint: String): Boolean }
 
@@ -87,7 +90,17 @@ data class StepsResult(
  * Every acted step also reports a [StepTiming] (resolve / act / wait / read / total, A-7). The timing only
  * reads [PhonePort.now] around the existing calls; it never adds a wait, a read or a retry.
  */
-class StepRunner(private val port: PhonePort, private val gate: ApprovalGate, private val stopRequested: () -> String? = { null }) {
+class StepRunner(
+    private val port: PhonePort,
+    private val gate: ApprovalGate,
+    /**
+     * m2.9.2: set only when the user enabled 无审批 for this session (the kernel says so, `no_approval`). Then nothing stops
+     * for the user: irreversible steps need no grant, and password / payment / captcha / code screens are not handed over.
+     * Every step that would have stopped is reported to [NoApprovalBypass.record] (audit: reason + package, no content).
+     */
+    private val noApproval: NoApprovalBypass? = null,
+    private val stopRequested: () -> String? = { null },
+) {
 
     // Per-step accumulators for A-7 timing; reset at the start of every step. Only touched by timed* below.
     private var readMs = 0L
@@ -120,15 +133,22 @@ class StepRunner(private val port: PhonePort, private val gate: ApprovalGate, pr
                 is Resolved.Ok -> r.element
             }
             if (step.kind == StepKind.type && (target?.password == true || (target == null && screen.elements.any { it.focused && it.password }))) {
-                return result(results, i, "password", needsUser = NeedsUser("password", "typing into a password field is left to the user"), screen = screen)
+                if (noApproval == null) return result(results, i, "password", needsUser = NeedsUser("password", "typing into a password field is left to the user"), screen = screen)
+                noApproval.record("password", screen.packageName)
             }
-            // Hands-only screens and payment never depend on approval: no grant, approval mode (including the user-enabled
-            // no-approval mode) or remembered decision can let the agent act there (docs/decisions.md, 2026-10-31 M2.8).
-            handsOnly(step, screen)?.let { n -> return result(results, i, "needs_user", needsUser = n, screen = screen) }
+            // Hands-only screens and payment do not depend on approval rules: no grant or remembered decision lets the agent
+            // act there (docs/decisions.md, M2.8). m2.9.2: only the user-enabled no-approval mode lifts it (audited).
+            handsOnly(step, screen)?.let { n ->
+                if (noApproval == null) return result(results, i, "needs_user", needsUser = n, screen = screen)
+                noApproval.record(n.reason, screen.packageName)
+            }
             IrreversibleDetector.classify(step, screen, target)?.let { hit ->
-                if (hit.action == IrrevAction.pay) return result(results, i, "payment", needsUser = NeedsUser("payment", "payment is always done by the user: ${hit.matched}"), screen = screen)
-                val fp = fingerprint(step, hit, screen, target)
-                if (!gate.consume(fp)) return result(results, i, "approval_required", pending = PendingApproval(i, step.describe(), hit.action, hit.matched, fp, screen.packageName), screen = screen)
+                if (noApproval != null) noApproval.record("irreversible:" + hit.action.name, screen.packageName)
+                else {
+                    if (hit.action == IrrevAction.pay) return result(results, i, "payment", needsUser = NeedsUser("payment", "payment is always done by the user: ${hit.matched}"), screen = screen)
+                    val fp = fingerprint(step, hit, screen, target)
+                    if (!gate.consume(fp)) return result(results, i, "approval_required", pending = PendingApproval(i, step.describe(), hit.action, hit.matched, fp, screen.packageName), screen = screen)
+                }
             }
             // A-1: subscribe and take the "before" baseline first, then act and wait inside the same subscription.
             val a = port.watch { probe ->
@@ -148,9 +168,9 @@ class StepRunner(private val port: PhonePort, private val gate: ApprovalGate, pr
             val end = port.now()
             results += StepResult(i, step.describe(), true, outcome.detail, end - started, met, StepTiming(started - stepStart, acted - started, waitMs, readMs, end - stepStart), a.change, outcome.openedInMs)
             if (met == false) return result(results, i, "expectation not met within ${step.expect?.timeoutMs}ms", screen = screen)
-            SystemScreens.needsUser(screen)?.let { n -> if (i < steps.lastIndex) return result(results, i + 1, "needs_user", needsUser = n, screen = screen) }
+            if (noApproval == null) SystemScreens.needsUser(screen)?.let { n -> if (i < steps.lastIndex) return result(results, i + 1, "needs_user", needsUser = n, screen = screen) }
         }
-        return result(results, null, null, screen = screen, chooser = SystemScreens.chooser(screen, appLabel), needsUser = SystemScreens.needsUser(screen))
+        return result(results, null, null, screen = screen, chooser = SystemScreens.chooser(screen, appLabel), needsUser = if (noApproval == null) SystemScreens.needsUser(screen) else null)
     }
 
     private class Settled(val met: Boolean?, val screen: ScreenSnapshot, val change: ChangeWait.Result?)

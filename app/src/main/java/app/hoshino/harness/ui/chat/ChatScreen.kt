@@ -165,7 +165,11 @@ fun ChatScreen(
 
     fun pickTier(t: PermissionTier) {
         showTier = false
-        if (t == PermissionTier.FullAccess && tier != PermissionTier.FullAccess) showRisk = true else vm.setTier(t)
+        // m2.9.2: in a no-approval session switching to full access asks nothing (system access must still be authorized).
+        if (t == PermissionTier.FullAccess && tier != PermissionTier.FullAccess) {
+            if (!app.hoshino.harness.core.ApprovalModeRules.fullAccessNeedsRiskDialog(approval)) { if (SystemAccess.authorized(systemAccess)) vm.setTier(PermissionTier.FullAccess) else showShizuku = true }
+            else showRisk = true
+        } else vm.setTier(t)
     }
 
     fun sessionAction(s: SessionInfo, a: SessionAction) {
@@ -453,7 +457,7 @@ fun ChatScreen(
     riskFor?.let { (mode, scope) ->
         NoApprovalRiskDialog(
             scope = scope,
-            onConfirm = { never -> vm.acknowledgeNoApproval(never); vm.setApprovalMode(mode, scope); riskFor = null },
+            onConfirm = { vm.acknowledgeNoApproval(app.hoshino.harness.core.ApprovalModeRules.NO_APPROVAL_ACK_FOREVER); vm.setApprovalMode(mode, scope); riskFor = null },
             onDismiss = { riskFor = null },
         )
     }
