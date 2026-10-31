@@ -16,7 +16,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  *    the user did, and whether the app in front changed. Nothing the user typed is ever put in the sentence.
  */
 class ManualTakeover(private val clock: () -> Long = System::currentTimeMillis) {
-    enum class Input { Tap, LongPress, Swipe, Text, Key }
+    enum class Input { Tap, LongPress, Swipe, Text, Key, Launch }
 
     data class Session(val sessionId: String?, val startedAt: Long, val appBefore: String?, val counts: Map<Input, Int> = emptyMap())
 
@@ -72,7 +72,7 @@ class ManualTakeover(private val clock: () -> Long = System::currentTimeMillis) 
 
         fun summary(durationMs: Long, counts: Map<Input, Int>, appBefore: String?, appAfter: String?): String {
             val secs = (durationMs.coerceAtLeast(0) + 500) / 1000
-            val did = listOf(Input.Tap to "点按", Input.LongPress to "长按", Input.Swipe to "滑动", Input.Text to "输入文字", Input.Key to "按键")
+            val did = listOf(Input.Tap to "点按", Input.LongPress to "长按", Input.Swipe to "滑动", Input.Text to "输入文字", Input.Key to "按键", Input.Launch to "打开 App")
                 .mapNotNull { (k, label) -> counts[k]?.takeIf { it > 0 }?.let { "$label $it 次" } }
             val actions = if (did.isEmpty()) "没有在预览里操作" else did.joinToString("、")
             val app = when {

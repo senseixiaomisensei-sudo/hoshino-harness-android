@@ -56,6 +56,8 @@ data class PhoneTaskState(
  */
 class PhoneController private constructor(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** Application context (m2.9.3: for the in-app virtual screen helpers). */
+    val appContext: Context get() = context
     private val services get() = PhoneServices.of(context)
     private val consent get() = PhoneConsent.of(context)
     private val lock = Mutex()
@@ -82,8 +84,18 @@ class PhoneController private constructor(private val context: Context) {
     val orientationMode: StateFlow<OrientationMode> = _orientationMode.asStateFlow()
     private val follower = OrientationFollower()
     private var followJob: Job? = null
+    /** m2.9.3: in-app virtual screen pages / picture-in-picture currently showing the display (keeps it from idling out). */
+    @Volatile private var viewers = 0
+    private val _taskSince = MutableStateFlow<Long?>(null)
+    /** m2.9.3: when the current phone task became active (elapsed time in the in-app page), null while idle. */
+    val taskSince: StateFlow<Long?> = _taskSince.asStateFlow()
 
     init {
+        scope.launch {
+            _state.map { it.status != PhoneTaskState.Status.Idle }.distinctUntilChanged().collect { active ->
+                _taskSince.value = if (active) _taskSince.value ?: System.currentTimeMillis() else null
+            }
+        }
         // m2.9: a foreground service (with its ongoing notice) lives exactly as long as the agent display.
         scope.launch {
             _display.map { it != null }.distinctUntilChanged().collect { exists ->
@@ -475,7 +487,65 @@ class PhoneController private constructor(private val context: Context) {
     /** The idle agent display is released after [IDLE_MS] so it costs nothing between tasks. */
     private fun touchIdle() {
         idleJob?.cancel()
-        idleJob = scope.launch { delay(IDLE_MS); lock.withLock { if (_state.value.status == PhoneTaskState.Status.Idle) release(null) } }
+        idleJob = scope.launch { delay(IDLE_MS); lock.withLock { if (_state.value.status == PhoneTaskState.Status.Idle && viewers == 0) release(null) } }
+    }
+
+    // ---------- m2.9.3: in-app virtual screen ----------
+
+    /** An in-app page / picture-in-picture shows the display: it is not released for idleness meanwhile. */
+    fun retainViewer() { viewers++ }
+
+    /** The page / PiP went away (or to the background); an idle display is released after [IDLE_MS] as before. */
+    fun releaseViewer() {
+        viewers = (viewers - 1).coerceAtLeast(0)
+        if (viewers == 0) touchIdle()
+    }
+
+    /**
+     * 「启动虚拟屏」 without a task: creates the agent display (same guards as a task: Android 13+, accessibility on, helper
+     * running). Returns null on success, else the reason to show. The display is empty until an app is opened on it.
+     */
+    suspend fun openViewer(): String? = try {
+        val shell = requireReady()
+        lock.withLock { screenFor(shell) }
+        consent.audit("agent display opened from the in-app page")
+        touchIdle()
+        null
+    } catch (e: PhoneUnavailable) {
+        e.message ?: "手机操作还没准备好"
+    } catch (t: Throwable) {
+        "打不开虚拟屏：" + (t.message ?: t.javaClass.simpleName)
+    }
+
+    /** The user opens [pkg] on the display from the in-app page (a manual input: only while the user has taken over). */
+    suspend fun userLaunch(pkg: String): Boolean {
+        if (pkg == context.packageName) return false
+        return manualInput(ManualTakeover.Input.Launch) { sh, id -> sh.startApp(id, pkg) == 0 }
+    }
+
+    /** Launcher apps for the in-app 「打开 App」 list (labels and packages only). */
+    fun launcherApps(): List<PhoneApps.App> = PhoneApps.list(context)
+
+    /** In-app picture input (display pixels), injected only while the user has taken over (same seam as the floating panel). */
+    suspend fun userTap(x: Int, y: Int): Boolean = manualInput(ManualTakeover.Input.Tap) { sh, id -> sh.injectTap(id, x, y) }
+
+    suspend fun userLongPress(x: Int, y: Int, holdMs: Long): Boolean = manualInput(ManualTakeover.Input.LongPress) { sh, id ->
+        sh.injectStroke(id, intArrayOf(x, x), intArrayOf(y, y), longArrayOf(0, holdMs.coerceIn(PreviewGeometry.LONG_PRESS_MS, PreviewGeometry.MAX_STROKE_MS)))
+    }
+
+    suspend fun userSwipe(xs: IntArray, ys: IntArray, ts: LongArray): Boolean = manualInput(ManualTakeover.Input.Swipe) { sh, id -> sh.injectStroke(id, xs, ys, ts) }
+
+    /** Allowed navigation keys only (the helper refuses others: never power / volume / home). */
+    suspend fun userKey(code: Int): Boolean = manualInput(ManualTakeover.Input.Key) { sh, id -> sh.injectKey(id, code) }
+
+    /**
+     * Text from the in-app input box: printable text key by key, anything else (Chinese) through the helper's borrowed
+     * clipboard + Ctrl+V, restored right after (the user's clipboard is never left changed). The text is never logged.
+     */
+    suspend fun userType(text: String): Boolean = manualInput(ManualTakeover.Input.Text) { sh, id ->
+        if (dev.hoshino.bridge.phone.shell.ShellText.typeable(text) && sh.injectText(id, text) == dev.hoshino.bridge.phone.shell.ShellText.TEXT_TYPED) true
+        else if (text.length > dev.hoshino.bridge.phone.shell.ShellText.MAX_CHARS || sh.setClipText(text) != 1) false
+        else try { sh.injectCtrlKey(id, android.view.KeyEvent.KEYCODE_V).also { delay(300) } } finally { runCatching { sh.restoreClip() } }
     }
 
     private fun status(): JSONObject {

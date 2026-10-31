@@ -53,6 +53,12 @@ class AgentDisplay(private val shell: IHoshinoPhoneShell, width: Int, height: In
     val frames: StateFlow<Bitmap?> = _frames.asStateFlow()
     /** Number of on-screen consumers of [frames]; previews are only produced while > 0 (saves CPU and memory). */
     @Volatile var previewWatchers = 0
+    /**
+     * m2.9.3: consumers among [previewWatchers] that show the picture large (the in-app virtual screen page, zoomable):
+     * while > 0 the Bitmap preview is made up to [HIRES_PREVIEW_WIDTH] wide instead of [PREVIEW_MAX_WIDTH]. Still one
+     * decode for everybody (the floating ball, the in-app page and its picture-in-picture share [frames]).
+     */
+    @Volatile var hiResWatchers = 0
     /** The user's frame-rate choice ([PhoneDisplayFps]); set by [PhoneController]. */
     @Volatile var userFps = FpsMath.DEFAULT_FPS
 
@@ -122,8 +128,9 @@ class AgentDisplay(private val shell: IHoshinoPhoneShell, width: Int, height: In
                 lastFrameAt = SystemClock.uptimeMillis()
                 if (previewWatchers > 0 && lastFrameAt - lastPreviewAt >= FpsMath.intervalMs(FpsMath.previewFps(userFps, true))) {
                     lastPreviewAt = lastFrameAt
-                    val preview = Bitmap.createBitmap(previewWidth, previewHeight, Bitmap.Config.ARGB_8888)
-                    Canvas(preview).drawBitmap(bmp, Rect(0, 0, w, h), Rect(0, 0, previewWidth, previewHeight), paint)
+                    val (pw, ph) = previewSize(w, h)
+                    val preview = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+                    Canvas(preview).drawBitmap(bmp, Rect(0, 0, w, h), Rect(0, 0, pw, ph), paint)
                     _frames.value = preview
                 }
             }
@@ -184,8 +191,21 @@ class AgentDisplay(private val shell: IHoshinoPhoneShell, width: Int, height: In
         }
     }
 
-    /** Floating panel: draw this display straight into [surface] (a TextureView's), GPU only. False = use [frames]. */
-    fun attachPreview(surface: Surface): Boolean = !released && relay?.attachPreview(surface) == true
+    /** Bitmap preview size: small for the ball/PiP, larger while an in-app page shows it big ([hiResWatchers]). */
+    private fun previewSize(w: Int, h: Int): Pair<Int, Int> {
+        if (hiResWatchers <= 0) return previewWidth to previewHeight
+        val pw = minOf(HIRES_PREVIEW_WIDTH, w)
+        return pw to maxOf(1, (h * pw + w / 2) / w)
+    }
+
+    /**
+     * Draw this display straight into [surface] (a TextureView's), GPU only. False = use [frames]. m2.9.3: several
+     * surfaces at once (floating panel + in-app page), each with its own [viewport] (zoom); one frame source.
+     */
+    fun attachPreview(surface: Surface, viewport: ((Int, Int) -> PxRect)? = null): Boolean = !released && relay?.attachPreview(surface, viewport) == true
+
+    /** m2.9.3: redraw [surface] after its zoom changed (zero-copy path only). */
+    fun redrawPreview(surface: Surface) { relay?.redraw(surface) }
 
     fun detachPreview(surface: Surface) { relay?.detachPreview(surface) }
 
@@ -210,6 +230,8 @@ class AgentDisplay(private val shell: IHoshinoPhoneShell, width: Int, height: In
 
     companion object {
         const val PREVIEW_MAX_WIDTH = 360
+        /** m2.9.3: Bitmap preview width while the in-app page shows the picture large. */
+        const val HIRES_PREVIEW_WIDTH = 1080
         /** PH24 (m2.8): the picture-in-picture was capped at 5 fps; m2.9 follows [userFps]. Kept for reference. */
         const val PREVIEW_FPS = 5
         /** Pre-m2.9 fixed capture interval; now [FpsMath.intervalMs] of [FpsMath.captureFps]. Kept for reference. */

@@ -47,8 +47,15 @@ class PreviewRelay private constructor(
     private var eglConfig: EGLConfig? = null
     private var idleSurface: EGLSurface = EGL14.EGL_NO_SURFACE
     private var captureSurface: EGLSurface = EGL14.EGL_NO_SURFACE
-    private var previewSurface: EGLSurface = EGL14.EGL_NO_SURFACE
-    private var previewTarget: Surface? = null
+    /**
+     * m2.9.3: every attached preview (floating panel, in-app page, in-app picture-in-picture) is drawn from the same GPU
+     * frame — one VirtualDisplay, one texture, no second encode. Each has its own [Target.viewport] (its zoom/pan).
+     */
+    private class Target(val surface: Surface, val egl: EGLSurface, val viewport: ((Int, Int) -> PxRect)?) {
+        var dirty = false
+        var lastAt = 0L
+    }
+    private val targets = ArrayList<Target>()
     private var texId = 0
     private var program = 0
     private var aPos = 0
@@ -60,9 +67,7 @@ class PreviewRelay private constructor(
     private val uv: FloatBuffer = floats(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
     private var hasFrame = false
     private var captureDirty = false
-    private var previewDirty = false
     private var lastCaptureAt = 0L
-    private var lastPreviewAt = 0L
     private val pumpTask = Runnable { pump() }
     @Volatile private var released = false
 
@@ -131,7 +136,7 @@ class PreviewRelay private constructor(
         }
         hasFrame = true
         captureDirty = true
-        previewDirty = previewSurface != EGL14.EGL_NO_SURFACE
+        for (t in targets) t.dirty = true
         pump()
     }
 
@@ -148,26 +153,26 @@ class PreviewRelay private constructor(
                 captureDirty = false
             } else next = minOf(next, due)
         }
-        if (previewDirty && previewSurface != EGL14.EGL_NO_SURFACE) {
-            val interval = previewIntervalMs()
-            if (interval > 0) {
-                val due = lastPreviewAt + interval
-                if (now >= due) {
-                    if (draw(previewSurface, fit = true)) previewFrames++
-                    lastPreviewAt = now
-                    previewDirty = false
-                } else next = minOf(next, due)
-            }
+        val interval = previewIntervalMs()
+        if (interval > 0) for (t in targets) {
+            if (!t.dirty) continue
+            val due = t.lastAt + interval
+            if (now >= due) {
+                if (draw(t.egl, fit = true, t.viewport)) previewFrames++
+                t.lastAt = now
+                t.dirty = false
+            } else next = minOf(next, due)
         }
         if (next != Long.MAX_VALUE) handler.postAtTime(pumpTask, next)
     }
 
-    private fun draw(target: EGLSurface, fit: Boolean): Boolean {
+    private fun draw(target: EGLSurface, fit: Boolean, viewport: ((Int, Int) -> PxRect)? = null): Boolean {
         if (!EGL14.eglMakeCurrent(eglDisplay, target, target, eglContext)) return false
         val size = IntArray(2)
         EGL14.eglQuerySurface(eglDisplay, target, EGL14.EGL_WIDTH, size, 0)
         EGL14.eglQuerySurface(eglDisplay, target, EGL14.EGL_HEIGHT, size, 1)
-        val vp = if (fit) PreviewGeometry.fitViewport(width, height, size[0], size[1]) else PxRect(0, 0, size[0], size[1])
+        // m2.9.3: a target may supply its own rectangle (in-app zoom/pan through the same PreviewTransform as its touches).
+        val vp = if (!fit) PxRect(0, 0, size[0], size[1]) else viewport?.invoke(size[0], size[1]) ?: PreviewGeometry.fitViewport(width, height, size[0], size[1])
         GLES20.glViewport(0, 0, size[0], size[1])
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -185,36 +190,40 @@ class PreviewRelay private constructor(
         return EGL14.eglSwapBuffers(eglDisplay, target)
     }
 
-    /** Attaches the panel's surface (TextureView). Blocks until done; false when EGL refused it. */
-    fun attachPreview(surface: Surface): Boolean = onThread {
+    /**
+     * Attaches a preview surface (a TextureView's). Several may be attached at once (m2.9.3); attaching the same surface
+     * again replaces it. [viewport] (surface width, height) → picture rectangle; null = fit-centre. Blocks until done;
+     * false when EGL refused it.
+     */
+    fun attachPreview(surface: Surface, viewport: ((Int, Int) -> PxRect)? = null): Boolean = onThread {
         if (released) return@onThread false
-        dropPreview()
+        dropPreview(surface)
         val s = windowSurface(surface)
         if (s == EGL14.EGL_NO_SURFACE) return@onThread false
         if (EGL14.eglMakeCurrent(eglDisplay, s, s, eglContext)) EGL14.eglSwapInterval(eglDisplay, 0)
-        previewSurface = s
-        previewTarget = surface
+        targets += Target(surface, s, viewport).also { it.dirty = hasFrame }
         previewAttached = true
-        previewDirty = hasFrame
-        lastPreviewAt = 0L
         pump()
         true
     } ?: false
 
     /** Detaches it again; must complete before the TextureView frees its SurfaceTexture, so it blocks (bounded). */
     fun detachPreview(surface: Surface) {
-        onThread { if (previewTarget === surface) dropPreview() }
+        onThread { dropPreview(surface) }
     }
 
-    private fun dropPreview() {
-        if (previewSurface != EGL14.EGL_NO_SURFACE) {
-            EGL14.eglMakeCurrent(eglDisplay, idleSurface, idleSurface, eglContext)
-            EGL14.eglDestroySurface(eglDisplay, previewSurface)
-        }
-        previewSurface = EGL14.EGL_NO_SURFACE
-        previewTarget = null
-        previewAttached = false
-        previewDirty = false
+    /** m2.9.3: redraw [surface] from the current frame (its zoom changed while the screen itself did not). */
+    fun redraw(surface: Surface) {
+        if (released) return
+        handler.post { targets.firstOrNull { it.surface === surface }?.let { it.dirty = hasFrame; it.lastAt = 0L; pump() } }
+    }
+
+    private fun dropPreview(surface: Surface? = null) {
+        val gone = targets.filter { surface == null || it.surface === surface }
+        if (gone.isNotEmpty()) EGL14.eglMakeCurrent(eglDisplay, idleSurface, idleSurface, eglContext)
+        for (t in gone) EGL14.eglDestroySurface(eglDisplay, t.egl)
+        targets.removeAll(gone.toSet())
+        previewAttached = targets.isNotEmpty()
     }
 
     fun release() {

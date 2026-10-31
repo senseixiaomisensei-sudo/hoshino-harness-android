@@ -10,7 +10,7 @@ interface IHoshinoPhoneShell {
     // Virtual display rendered into the app's Surface. Returns the display id, -1 on failure.
     int createDisplay(in Surface surface, int width, int height, int dpi) = 1;
     void releaseDisplay(int displayId) = 2;
-    // 0=started 1=user is using it on the main screen (not started) 2=no launcher entry 3=error 7=used by another task
+    // 0=started 1=user is using it on the main screen (not started) 2=no launcher entry 3=error 4=refused by the system (m2.9.3) 7=used by another task
     int startApp(int displayId, String packageName) = 3;
     int topTaskId(int displayId) = 4;
     boolean moveTask(int taskId, int displayId) = 5;

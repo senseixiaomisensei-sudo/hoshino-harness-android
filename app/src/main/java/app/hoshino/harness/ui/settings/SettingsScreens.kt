@@ -111,6 +111,7 @@ fun SettingsHomeScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (Str
             Hairline()
             ListRow(stringResource(R.string.settings_phone), icon = HIcons.Phone, subtitle = "文件、通知、无障碍、截图、悬浮窗", showChevron = true, onClick = { onNavigate(Routes.PHONE) })
             ListRow("设置手机操作", icon = HIcons.Phone, subtitle = "让 Hoshino 在后台屏上替你操作 App（无线调试/Shizuku、无障碍、开源 OCR）", showChevron = true, onClick = { onNavigate(Routes.PHONE_SETUP) })
+            ListRow("虚拟屏", icon = HIcons.Eye, subtitle = "在应用内查看和操作后台屏：缩放、平移、点按输入、接管", showChevron = true, onClick = { onNavigate(Routes.VIRTUAL_SCREEN) })
             Hairline()
             ListRow(stringResource(R.string.settings_kernel), icon = HIcons.Bolt, value = kernel.dshVersion, showChevron = true, onClick = { onNavigate(Routes.KERNEL) })
         }
