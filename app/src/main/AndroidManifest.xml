@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <queries><package android:name="moe.shizuku.privileged.api" /></queries>
+    <!-- m2.8 phone control: only granted by the helper (pm grant) after the user ticks it in the setup wizard; used to turn wireless debugging back on when the user allowed that. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
+    <!-- m2.8 phone control: list launcher apps for phone_list_apps / phone_launch_app. -->
+    <queries><intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent></queries>
     <application android:name="app.hoshino.harness.HoshinoApplication" android:allowBackup="false" android:usesCleartextTraffic="true" android:label="Hoshino Harness" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/Theme.Hoshino" android:extractNativeLibs="true" android:supportsRtl="true">
         <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="${applicationId}.shizuku" android:enabled="true" android:exported="true" android:multiprocess="false" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
@@ -25,6 +29,14 @@
         <receiver android:name="app.hoshino.harness.core.M2InstallReceiver" android:exported="false" />
         <receiver android:name="app.hoshino.harness.core.M2ScheduleReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>
         <service android:name="app.hoshino.harness.core.M2TileService" android:label="Hoshino 新任务" android:icon="@drawable/ic_hoshino_mark_mono" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true"><intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter></service>
+        <!-- m2.8 phone control: the built-in helper (shell uid) hands its binder over here; INTERACT_ACROSS_USERS_FULL keeps ordinary apps out, HelperHub.offer checks uid/pid/APK/nonce. -->
+        <provider android:name="dev.hoshino.bridge.phone.shell.HelperHandoffProvider" android:authorities="${applicationId}.phonehelper" android:exported="true" android:multiprocess="false" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <service android:name="app.hoshino.harness.phone.PhoneAccessibilityService" android:label="Hoshino 手机操作" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/phone_accessibility_service" />
+        </service>
+        <receiver android:name="app.hoshino.harness.phone.PhoneActionReceiver" android:exported="false" />
+        <receiver android:name="app.hoshino.harness.phone.setup.PairingCodeReceiver" android:exported="false" />
         <receiver android:name="app.hoshino.harness.core.M2Widget" android:exported="false"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/m2_widget_info" /></receiver>
     </application>
 </manifest>

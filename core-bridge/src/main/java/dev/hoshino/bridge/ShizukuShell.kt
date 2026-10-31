@@ -17,6 +17,12 @@ import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/**
+ * Shizuku could not provide the privileged service at all (not running, not authorised, bind failed or timed out).
+ * Nothing was executed, so a caller may safely retry the same command on another executor (m2.8.1).
+ */
+class ShizukuUnavailable(message: String) : IllegalStateException(message)
+
 /** Owns only this app's non-daemon privileged service; it never stops the user's Shizuku server. */
 class ShizukuShell(private val context: Context) {
     @Suppress("DEPRECATION")
@@ -35,9 +41,12 @@ class ShizukuShell(private val context: Context) {
     }
     private fun authorized()=Shizuku.pingBinder() && Shizuku.checkSelfPermission()==PackageManager.PERMISSION_GRANTED
     private suspend fun service(): IShizukuShell {
-        check(authorized()){ "请在 Shizuku 中启动服务并授权 Hoshino Harness" }
-        lock.withLock { if(!bound)withContext(Dispatchers.Main){Shizuku.bindUserService(args,connection);bound=true} }
-        return withTimeout(20000){connected.await()}
+        if(!runCatching{authorized()}.getOrDefault(false))throw ShizukuUnavailable("请在 Shizuku 中启动服务并授权 Hoshino Harness")
+        try { lock.withLock { if(!bound)withContext(Dispatchers.Main){Shizuku.bindUserService(args,connection);bound=true} } }
+        catch(failure: CancellationException){throw failure}
+        catch(failure: Exception){throw ShizukuUnavailable("Shizuku 服务绑定失败")}
+        // withTimeout's own exception is a CancellationException: report it as "unavailable" so callers can fall back.
+        return withTimeoutOrNull(20000){connected.await()} ?: throw ShizukuUnavailable("Shizuku 服务绑定超时")
     }
     suspend fun execute(id:String,session:String,command:String,timeout:Int,output:(String)->Unit={}):JSONObject {
         require(id.matches(Regex("[a-f0-9-]{36}")) && command.length in 1..16000)

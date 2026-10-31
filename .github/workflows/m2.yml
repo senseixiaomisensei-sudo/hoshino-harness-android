@@ -1,7 +1,10 @@
 name: M2 signed APK delivery
 on:
+  # 遗留的 0.2.0-m2 交付流程：发布由 dsh-upgrade.yml（推 codex/dsh-upgrade）负责。
+  # 推 codex/m2 不再触发本流程（它会尝试重建旧的 v0.2.0-m2 Release）。
+  # 保留：手动触发，以及 App 内自更新创建的 hoshino/self-update-* 分支（plugins/hoshino-m2 会显式 dispatch 本文件）。
   push:
-    branches: [codex/m2, 'hoshino/self-update-*']
+    branches: ['hoshino/self-update-*']
   workflow_dispatch:
 permissions:
   contents: read

@@ -119,6 +119,9 @@ fun Composer(
     onOpenContext: () -> Unit,
     onSlash: (SlashCommand) -> Unit,
     modifier: Modifier = Modifier,
+    approval: app.hoshino.harness.core.ApprovalState? = null,
+    onOpenApproval: () -> Unit = {},
+    summarizing: Boolean = false,
 ) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
@@ -139,6 +142,9 @@ fun Composer(
     }
 
     Column(modifier.fillMaxWidth()) {
+        // ---- 停止后交代进行中 / 无审批醒目标记
+        StopSummaryHint(summarizing)
+        if (approval != null) NoApprovalBanner(approval, onOpenApproval)
         // ---- 排队消息条
         AnimatedVisibility(queued.isNotEmpty()) {
             Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).hairlineCard(c.surface, c.line)) {
@@ -264,6 +270,7 @@ fun Composer(
                         trailing = HIcons.ChevronDown,
                         onClick = onOpenTier,
                     )
+                    if (approval != null) ApprovalPill(approval, onOpenApproval)
                     Pill(modelLabel, icon = HIcons.Cpu, trailing = HIcons.ChevronDown, onClick = onOpenModel)
                 }
                 Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onOpenContext), contentAlignment = Alignment.Center) {

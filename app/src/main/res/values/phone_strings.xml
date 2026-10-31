@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="phone_accessibility_description">让 Hoshino 在你授权的手机任务里读取和操作 App：只在它自己的后台屏上操作，不碰你正在用的主屏；只有你双击悬浮胶囊时才读取主屏内容；同时用来显示悬浮胶囊。付款、密码、验证码永远交给你自己。</string>
+</resources>

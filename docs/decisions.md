@@ -99,3 +99,71 @@
 - 用户明确要求发布 GitHub 仓库、写报告后收工，因此停止后续 M1 功能开发，不集成未验证的安全模式草稿。
 - 默认分支采用 `codex/m1`，让仓库首页与 clone 获取本次交付源码；M0 的历史基线保留在 `main`。已发布 preview.5 的 tag、APK 和源码提交保持不变。
 - 报告分别记录本地 8 项通过与远端 CI 两项失败。整理测试夹具和说明不改变已发布 APK，也不将阶段性交付写成完整 M1 验收通过。
+
+## 2026-10-31 M2.7 审批档（含无审批）与会话管理
+
+- **无审批只能由用户开启**：`approval.json` 新增 `mode: "none"`，出厂默认仍是 `manual`，测试锁定这一点。开启时（本会话或设为默认）首次弹风险说明，可勾选不再提示。无审批下 `resolveApproval` 直接 allow，不再走 Android 审批卡；只有用户自己写的 `deny` 规则仍生效（那是用户自设护栏，不是确认卡），`ask` 规则不会把卡带回来。每次决定照常写审计 `approvals.jsonl`，`approver=auto-none` 并记录 `mode`。
+- **权限档先于审批档**：`android-policy` 的 `tools/pre-execute` 里先跑 `tierGate`（抽到 `tier.ts` 便于测试），再问审批。因此无审批放宽不了只读 / 工作区 / 完全访问的边界；`system_shell` 仍只在完全访问会话可用，工作区路径校验不变。安卓系统自身的确认（装 APK、运行时权限、Shizuku 授权）无法也不去绕过，界面写明。
+- **审批档的作用域**：全局默认 + 每会话覆盖，沿用 `approval.json` 已有的 `scopes.sessions`，不新建配置文件。新会话尚未创建时选的「仅本会话」先记在 ViewModel，创建后立即写入。切到无审批时，该会话还挂着的审批卡按「允许一次」放行。
+- **插话走 dsh 原生 steer**：运行中继续发送调用 `session/prompt mode=steer`（消息进 inbox 的 next-step，下一次模型请求前被当前任务认领），不另开任务；内核不再接受插话时退回原有排队。核实锁定的 dsh 0.2.2-alpha.2：`ReactLoopInbox.mutate` 把每次变化写成持久化会话事件 `agent/inbox/spliced`（`target/start/removedCount/inserted/outcome`），认领时以同一消息 id 追加 `user/message`；`session/follow` 的实时尾巴通过 `session/event` 转发**所有**会话事件，快照的 records 是按消息预算切出的连续事件段，`projections.values.inbox` 带当时完整的待处理列表。所以 Android 端不需要额外订阅：`SteerTracker` 镜像 inbox（快照后用 `inbox` 投影校正），插话气泡在进 inbox 时画出（「已收到，下一步处理」），认领成 `user/message` 时只改状态为「已加入当前任务」，不重复画气泡。
+- **停止 = 取消 + 作废未认领插话 + 交代**：dsh 的 `session/cancel` 用 `keepInbox: true`，未认领的插话会留在 inbox；因此 Android 停止后对每条未认领插话调用官方 `session/updateQueue {kind:"remove"}`（产生 `outcome: "canceled"` 的 splice，界面标「已停止，这句没有处理」）。随后插件操作 `stop-summary` 等本轮停稳，按本轮事件整理事实，优先用压缩模型/当前模型在 12 秒内写 3–6 行交代（材料加标签当数据、不给工具），失败或超时按记录拼一段；结果用 `agent.inject`（next-step、不唤醒）写进 inbox，下一轮「继续」能读到。界面从 `agent/inbox/spliced` 画出交代；若那条事件不在已加载的一页里，则在它被认领成 `user/message`（来源 `hoshino-stop-note`）时补画。结构参照 Mika `StopSummary`，见 THIRD_PARTY_NOTICES.md。
+- **删除会话不改 dsh**：dsh 没有删除 RPC。删除立即写墓碑并隐藏，停止、取消订阅、归档，清插件侧（审批覆盖、会话提示词、策略选项、定时任务；内核未连接时排队，连上后补做）与 Android 侧（交付记录、附件原件、缓存、元数据、等待消息）。dsh 的会话 JSONL 目录只在内核进程不在时删除（下一次启动内核前；确认 `/proc/<pid>` 的启动时刻与命令行，避免误判复用的 pid），连同 `origin=subagent` 的子会话，保留用户分叉出的会话。工作区里的用户文件不删。
+- **置顶**：本地记录为准（时间戳排序），连接时同步 dsh 原有 `workspace/pinSession`；归档会取消置顶，已归档不能置顶。
+- **导出**：插件读 dsh `sessionQuery.readSession`，Markdown 优先用 dsh 自带的 `formatSessionMarkdown`（精简运行时没有时用本地格式化），JSON 是完整事件日志；Android 去掉已知密钥后保存到「下载/Hoshino」并打开系统分享。
+
+# M2.7 ChatGPT 登录与模型自带联网搜索
+
+日期：2026-10-31。
+
+1. **ChatGPT 登录改为与 Mika 相同的「用 ChatGPT 登录」**（用户明确要求"GPT 登录规则与 Mika 一样"）。旧实现借用 Codex CLI 的公开客户端（`app_EMoamEEZ73f0CkXaXp7hrann`、固定端口 1455、`/oauth/authorize`）并调用 chatgpt.com 的 Codex 后端：客户端身份属于另一个产品，固定端口会与本机其他 Codex 登录冲突，后端也不是公开 API。新方式是 OpenAI 为开源、本机运行的 App 提供的路径：issuer `https://auth.openai.com`，授权 `/api/accounts/authorize`；首次用 `dynamic_agent_client` 并带 `agent_name_hint=Hoshino` 注册，回调返回本账号专属 client_id，之后换令牌、刷新、再登录都沿用；`ext_agent_host_id` 为每台设备生成一次的 `urn:uuid`；回调 `http://127.0.0.1:<系统挑的端口>/auth/callback`；scope `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`，resource `https://api.openai.com/v1`；PKCE S256 + state + nonce；ID 令牌按 JWKS 验 RS256 签名与 iss/aud/exp/nonce；必须授予 `chatgpt.tokens.use.direct` 才算登录成功；刷新串行（刷新令牌一次性）、终止错误清令牌要求重登、临时错误保留令牌；退出登录先 revoke 再清本机令牌（注册与身份保留，再登录带 `id_token_hint`/`login_hint`）。实现移植自 Mika（Apache-2.0），见 `core-bridge/src/main/java/dev/hoshino/bridge/chatgpt/`。
+2. **会话整份加密保存**：`ChatGptSession` 以 JSON 作为一个 Keystore 封装的秘密（`CHATGPT_SESSION`）保存；设备标识与注册得到的 client_id 不是秘密，与 Mika 一样明文存应用私有 preferences。`ProviderStore.redact` 会把 JSON 秘密的各字段也加入脱敏表。授权 URL（可能含 ID 令牌提示）、令牌不进日志。
+3. **调用改走 `api.openai.com/v1/responses`，不改 dsh**：锁定的 pi-ai 1.4.0 自带标准 `openai-responses` 适配器（dsh-llm-pi-ai 的声明路由表也支持它），因此 `openai-codex` 路由改为 `api: openai-responses`、baseURL 为存储的 `https://api.openai.com/v1`；套餐访问令牌每次请求经 Android 凭据回调取得，Kotlin 负责提前刷新，API 回 401 时插件要求一次强制刷新后重试。pi-ai 只在 provider id 恰为 `openai` 时识别 ChatGPT 令牌，所以 Mika ResponsesModel 的规则在 `plugins/android-api/hosted-search.ts` 的 fetch 边界补齐：`store:false`、流式、带 `reasoning.encrypted_content`；套餐路由不发温度、输出上限等字段；服务端说不收 `include` 时去掉重试；套餐错误码（不符合资格、额度用完、工作区上限等）改写为说明，免费版/Go 明确提示需要 Plus/Pro。
+4. **旧 Codex 登录用户**：升级后首次启动清除四个旧令牌引用，provider 改指新地址，设置页提示"重新登录一次"。
+5. **模型列表**：登录后 `GET /v1/models`（同 Mika ModelCatalog，兼容 `data`/`models` 两种形状），与 `codex-models.json` 离线元数据合并；接口列出什么就显示什么。离线表补 `gpt-6.1-terra`（上下文 1,050,000、输出 128,000、看图、推理 none/low/medium(默认)/high/xhigh/max，来源 https://developers.openai.com/api/docs/models/gpt-6.1-terra ）。App 推理档新增 `xhigh`；不支持的协议上发送其最强已知档。
+6. **模型自带联网搜索默认优先，Hoshino 搜索退为备用**：托管搜索就是同一个已审批的模型请求，不新增目的地，网络策略与审批不变。ChatGPT/Responses 路由加 `{"type":"web_search"}`（被拒再试 `web_search_preview`）；Chat Completions 用检测到的 `web_search_options`、`plugins:[{id:"web"}]` 或模型列表明确列出的联网变体名（不猜改模型名）；Anthropic 用 `web_search_20250305` 服务端工具。启用托管搜索时本次请求不提供 Hoshino 的 `web_search` 函数工具（不重复搜）；提供商拒绝托管搜索（HTTP 4xx，或流中在首个输出前失败）时自动改发原请求，Hoshino 搜索恢复可用，并记住该模型不可用。没有改动 `plugins/hoshino-m2` 的搜索工具注册。
+7. **流的展示**：pi-ai 不认识 `web_search_call`、`url_citation`、`server_tool_use`。插件把搜索调用改写为一段以 `🌐 ` 开头的思考/推理内容（App 显示为过程中的"联网搜索"步骤，回放给模型时剔除），把引用改写为回答末尾的 Markdown「来源」列表，均不报错。
+8. **能力探测**：Settings 的"检测"、或模型首次使用时，Kotlin `WebSearchProbe` 按 Responses web_search → web_search_preview → Chat web_search_options → plugins web → 列表中的联网变体（OpenAI 兼容）/ Anthropic 服务端工具的顺序发很小的请求，必须在回复里看到真实搜索证据（`web_search_call`、`url_citation`、`server_tool_use`…）才算可用，网关静默忽略未知字段不会被误判；429/401/5xx/网络错误记为"未定"而不是"不可用"。结果作为 provider 模型元数据 `webSearchMethod` 保存，设置里可查看并覆盖为自动/强制开/关；未知的 Chat 路由在已审批请求内顺带检测。中转站模型若检测到 Responses 方式，额外生成 `<id>--responses` 路由（同样用 pi-ai 标准 openai-responses），App 对该模型选这条路由。
+
+## 2026-10-31 M2.1 模型请求不再单独审批（补记）
+
+- **事实**：M2.1 提交 `03db186`（feat: add M2.1 instant sessions…）删除了 `plugins/android-policy` 里 `agent/request` 的逐次「模型网络请求」审批，并在原处写明理由：「Sending a user prompt to an explicitly enabled provider is already authorized. Tool/network side effects still use the tool approval policy above.」此后 M2.2–M2.6 五个发布版都沿用这一行为，当时没有在本文件记录。
+- **判断为有意的设计变更**：同一提交以注释替换而非误删；M2.1 的目标是即时会话（发送即开始，不再每条消息先弹卡）；用户在设置里显式添加并启用 provider、自己填 key，本身就是对「把提示词发给这个 provider」的授权。AGENTS.md 铁律「会改动用户文件、执行 shell、发网络请求的**工具**默认走审批」不受影响：`web_fetch`/`web_search`/写文件/shell 等工具调用仍按 `approval.json`（出厂 `manual`）审批；M2.7 的模型自带联网搜索也只是同一个模型请求，不新增目的地。
+- **与 M0 决定的关系**：M0 第 9 条「每个模型请求也逐次审批」是 M0 权限最小化阶段的决定，被 M2.1 取代。README「模型网络请求与 Agent 写操作默认审批」一句随之过时，待主代理发版时更新。
+- **测试**：`node-host/test/kernel.test.mjs` 原断言「出现 network 审批」自 M2.1 起一直失败（基线失败）。改为断言当前设计：普通模型请求**不**出现 `kind: network` 审批，同时**仍**出现 `write` 工具审批。没有删除断言。Android 侧 `DshHarnessClient` 里处理 `kind=network` 审批卡的分支保留（兼容旧插件/第三方插件仍可能发起该类审批）。
+
+## 2026-10-31 M2.3 第三方 Anthropic 兼容端点用通用 Messages 形状（补记）
+
+- **事实**：M2.3 提交 `064eaa0`（fix: send plain Anthropic Messages requests to third-party Anthropic-compatible endpoints (relay 502)）新增 `plugins/android-api/anthropic-compat.ts`：对 `api.anthropic.com` 以外的 Anthropic 兼容地址，去掉 pi-ai 的 Claude 专用字段（`output_config`、adaptive thinking、beta 头、工具 eager streaming 等），推理档换算成显式 `thinking.budget_tokens`（max=16000）。官方地址不改。文件头写明了理由（中转站/DeepSeek 等对这些字段回 4xx/502），当时没有在本文件记录。
+- **测试**：`kernel.test.mjs` 的 claude-max 断言仍按官方形状（`output_config.effort=max`、`thinking.type=adaptive`）检查发往本机 mock 的请求；本机 mock 属于「第三方兼容端点」，因此自 M2.3 起该断言不成立，只是被前面 M2.1 的 network 断言失败挡住、一直没跑到。改为断言当前设计：无 `output_config`、`thinking.type=enabled`、`budget_tokens=16000`；其余 max 预算断言（`max_tokens>=32768`）不变。官方形状没有离线可测的端点，未覆盖，如需覆盖应给 `sanitizeAnthropicBody`/地址判定单独写单测。
+
+
+## 2026-10-31 M2.8 手机操作接入 m2.7 审批档（含无审批）
+
+背景：`feat/m2.8-phone` 基于 m2.7 之前的 `bce6285` 开发，m2.7 新增了审批档（manual / rules / model / auto / none）、无审批和审批折叠。集成分支 `integ/m2.8` 合并时按下面的规则统一语义。依据：mika-gap（PR #1，`docs/mika-gap.md`）PL2「保留默认审批，付款永远交用户亲手做；无审批只能用户主动开」、AP2「风险判定在无人在场、自主、无审批模式下照样运行并记审计」、AP4「付款本身永远交用户亲手做」、AP6（Mika 自主模式连付款也不问——我们不跟），以及本文件 M2.7「无审批下 resolveApproval 直接 allow，只有用户自己的 deny 规则仍生效，`ask` 规则不会把卡带回来」。
+
+- **普通 phone_* 工具走同一个审批口子**：android-policy 的 `tools/pre-execute`（先权限档，后审批），所有 phone_* 共享一个「本会话允许」。审批由 hoshino-m2 的 `resolveApproval` 决定，因此：出厂 manual 下首次弹卡；无审批下自动放行、不弹卡，审计 `approver=auto-none`。
+- **不可逆步骤（发送 / 删除 / 下单 / 提交）**：Android 侧按「这一步 + 这个屏」算指纹停下，android-phone 以 `tool=phone_irreversible` 发一次性审批（永不记为本会话允许）。
+  - `phone_irreversible` 算**高危**：开着「高危确认」（出厂默认开）时，manual / rules / model / **auto** 档都逐步问一次；用户的 allow 规则也越不过高危确认（与 rm、git reset 等一致）。
+  - **无审批下不再弹一次性确认，直接放行并记审计**（`approver=auto-none`、`risk=irreversible:<kind>`、`app=<包名>`，不记步骤文字、输入内容或屏上文字）。理由：无审批是用户看过风险说明后主动开启的，M2.7 已定「ask 规则不把卡带回来」；在无审批里对一类工具单独保留确认，会让「无审批」名不副实，也和 AP2 的表述（照样运行并记审计，而不是照样拦截）不符。用户仍可写 `{"tool":"phone_irreversible","decision":"deny"}` 规则，在无审批下也生效。无审批的风险说明（`ApprovalModeRules.PHONE_LIMITS`）写明这一点。
+- **付款与「要你亲手来」的屏，任何审批档都绕不过**（与审批无关，在 Android 执行入口里判定）：
+  - 付款步骤从不送去审批（android-phone 直接返回 `reason=payment` 要求 `phone_handoff`），Android `StepRunner` 也**不接受付款授权**：即使有人对付款指纹调用 `grant`，也直接停下交给用户。
+  - 在需要用户的屏（密码 / 登录 / 验证码 / 人机验证 / 付款）上，`type`/`clear` 一律停下；在人机验证和付款屏上 `tap`/`long_press`/`swipe` 也停下（滑块、支付密码键盘）。返回、按键、等待、打开别的 App 仍允许，以便交接或离开。
+  - 交接（`phone_handoff`）由用户点「处理好了 / 跳过」，与审批档无关。
+- **审批折叠与胶囊一致**：聊天审批卡、通知、胶囊三处都用同一个 `approvalChoices(oneShot)`：一次性审批（`phone_irreversible`，以及剪贴板/分享/应用截图这些 `onceOnly` 工具）只给「允许一次 / 拒绝」，其余给「允许一次 / 本会话总是允许 / 拒绝」，标签一致；Android 对一次性审批返回 `remember=false`。在任一处处理后发 `ApprovalResolved`，聊天按 m2.7 规则把已处理的审批折叠进过程组，胶囊同时移除。手机不可逆审批卡标题为「手机不可逆操作」，通知显示插件给的摘要。
+- 测试：`node-host/test/phone.test.mjs`（各审批档对 phone_irreversible 的结果、无审批端到端放行且审计不含屏上文字、付款不进审批口子、其他会话仍弹卡）；`StepRunnerTest`（付款授权无效、验证码/人机验证在「全部批准」下仍停）；`SessionStorePerformanceTest`（一次性审批三处选项一致并照常折叠）；`ApprovalSessionsTest`（风险说明含手机边界）。
+
+## 2026-10-31 m2.8.1 打开 App 不再要求 Shizuku；完全访问认内置无线调试助手
+
+背景：小米 15S Pro（m2.8）上让 AI「打开抖音」，模型回答「没有授权的完全访问会话，配置 Shizuku 后我再试」；用户没装也不想依赖 Shizuku。另一张截图里完全访问 + 无审批会话执行 `system_shell monkey -p com.ss.android.ugc.aweme 1`，0 秒失败，只有 `Android callback failed (500)`。
+
+决定：
+- **打开 / 操作 App 一律走 `phone_*`**（`phone_launch_app`、`phone_do_steps` 等），不需要 Shizuku、system_shell 或完全访问。`android-phone` 系统提示、`phone_launch_app` / `phone_status` 描述、`android-policy` 对 system_shell 的拒绝原因（`SYSTEM_SHELL_DENY_REASON`）、`android-shizuku` 的描述与报错都写明这一点：未完成手机操作设置时调用 `phone_status`，引导用户到「设置 → 设置手机操作」，不要让用户去配 Shizuku。
+- **非完全访问会话不暴露 system_shell**：`hoshino-m2` 的 `syncTools` 在模式白名单之外再叠加 `tierHiddenTools(tier)`（纯函数 `sessionToolDeny`）；`hoshino-self` 的 `session-options` 切换档位后已会调用 `syncTools`。运行时 tier gate 仍然拒绝，双保险。
+- **完全访问的系统执行器 = Shizuku 或 内置无线调试助手**：`system-access` 回调在 Shizuku Ready 或 内置助手「已配对且 helper 运行」时 `authorized=true`（纯函数 `SystemAccess.route`）。`system-shell` 回调先试 Shizuku；Shizuku 未 Ready、或绑定/超时（新 `ShizukuUnavailable`，表示一条命令都没执行，可安全换执行器）时回退到 `BuiltinSystemShell`（经 `BuiltinShellManager.run` → helper `runCommand`）；两者都不可用时报「Shizuku 未运行/未授权，且内置无线调试助手未就绪：请到 设置 → 设置手机操作」。
+  - 内置路径保留超时（toybox `timeout -s KILL`，受 helper 单条 15 s 上限约束，钳到 14 s 并在结果里注明）、取消（pid 文件 + `pkill -P`/`kill -9`，只能由同一会话取消）、输出截断（预览 32 KiB，完整输出写入工作区文件，helper 本身最多 64 KiB）、终端回显和本地审计行（只记 exit/timedOut/cancelled，不记命令和输出）。stdout/stderr 在 helper 里合并，结果标 `stderrMerged`。
+  - 审批不变：system_shell 仍走用户的审批档；完全访问仍须在会话中手动确认风险，不能设为预设默认；不自动开启无线调试，同意项默认不勾选；付款 / 密码 / 验证码仍交给用户。
+- **会话档位以内核为准**：`send()` 每轮把输入框的档位发给内核，但本地 `sessionRows` 不更新，导致 system-shell 回调里的 `tier==FullAccess` 校验失败（截图里的 0 秒 500）。现在插件在 system-shell 请求里带上内核已验证的 `tier`，Android 以它为准（`SystemAccess.sessionAllowsSystemShell`：内核报告的档位优先；内核报告其他档位一律拒绝；旧内核不带时退回本地行），并在 `send()` / `setSessionTier` / 回调后同步本地行。
+- **回调错误不再丢失**：`AndroidCallbackServer` 500 时返回 `{"error": 脱敏后的 failure.message}`（`ProviderStore.redact` → `redactCredentials`，最多 2000 字，空消息退回异常类名；诊断日志仍只记类名）；`node-host/src/platform.ts` 的 `callbackError` 读出后抛 `Android callback failed (500): <message>`。
+- `phone_*` 失败时（`code` 为 helper / accessibility / unsupported）错误文本带「设置 → 设置手机操作」和「Shizuku 与完全访问都不需要」（`phoneError`）；UI（权限弹层、风险确认、引导弹层、设置页、预设页、`PermissionTier.FullAccess` 描述）改为「需要 Shizuku 或 内置无线调试助手」，引导弹层首推「去设置手机操作」。
+
+测试：`node-host/test/m281.test.mjs`（tier gate 文案、system_shell 隐藏、phoneError、手机提示词、callbackError 及端到端 500 消息）；`SystemAccessTest`（执行器判定、内核档位优先、回退顺序）；`BuiltinSystemShellTest`（命令包装/引号、超时钳制、结果形状、执行写文件、取消）；`AndroidCallbackServerTest`（500 带脱敏 JSON 错误）。未真机验证：内置助手执行 system_shell、取消杀进程、Shizuku 绑定超时回退。

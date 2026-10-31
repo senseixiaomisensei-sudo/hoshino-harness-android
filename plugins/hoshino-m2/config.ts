@@ -39,6 +39,24 @@ export function assertPublic(value:unknown){if(Array.isArray(value)){value.forEa
 export async function atomic(path:string,value:unknown){await mkdir(dirname(path),{recursive:true});const tmp=path+'.tmp';await writeFile(tmp,JSON.stringify(value,null,2));await rename(tmp,path);}
 export function interpolate(text:string,variables:Record<string,unknown>){return text.replace(/\{\{([\w.-]+)\}\}/g,(_,name:string)=>String(variables[name] ?? ''));}
 export function scopePolicy(base:Data,session:string,workspace:string,mode:string):Data{return {...base,...base.scopes?.modes?.[mode],...base.scopes?.workspaces?.[workspace],...base.scopes?.sessions?.[session]};}
+/**
+ * Return approval.json with a new mode, either as the global default or as one session's override.
+ * `mode=null` with a session clears that session's override so it follows the default again.
+ * Other keys (rules, model, timeouts, other scopes) are preserved untouched.
+ */
+export function withApprovalMode(policy:Data,mode:ApprovalMode|null,sessionId?:string):Data{
+ if(mode!==null&&!(APPROVAL_MODES as readonly string[]).includes(mode))throw Error('Unknown approval mode');
+ const next=structuredClone(policy??{}) as Data;
+ if(!sessionId){if(mode===null)throw Error('Default approval mode cannot be cleared');next.mode=mode;return next;}
+ if(!/^[\w-]{1,150}$/.test(sessionId))throw Error('Invalid session');
+ next.scopes={workspaces:{},sessions:{},modes:{},...(next.scopes??{})};next.scopes.sessions={...(next.scopes.sessions??{})};
+ const prior={...(next.scopes.sessions[sessionId]??{})};delete prior.mode;
+ if(mode===null){if(Object.keys(prior).length)next.scopes.sessions[sessionId]=prior;else delete next.scopes.sessions[sessionId];}
+ else next.scopes.sessions[sessionId]={...prior,mode};
+ return next;
+}
+/** Drop every per-session trace (approval override) for deleted sessions. */
+export function forgetSessionsInApproval(policy:Data,ids:string[]):Data{const next=structuredClone(policy??{}) as Data;if(next.scopes?.sessions)for(const id of ids)delete next.scopes.sessions[id];return next;}
 export function matchRule(rule:Data,action:Data):boolean{
  if(rule.tool && rule.tool!==action.tool)return false;
  if(rule.prefix && !String(action.command ?? '').startsWith(rule.prefix))return false;
@@ -47,8 +65,30 @@ export function matchRule(rule:Data,action:Data):boolean{
  if(rule.domain){let hostname='';try{hostname=new URL(String(action.url ?? '')).hostname;}catch{}if(hostname!==rule.domain && !hostname.endsWith('.'+rule.domain))return false;}
  return ['tool','prefix','regex','path','domain'].some(k=>rule[k]);
 }
-export function resolveApproval(policy:Data,action:Data):{decision:'allow'|'deny'|'ask'|'model';reason:string}{
- const risky=/\b(rm|reboot|shutdown|mkfs|dd|su|pm\s+uninstall|git\s+reset|chmod)\b|self_update|self_build|plugin_install/.test(String(action.command ?? '')+' '+String(action.tool ?? ''));
+/** Approval levels shown in the Android quick switch. `none` is opt-in only; the shipped default stays `manual`. */
+export const APPROVAL_MODES=['manual','rules','model','auto','none'] as const;
+export type ApprovalMode=typeof APPROVAL_MODES[number];
+/** Audit label for decisions made by the user-enabled no-approval mode. */
+export const NO_APPROVAL_APPROVER='auto-none';
+/** Approval action name android-phone uses for one irreversible phone step (bound to that step on that screen, never remembered). */
+export const PHONE_IRREVERSIBLE_TOOL='phone_irreversible';
+/** Audit-safe risk label for an approval action: no step text, typed text or screen content, only the kind and the app package. */
+export function riskOf(action:Data):Data|undefined{
+ if(action.tool!==PHONE_IRREVERSIBLE_TOOL)return undefined;
+ const a=action.arguments??{};const kind=String(a.action??'');const app=a.app==null?null:String(a.app);
+ return {risk:'irreversible:'+(/^[a-z_]{1,20}$/.test(kind)?kind:'unknown'),app:app&&/^[\w.]{1,200}$/.test(app)?app:null,once:true};
+}
+export type ApprovalResult={decision:'allow'|'deny'|'ask'|'model';reason:string;approver?:string};
+export function resolveApproval(policy:Data,action:Data):ApprovalResult{
+ // 无审批：用户主动开启后不再弹卡，工具/文件/shell/联网/高危一律放行。
+ // 只有用户自己写的 deny 规则仍然生效（那是用户自设的护栏，不是确认卡）；权限档（只读/工作区/完全访问）在 android-policy 里先于审批判定，不受影响。
+ if(policy.mode==='none'){
+  for(const rule of policy.rules ?? []){if(rule?.decision!=='deny')continue;let hit=false;try{hit=matchRule(rule,action);}catch{}if(hit)return {decision:'deny',reason:String(rule.reason ?? 'Matched deny rule'),approver:'rule'};}
+  return {decision:'allow',reason:'No-approval mode enabled by the user',approver:NO_APPROVAL_APPROVER};
+ }
+ // 手机不可逆步骤（发送/删除/下单/提交，android-phone 的 phone_irreversible）算高危：开着「高危确认」时，自动档或 allow 规则也要逐步问一次。
+ // 付款不在这里：付款步骤永远不会被送来审批（android-phone 直接交给用户，Android 侧也不接受付款授权）。
+ const risky=/\b(rm|reboot|shutdown|mkfs|dd|su|pm\s+uninstall|git\s+reset|chmod)\b|self_update|self_build|plugin_install/.test(String(action.command ?? '')+' '+String(action.tool ?? ''))||action.tool===PHONE_IRREVERSIBLE_TOOL;
  if(policy.highRiskAsk!==false && risky)return {decision:'ask',reason:'High-risk confirmation is enabled'};
  for(const rule of policy.rules ?? [])if(matchRule(rule,action))return {decision:['allow','deny','ask'].includes(rule.decision)?rule.decision:'ask',reason:String(rule.reason ?? 'Matched rule')};
  if(policy.mode==='auto')return {decision:'allow',reason:'User selected automatic approval'};

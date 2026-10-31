@@ -1,0 +1,57 @@
+name: Verify (build + unit tests, no release)
+# 只编译和跑单测：不打包 rootfs、不签名、不上传 APK、不创建 Release，也不读任何 secret。
+# 供功能分支和指向 codex/m2 的 PR 使用；发版仍只由 codex/m2 上的 m2.yml 负责。
+on:
+  pull_request:
+    branches: [codex/m2]
+  push:
+    branches: ['feat/**', 'integ/**', 'fix/**', 'perf/**', 'refactor/**', 'test/**', 'docs/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
+      - name: Type-check, compile and test node-host + plugins
+        working-directory: node-host
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm test
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-37.0 build-tools;36.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile Kotlin and run JVM unit tests (no runtime assets, no APK)
+        # verifyKernelAssets / stageRuntimeAssets 需要 rootfs/prepare.py 产出的内核归档，只影响打包，不影响编译与单测。
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain -Pkotlin.compiler.execution.strategy=in-process \
+            -x verifyKernelAssets -x stageRuntimeAssets \
+            :app:compileArm64DebugKotlin :app:testArm64DebugUnitTest :core-bridge:testDebugUnitTest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-reports
+          path: |
+            app/build/reports/tests
+            app/build/test-results
+            core-bridge/build/reports/tests
+            core-bridge/build/test-results
+          if-no-files-found: ignore
