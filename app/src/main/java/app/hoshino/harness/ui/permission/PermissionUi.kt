@@ -29,6 +29,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.hoshino.harness.core.PermissionTier
 import app.hoshino.harness.core.ShizukuStatus
+import app.hoshino.harness.core.SystemAccess
+import app.hoshino.harness.core.SystemAccessRoute
 import app.hoshino.harness.ui.components.BtnStyle
 import app.hoshino.harness.ui.components.HButton
 import app.hoshino.harness.ui.components.HCheckbox
@@ -53,7 +55,7 @@ fun tierColor(t: PermissionTier): Color {
 
 /** 权限三档选择弹层 */
 @Composable
-fun TierSheet(current: PermissionTier, shizuku: ShizukuStatus, onPick: (PermissionTier) -> Unit, onDismiss: () -> Unit, supportedTiers: Set<PermissionTier> = PermissionTier.entries.toSet()) {
+fun TierSheet(current: PermissionTier, shizuku: ShizukuStatus, onPick: (PermissionTier) -> Unit, onDismiss: () -> Unit, supportedTiers: Set<PermissionTier> = PermissionTier.entries.toSet(), systemAccess: SystemAccessRoute? = null) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
     HSheet(onDismiss = onDismiss, title = "权限") {
@@ -97,7 +99,7 @@ fun TierSheet(current: PermissionTier, shizuku: ShizukuStatus, onPick: (Permissi
                         Text(tier.description, style = t.caption, color = c.text2)
                         if (danger) {
                             Spacer(Modifier.height(6.dp))
-                            ShizukuStatusPill(shizuku)
+                            if (systemAccess != null) SystemAccessPill(systemAccess) else ShizukuStatusPill(shizuku)
                         }
                     }
                     if (sel) HIcon(HIcons.Check, size = 18.dp, tint = if (danger) c.danger else c.accent)
@@ -123,6 +125,18 @@ fun ShizukuStatusPill(status: ShizukuStatus) {
     }
 }
 
+/** 完全访问的系统执行器状态：Shizuku 或 内置无线调试助手，任一就绪即可。 */
+@Composable
+fun SystemAccessPill(route: SystemAccessRoute) {
+    val c = HoshinoTheme.colors
+    val ready = SystemAccess.authorized(route)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        StatusDot(if (ready) c.success else c.text3, size = 6.dp)
+        Spacer(Modifier.width(6.dp))
+        Text(if (ready) "系统执行 · ${route.label}" else "系统执行 · 未就绪（${SystemAccess.REQUIREMENT}）", style = HoshinoTheme.type.caption, color = if (ready) c.success else c.text3)
+    }
+}
+
 /** 切到完全访问前的风险确认 */
 @Composable
 fun FullAccessRiskDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
@@ -141,7 +155,8 @@ fun FullAccessRiskDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             listOf(
-                "通过 Shizuku 获得系统级（ADB/Root）权限",
+                "通过 Shizuku 或 内置无线调试助手获得系统级（ADB）权限",
+                "只是打开或操作 App 不需要完全访问，手机操作即可完成",
                 "system_shell 使用真实系统权限，执行前仍会弹出审批卡",
                 "可能修改或删除工作区以外的文件、安装/卸载应用、更改系统设置",
                 "模型出错或被提示注入时，后果可能无法撤销",
@@ -239,17 +254,39 @@ fun ShizukuGuideSheet(
     onEnable: () -> Unit,
     onDismiss: () -> Unit,
     executionAvailable: Boolean = true,
+    systemAccess: SystemAccessRoute? = null,
+    onSetupPhone: (() -> Unit)? = null,
 ) {
-    HSheet(onDismiss = onDismiss, title = "Shizuku 引导") {
+    val c = HoshinoTheme.colors
+    val t = HoshinoTheme.type
+    val ready = if (systemAccess != null) SystemAccess.authorized(systemAccess) else status == ShizukuStatus.Ready
+    HSheet(onDismiss = onDismiss, title = if (systemAccess != null) "完全访问需要系统执行能力" else "Shizuku 引导") {
+        if (systemAccess != null) {
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                Text("${SystemAccess.REQUIREMENT}，二选一即可。", style = t.body, color = c.text)
+                Spacer(Modifier.height(6.dp))
+                SystemAccessPill(systemAccess)
+                Spacer(Modifier.height(12.dp))
+                Text("推荐 · 内置无线调试助手", style = t.bodyMedium, color = c.text)
+                Text("不用安装 Shizuku：在 设置 → 设置手机操作 里配对一次无线调试，助手运行后即可开启完全访问。", style = t.caption, color = c.text3)
+                if (onSetupPhone != null) {
+                    Spacer(Modifier.height(8.dp))
+                    HButton("去设置手机操作", onSetupPhone, style = BtnStyle.Secondary, compact = true)
+                }
+                Spacer(Modifier.height(16.dp))
+                Text("可选 · Shizuku", style = t.bodyMedium, color = c.text)
+                Spacer(Modifier.height(8.dp))
+            }
+        }
         ShizukuGuide(status, onRefresh, onRequest, Modifier.padding(horizontal = 20.dp))
         if (pendingEnable) {
             Spacer(Modifier.height(16.dp))
             HButton(
-                if (!executionAvailable) "系统执行即将支持" else if (status == ShizukuStatus.Ready) "启用完全访问" else "完成以上步骤后可启用",
+                if (!executionAvailable) "系统执行即将支持" else if (ready) "启用完全访问" else "完成以上任一方式后可启用",
                 onEnable,
                 Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                 style = BtnStyle.Danger,
-                enabled = executionAvailable && status == ShizukuStatus.Ready,
+                enabled = executionAvailable && ready,
             )
         }
         Spacer(Modifier.height(8.dp))

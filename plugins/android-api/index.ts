@@ -9,6 +9,8 @@ import '@deepseek-ai/dsh-api-session-controller';
 import type {} from '../hoshino-self/index.js';
 import { providerBaseURL } from './provider-config.js';
 import { installAnthropicCompatFetch, setThirdPartyAnthropicBases } from './anthropic-compat.js';
+import { installHostedSearchFetch, setHostedSearchRoutes } from './hosted-search.js';
+import { buildProviderRoutes } from './routes.js';
 export const name = 'android-api';
 export const inject = ['llm', 'connection', 'webServer', 'sessionController', 'androidBridge', 'hoshinoControl'];
 export async function apply(ctx: Context): Promise<void> {
@@ -17,29 +19,17 @@ export async function apply(ctx: Context): Promise<void> {
     const providers = await ctx.androidBridge.call<Provider[]>('providers');
     // Load only the enabled providers' local wire implementation before reporting chat-ready. No network probe.
     // pi-ai exports ./api/<file>; the Anthropic wire file is anthropic-messages. Warm-up only: a failure here must never stop the kernel.
-    await Promise.all([...new Set(providers.map(p=>p.type==='anthropic'?'anthropic-messages':p.type==='openai-codex'?'openai-codex-responses':'openai-completions'))].map(api=>import('@earendil-works/pi-ai/api/'+api).catch(()=>undefined)));
+    const {map, search} = buildProviderRoutes(providers);
+    await Promise.all([...new Set(Object.values(map).map(r=>String((r as {api?:string}).api)))].map(api=>import('@earendil-works/pi-ai/api/'+api).catch(()=>undefined)));
     installAnthropicCompatFetch();
+    installHostedSearchFetch();
     setThirdPartyAnthropicBases(providers.filter(p=>p.type==='anthropic').map(p=>{try{return providerBaseURL(p.type,p.baseURL);}catch{return '';}}));
-    const map: Record<string, object> = {};
-    for (const p of providers) {
-      if (!/^[a-z][a-z0-9-]*$/.test(p.id) || !p.models.length) throw new Error('Invalid provider configuration');
-      map[p.id] = {
-        ...(p.type==='openai-codex'?{transport:'sse'}:{api:p.type === 'anthropic' ? 'anthropic-messages' : 'openai-completions'}),
-        baseURL: p.type==='openai-codex'?p.baseURL:providerBaseURL(p.type,p.baseURL), apiKeyEnv: p.apiKey, headers: p.headers ?? {}, displayName: p.metadata?.name ?? p.id,
-        models: p.models.map(id => {
-          const model=p.metadata?.models?.find(model=>model.id===id);
-          const reasoning=model?.reasoning ?? p.type==='anthropic';
-          return { id, input: model?.vision ? ['text','image'] : ['text'],
-            ...(reasoning ? { reasoningEfforts: { off: null, low: 'low', medium: 'medium', high: 'high', max: 'max' } } : {}),
-            ...(p.type==='anthropic' && (model?.defaultEffort?.toLowerCase()==='max' || /^deepseek(?:[-_.]|$)/i.test(id)) ? {compat:{forceAdaptiveThinking:true}} :
-              p.type!=='anthropic' && /^deepseek(?:[-_.]|$)/i.test(id) ? {compat:{thinkingFormat:'deepseek',supportsReasoningEffort:true,maxTokensField:'max_tokens'}} : {}),
-            contextWindow: model?.contextLength ?? 128000, maxTokens: model?.maxOutput ?? 4096 };
-        }),
-        // Only session/selectModel's explicit effort may enable thinking.
-        ...(p.type === 'anthropic' ? { thinkingBudgets: { low: 1024, medium: 2048, high: 3072 } } : {}),
-        retryPolicy: { mode: 'normal', maxRetries: 0 },
-      };
-    }
+    setHostedSearchRoutes(search, {
+      // ChatGPT plan tokens are refreshed by Android; ask for a fresh one after a 401.
+      refreshCredential: async route => { const p=providers.find(x=>x.id===route.provider); if(!p) return undefined; const hit=await ctx.androidBridge.call<{value?:string}>('credential',{ref:p.apiKey,fresh:true}); return hit?.value || undefined; },
+      report: (provider, model, method) => { void ctx.androidBridge.call('web-search-capability',{provider,model,method}).catch(()=>undefined); },
+      log: message => console.error('hoshino: '+message),
+    });
     await providerFiber?.dispose();
     providerFiber = ctx.plugin(piAi, { providers: map });
     await providerFiber;

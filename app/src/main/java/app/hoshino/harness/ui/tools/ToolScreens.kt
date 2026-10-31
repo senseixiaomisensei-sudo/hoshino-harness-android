@@ -238,9 +238,9 @@ fun TrajectoryScreen(chat: ChatViewModel, onBack: () -> Unit) {
     PageScaffold("Trajectory", onBack, subtitle = current?.title ?: "未选择会话", scrollable = false) {
         Segmented(listOf("Chat", "Trajectory"), tab, { it }, { tab = it }, Modifier.fillMaxWidth().padding(16.dp))
         if (tab == "Chat") {
-            if (state.items.isEmpty()) EmptyState("暂无消息", icon = HIcons.Message)
+            if (state.turns.isEmpty()) EmptyState("暂无消息", icon = HIcons.Message)
             else MessageList(
-                chatItems = state.items,
+                state = state,
                 actions = MessageActions(
                     onApprove = { id, d -> chat.respondApproval(id, d) },
                     onAnswer = { id, a -> chat.answer(id, a) },

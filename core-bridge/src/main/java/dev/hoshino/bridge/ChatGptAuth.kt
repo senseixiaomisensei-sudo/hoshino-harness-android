@@ -1,93 +1,184 @@
 package dev.hoshino.bridge
 
 import android.content.Context
-import android.util.Base64
+import dev.hoshino.bridge.chatgpt.ChatGptAccessException
+import dev.hoshino.bridge.chatgpt.ChatGptModels
+import dev.hoshino.bridge.chatgpt.ChatGptOAuth
+import dev.hoshino.bridge.chatgpt.ChatGptSession
+import dev.hoshino.bridge.chatgpt.ChatGptTokens
+import dev.hoshino.bridge.chatgpt.SignInException
+import dev.hoshino.bridge.chatgpt.SignInFailure
+import dev.hoshino.bridge.chatgpt.message
+import dev.hoshino.bridge.chatgpt.signInWithChatGpt
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import okhttp3.*
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import org.json.JSONObject
-import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.ServerSocket
-import java.net.Proxy
-import java.security.MessageDigest
-import java.security.SecureRandom
+import okhttp3.OkHttpClient
+import org.json.JSONArray
 import java.util.concurrent.TimeUnit
 
-/** OAuth/PKCE port of openai/codex login (Apache-2.0); see licenses/OpenAI-Codex-NOTICE.txt. */
-data class ChatGptAuthState(val status:String="未登录",val signedIn:Boolean=false,val waiting:Boolean=false)
-data class ChatGptOAuthEndpoints(val issuer:String="https://auth.openai.com",val clientId:String="app_EMoamEEZ73f0CkXaXp7hrann",val callbackPort:Int=1455)
-class ChatGptAuth(private val context:Context,private val endpoints:ChatGptOAuthEndpoints=ChatGptOAuthEndpoints()) {
-    private val vault=ProviderStore(context)
-    private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
-    private val lock=Mutex()
-    private val http=OkHttpClient.Builder().proxy(Proxy.NO_PROXY).followRedirects(false).connectTimeout(2,TimeUnit.SECONDS).readTimeout(20,TimeUnit.SECONDS).build()
-    private val epoch=java.util.concurrent.atomic.AtomicInteger()
-    private var listener:ServerSocket?=null
-    private var login:Job?=null
-    val state=MutableStateFlow(ChatGptAuthState(signedIn=vault.hasSecret(ACCESS),status=if(vault.hasSecret(ACCESS))"已登录"else"未登录"))
-    init {scope.launch{while(isActive){delay(60000);if(vault.hasSecret(ACCESS)&&vault.list().any{it.id=="openai-codex"&&it.metadata.optBoolean("enabled",true)}&&(vault.resolve(EXPIRES)?.toLongOrNull()?:0)<System.currentTimeMillis()+90000)runCatching{accessToken(true)}}}}
-    private fun random(size:Int)=ByteArray(size).also{SecureRandom().nextBytes(it)}.let{Base64.encodeToString(it,Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)}
-    fun beginLogin():String {
-        val attempt=epoch.incrementAndGet()
-        login?.cancel();listener?.close()
-        val server=ServerSocket().apply{reuseAddress=true;bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"),endpoints.callbackPort));soTimeout=600000};listener=server
-        val verifier=random(32);val csrf=random(32)
-        val challenge=Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)),Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val redirect="http://127.0.0.1:${server.localPort}/auth/callback"
-        val url=(endpoints.issuer+"/oauth/authorize").toHttpUrl().newBuilder().addQueryParameter("response_type","code").addQueryParameter("client_id",endpoints.clientId).addQueryParameter("redirect_uri",redirect).addQueryParameter("scope","openid profile email offline_access api.connectors.read api.connectors.invoke").addQueryParameter("code_challenge",challenge).addQueryParameter("code_challenge_method","S256").addQueryParameter("state",csrf).addQueryParameter("id_token_add_organizations","true").addQueryParameter("codex_cli_simplified_flow","true").addQueryParameter("originator","hoshino-harness").build()
-        state.value=ChatGptAuthState("等待浏览器登录",state.value.signedIn,true)
-        login=scope.launch {
+/**
+ * State shown in Settings. [email] comes from the verified ID token; [needsRelogin] is set once after upgrading from the
+ * retired Codex-CLI login so the user is told to sign in again.
+ */
+data class ChatGptAuthState(
+    val status: String = "未登录",
+    val signedIn: Boolean = false,
+    val waiting: Boolean = false,
+    val email: String = "",
+    val needsRelogin: Boolean = false,
+    val error: String? = null,
+)
+
+/** Where sign-in and plan requests go. Tests point both at a local fixture. */
+data class ChatGptOAuthEndpoints(val issuer: String = ChatGptOAuth.ISSUER, val apiBase: String = ChatGptOAuth.API_BASE)
+
+/**
+ * "Sign in with ChatGPT" exactly as Mika does it (see dev.hoshino.bridge.chatgpt): dynamic agent client registration,
+ * loopback callback on any port, PKCE + state + nonce, RS256 ID-token verification, mandatory plan scope, serialized
+ * refresh, revoke on sign-out. The whole session is one Keystore-wrapped secret ([SESSION]); the device id and issued
+ * client_id are not secrets and live in plain preferences, like Mika's chatgpt-host.json.
+ *
+ * Never logs tokens or the authorize URL (it can carry an ID token hint).
+ */
+class ChatGptAuth(private val context: Context, val endpoints: ChatGptOAuthEndpoints = ChatGptOAuthEndpoints()) {
+    private val vault = ProviderStore(context)
+    private val registration = context.getSharedPreferences("hoshino-chatgpt-registration", Context.MODE_PRIVATE)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val http = OkHttpClient.Builder().followRedirects(false).connectTimeout(10, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
+    val oauth = ChatGptOAuth(http, endpoints.issuer)
+    private val tokens = ChatGptTokens(oauth, ::session, ::saveSession)
+    @Volatile private var signIn: Job? = null
+
+    val state = MutableStateFlow(ChatGptAuthState())
+
+    init {
+        val legacy = LEGACY_REFS.any { vault.hasSecret(it) }
+        if (legacy) {
+            // The retired Codex-CLI client tokens (chatgpt.com backend) cannot be used with the new route: clear them once.
+            LEGACY_REFS.forEach { vault.removeSecret(it) }
+            registration.edit().putBoolean(LEGACY_FLAG, true).apply()
+        }
+        publish()
+    }
+
+    fun session(): ChatGptSession? = ChatGptSession.fromJson(vault.resolve(SESSION))
+
+    private fun saveSession(next: ChatGptSession) {
+        vault.putSecret(SESSION, next.toJson())
+        publish()
+    }
+
+    private fun publish(waiting: Boolean = false, error: String? = null) {
+        val s = session()
+        val relogin = registration.getBoolean(LEGACY_FLAG, false)
+        val status = when {
+            waiting -> "等待浏览器登录"
+            s?.signedIn == true -> "已登录" + (s.email.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")
+            relogin -> "登录方式已更新，请重新登录一次"
+            error != null -> error
+            s != null -> "已退出登录"
+            else -> "未登录"
+        }
+        state.value = ChatGptAuthState(status, s?.signedIn == true, waiting, s?.email.orEmpty(), relogin && s?.signedIn != true, error)
+    }
+
+    /** Device id (generated once) and the client_id issued at the first registration, if any. */
+    @Synchronized fun registration(): Pair<String, String?> {
+        val host = registration.getString("hostId", null)?.takeIf { it.isNotBlank() } ?: ChatGptOAuth.newHostId().also { registration.edit().putString("hostId", it).apply() }
+        return host to registration.getString("clientId", null)?.takeIf { it.isNotBlank() }
+    }
+
+    @Synchronized private fun rememberClient(clientId: String) { registration.edit().putString("clientId", clientId).apply() }
+
+    /**
+     * Start a browser sign-in. [openBrowser] receives the authorize URL (do not log it). Completion is reported through
+     * [state]; [onSignedIn] runs after the session is stored (used to refresh the model list).
+     */
+    fun beginLogin(openBrowser: (String) -> Unit, onSignedIn: suspend () -> Unit = {}) {
+        signIn?.cancel()
+        publish(waiting = true)
+        signIn = scope.launch {
             try {
-                var accepted=false
-                while(isActive&&!accepted){server.accept().use{socket->
-                    socket.soTimeout=2000
-                    val input=socket.getInputStream().bufferedReader();val first=input.readLine().orEmpty();require(first.length<=16384)
-                    val parts=first.split(' ');val request=runCatching{("http://127.0.0.1"+parts.getOrElse(1){"/"}).toHttpUrl()}.getOrNull()
-                    val candidate=request?.queryParameter("state").orEmpty()
-                    val valid=parts.firstOrNull()=="GET"&&request?.encodedPath=="/auth/callback"&&MessageDigest.isEqual(candidate.toByteArray(),csrf.toByteArray())
-                    if(!valid){respond(socket,false,"登录回调无效，请返回 Hoshino 重试");return@use}
-                    val code=request?.queryParameter("code")
-                    if(code.isNullOrBlank()){respond(socket,false,"登录未完成，请返回 Hoshino 重试");throw IllegalStateException("登录已取消或授权失败")}
-                    try{lock.withLock{exchange(FormBody.Builder().add("grant_type","authorization_code").add("client_id",endpoints.clientId).add("code",code).add("redirect_uri",redirect).add("code_verifier",verifier).build(),attempt)};respond(socket,true,"登录成功，可以返回 Hoshino");accepted=true}
-                    catch(failure:Exception){respond(socket,false,"授权交换失败，请返回 Hoshino 重新登录");throw failure}
-                }}
-            }catch(cancelled:CancellationException){throw cancelled}
-            catch(_:Exception){if(epoch.get()==attempt)state.value=ChatGptAuthState("登录未完成，请重新登录",vault.hasSecret(ACCESS))}
-            finally{runCatching{server.close()};if(listener===server)listener=null}
-        }
-        return url.toString()
-    }
-    private fun respond(socket:java.net.Socket,ok:Boolean,message:String){val body="<!doctype html><meta charset=utf-8><title>Hoshino</title><p>$message</p>".toByteArray();socket.getOutputStream().apply{write("HTTP/1.1 ${if(ok)"200 OK"else"400 Bad Request"}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${body.size}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".toByteArray());write(body);flush()}}
-    private fun exchange(form:FormBody,attempt:Int=epoch.get()){
-        http.newCall(Request.Builder().url(endpoints.issuer+"/oauth/token").post(form).build()).execute().use{response->
-            if(!response.isSuccessful)throw IllegalStateException(if(response.code in setOf(400,401,403))"ChatGPT 登录已失效，请重新登录"else"ChatGPT 授权暂时失败（HTTP ${response.code}）")
-            val body=JSONObject(response.body?.string().orEmpty());val access=body.optString("access_token");require(access.isNotBlank()){"授权响应缺少 access_token"}
-            if(epoch.get()!=attempt)throw CancellationException("Login was replaced")
-            vault.putSecret(ACCESS,access);body.optString("refresh_token").takeIf{it.isNotBlank()}?.let{vault.putSecret(REFRESH,it)};body.optString("id_token").takeIf{it.isNotBlank()}?.let{vault.putSecret(ID,it)}
-            val expires=body.optLong("expires_in",3600).coerceAtLeast(1);val jwt=runCatching{JSONObject(String(Base64.decode(access.split('.')[1],Base64.URL_SAFE or Base64.NO_WRAP)))}.getOrNull();val expiry=jwt?.optLong("exp")?.takeIf{it>0}?.times(1000)?:System.currentTimeMillis()+expires*1000
-            vault.putSecret(EXPIRES,expiry.toString());state.value=ChatGptAuthState("已登录",true)
+                val (hostId, clientId) = registration()
+                val session = signInWithChatGpt(oauth, hostId, clientId, session(), openBrowser = { url -> scope.launch(Dispatchers.Main) { openBrowser(url) } },
+                    onRegistered = ::rememberClient, page = ::page)
+                registration.edit().remove(LEGACY_FLAG).apply()
+                saveSession(session)
+                runCatching { onSignedIn() }
+            } catch (cancelled: CancellationException) {
+                publish()
+                throw cancelled
+            } catch (failure: SignInException) {
+                publish(error = failure.reason.message())
+            } catch (failure: Exception) {
+                publish(error = SignInFailure.Network.message())
+            }
         }
     }
-    suspend fun accessToken(forceRefresh:Boolean=false):String=withContext(Dispatchers.IO){
-        if(!forceRefresh){val cached=vault.resolve(ACCESS);val expiry=vault.resolve(EXPIRES)?.toLongOrNull()?:0;if(cached!=null&&expiry>System.currentTimeMillis()+5000)return@withContext cached}
-        lock.withLock{
-        val access=vault.resolve(ACCESS)?:throw IllegalStateException("ChatGPT 尚未登录，请到模型设置登录")
-        val expires=vault.resolve(EXPIRES)?.toLongOrNull()?:0L
-        if(!forceRefresh&&expires>System.currentTimeMillis()+30000)return@withLock access
-        val refresh=vault.resolve(REFRESH)?:throw IllegalStateException("ChatGPT 登录已失效，请重新登录")
-        try{exchange(FormBody.Builder().add("grant_type","refresh_token").add("client_id",endpoints.clientId).add("refresh_token",refresh).build());vault.resolve(ACCESS)?:error("请重新登录")}
-        catch(failure:Exception){state.value=ChatGptAuthState("登录已失效，请重新登录",false);throw failure}
-    }}
-    fun close(){epoch.incrementAndGet();login?.cancel();runCatching{listener?.close()};scope.cancel()}
-    fun logout(){epoch.incrementAndGet();login?.cancel();listener?.close();for(ref in listOf(ACCESS,REFRESH,ID,EXPIRES))vault.removeSecret(ref);state.value=ChatGptAuthState()}
-    companion object{
-        const val ACCESS="CHATGPT_ACCESS_TOKEN";const val REFRESH="CHATGPT_REFRESH_TOKEN";const val ID="CHATGPT_ID_TOKEN";const val EXPIRES="CHATGPT_TOKEN_EXPIRES"
-        @Volatile private var instance:ChatGptAuth?=null
-        fun installForTest(context:Context,endpoints:ChatGptOAuthEndpoints):ChatGptAuth{check(context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE!=0);check(java.net.URI(endpoints.issuer).host in setOf("127.0.0.1","localhost"));instance?.close();return ChatGptAuth(context.applicationContext,endpoints).also{instance=it}}
-        fun get(context:Context)=instance?:synchronized(this){instance?:ChatGptAuth(context.applicationContext).also{instance=it}}
+
+    fun cancelLogin() { signIn?.cancel(); signIn = null; publish() }
+
+    private fun page(params: Map<String, String>): String {
+        val cancelled = params.containsKey("error")
+        val text = if (cancelled) "已取消登录，可以回到 Hoshino 了。" else "已用 ChatGPT 登录，可以回到 Hoshino 了。"
+        return "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width\"><title>Hoshino</title><p style=\"font:16px sans-serif;margin:32px\">$text</p>"
+    }
+
+    /**
+     * Plan access token for one request; refreshes ahead of expiry, or immediately when [forceRefresh] (the server said 401).
+     * A dead refresh token signs the user out locally and throws with a sign-in-again message.
+     */
+    suspend fun accessToken(forceRefresh: Boolean = false): String = withContext(Dispatchers.IO) {
+        try { tokens.get(forceRefresh) } catch (failure: ChatGptAccessException) {
+            if (failure is ChatGptAccessException.SignInExpired) publish(error = failure.message)
+            throw failure
+        }
+    }
+
+    /** The plan's model list from `GET /v1/models` (rows as in [ChatGptModels.parse]). */
+    suspend fun listModels(): JSONArray = withContext(Dispatchers.IO) {
+        try { ChatGptModels.fetch(http, endpoints.apiBase, accessToken()) }
+        catch (failure: dev.hoshino.bridge.chatgpt.ModelListException) {
+            if (failure.status != 401) throw failure
+            ChatGptModels.fetch(http, endpoints.apiBase, accessToken(forceRefresh = true))
+        }
+    }
+
+    /** Revoke the refresh token on the server (best effort), then clear local tokens. Registration and identity stay. */
+    suspend fun signOut(): Boolean = withContext(Dispatchers.IO) {
+        signIn?.cancel()
+        val s = session() ?: return@withContext true.also { publish() }
+        val revoked = s.refreshToken.isEmpty() || oauth.revoke(s.clientId, s.refreshToken)
+        saveSession(s.signedOut())
+        revoked
+    }
+
+    fun logout() { scope.launch { runCatching { signOut() } } }
+
+    /** Forget the registration too (used when the ChatGPT provider is removed). The device id stays. */
+    fun forget() {
+        signIn?.cancel()
+        vault.removeSecret(SESSION)
+        registration.edit().remove("clientId").remove(LEGACY_FLAG).apply()
+        publish()
+    }
+
+    fun close() { signIn?.cancel(); scope.cancel() }
+
+    companion object {
+        const val SESSION = "CHATGPT_SESSION"
+        /** The provider's credential reference; resolved per request through [accessToken]. */
+        const val CREDENTIAL_REF = "KEY_OPENAI_CODEX"
+        private const val LEGACY_FLAG = "legacy-codex-login"
+        /** Secrets written by the retired Codex-CLI login (client app_EMoamEEZ73f0CkXaXp7hrann). */
+        val LEGACY_REFS = listOf("CHATGPT_ACCESS_TOKEN", "CHATGPT_REFRESH_TOKEN", "CHATGPT_ID_TOKEN", "CHATGPT_TOKEN_EXPIRES")
+        @Volatile private var instance: ChatGptAuth? = null
+        fun installForTest(context: Context, endpoints: ChatGptOAuthEndpoints): ChatGptAuth {
+            check(context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0)
+            check(java.net.URI(endpoints.issuer).host in setOf("127.0.0.1", "localhost"))
+            instance?.close()
+            return ChatGptAuth(context.applicationContext, endpoints).also { instance = it }
+        }
+        fun get(context: Context) = instance ?: synchronized(this) { instance ?: ChatGptAuth(context.applicationContext).also { instance = it } }
     }
 }

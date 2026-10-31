@@ -1,5 +1,6 @@
 package app.hoshino.harness.ui.settings
 
+import app.hoshino.harness.ui.chat.ChatDisplayPrefs
 import app.hoshino.harness.R
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
@@ -92,6 +93,7 @@ fun SettingsHomeScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (Str
             ListRow(stringResource(R.string.settings_security), icon = HIcons.Shield, value = "Shizuku · ${shizuku.label}", showChevron = true, onClick = { onNavigate(Routes.SECURITY) })
             Hairline()
             ListRow(stringResource(R.string.settings_phone), icon = HIcons.Phone, subtitle = "文件、通知、无障碍、截图、悬浮窗", showChevron = true, onClick = { onNavigate(Routes.PHONE) })
+            ListRow("设置手机操作", icon = HIcons.Phone, subtitle = "让 Hoshino 在后台屏上替你操作 App（无线调试/Shizuku、无障碍、开源 OCR）", showChevron = true, onClick = { onNavigate(Routes.PHONE_SETUP) })
             Hairline()
             ListRow(stringResource(R.string.settings_kernel), icon = HIcons.Bolt, value = kernel.dshVersion, showChevron = true, onClick = { onNavigate(Routes.KERNEL) })
         }
@@ -143,6 +145,16 @@ fun AppearanceScreen(app: AppViewModel, onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         )
         Text("English 文案需在 res/values-en/strings.xml 中补充。", style = t.caption, color = c.text3, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        // M2.7：对话显示
+        SectionLabel("对话")
+        val collapseApprovals by ChatDisplayPrefs.collapseApprovals.collectAsStateWithLifecycle()
+        GroupCard {
+            ListRow(
+                "审批后折叠",
+                subtitle = "处理过的审批卡从对话中消失，只在该轮「过程」里留一行小字；关闭则保留卡片（旧样式）",
+                trailing = { HSwitch(collapseApprovals, { ChatDisplayPrefs.setCollapseApprovals(it) }) },
+            )
+        }
     }
 }
 
@@ -186,14 +198,15 @@ fun SecurityScreen(vm: ConfigViewModel, app: AppViewModel, onBack: () -> Unit, o
                 )
             }
         }
-        SectionLabel("Shizuku（完全访问所需）")
+        SectionLabel("完全访问的系统执行（Shizuku 或 内置无线调试助手，二选一）")
         GroupCard {
-            ListRow("Shizuku 状态与引导", icon = HIcons.Bolt, showChevron = true, onClick = { onNavigate(Routes.SHIZUKU) }, trailing = { ShizukuStatusPill(shizuku) })
+            ListRow("内置无线调试助手", icon = HIcons.Phone, subtitle = "不用装 Shizuku：在 设置手机操作 里配对一次即可", showChevron = true, onClick = { onNavigate(Routes.PHONE_SETUP) })
+            ListRow("Shizuku 状态与引导（可选）", icon = HIcons.Bolt, showChevron = true, onClick = { onNavigate(Routes.SHIZUKU) }, trailing = { ShizukuStatusPill(shizuku) })
         }
         SectionLabel("沙箱后端")
         GroupCard {
             ListRow(
-                kernel.sandbox, icon = HIcons.Terminal, subtitle = "bash 在 proot 中运行；system_shell 经 Shizuku 使用真实 ADB/Root 权限，仍需审批",
+                kernel.sandbox, icon = HIcons.Terminal, subtitle = "bash 在 proot 中运行；system_shell 经 Shizuku 或 内置无线调试助手使用真实 ADB 权限，仍需审批",
                 trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         StatusDot(if (kernel.sandboxReady) c.success else c.warning, size = 6.dp)
@@ -215,7 +228,7 @@ fun ShizukuScreen(vm: ConfigViewModel, onBack: () -> Unit) {
     val c = HoshinoTheme.colors
     PageScaffold("Shizuku", onBack) {
         Text(
-            "完全访问会话可通过 system_shell 使用 Shizuku 的真实 ADB/Root 权限。普通 bash 和文件工具仍在私有工作区中，系统命令继续走审批。",
+            "Shizuku 是可选的：完全访问会话的 system_shell 可经 Shizuku 或 内置无线调试助手（设置 → 设置手机操作）使用真实 ADB 权限。打开/操作 App 走手机操作，不需要 Shizuku。普通 bash 和文件工具仍在私有工作区中，系统命令继续走审批。",
             style = HoshinoTheme.type.caption, color = c.text2, modifier = Modifier.padding(20.dp),
         )
         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().hairlineCard(c.surface, c.line).padding(16.dp)) {

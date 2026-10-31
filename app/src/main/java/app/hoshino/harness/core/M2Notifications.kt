@@ -8,9 +8,9 @@ object M2Notifications {
     private fun manager(context:Context):NotificationManager=context.getSystemService(NotificationManager::class.java).also{it.createNotificationChannel(NotificationChannel("hoshino-actions","任务与审批",NotificationManager.IMPORTANCE_DEFAULT))}
     private fun open(context:Context)=PendingIntent.getActivity(context,0,Intent(context,app.hoshino.harness.MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     fun post(context:Context,title:String,text:String){runCatching{manager(context).notify(title.hashCode(),Notification.Builder(context,"hoshino-actions").setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle(title.take(100)).setContentText(text.take(300)).setContentIntent(open(context)).setAutoCancel(true).build())}}
-    fun approval(context:Context,session:String,id:String,title:String){
+    fun approval(context:Context,session:String,id:String,title:String,oneShot:Boolean=false){
         val builder=Notification.Builder(context,"hoshino-actions").setSmallIcon(android.R.drawable.ic_dialog_alert).setContentTitle("等待审批 · $title").setContentText("在通知中选择或打开 Hoshino 查看详情").setContentIntent(open(context)).setAutoCancel(true)
-        for((label,decision) in listOf("允许" to ApprovalDecision.AllowOnce,"拒绝" to ApprovalDecision.Deny,"本会话允许" to ApprovalDecision.AllowSession)){
+        for(decision in approvalChoices(oneShot)){val label=decision.label
             val intent=Intent(context,M2ActionReceiver::class.java).setAction("approval.$id.${decision.name}").putExtra("session",session).putExtra("id",id).putExtra("decision",decision.name)
             builder.addAction(Notification.Action.Builder(null,label,PendingIntent.getBroadcast(context,(id+decision.name).hashCode(),intent,PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)).build())
         }

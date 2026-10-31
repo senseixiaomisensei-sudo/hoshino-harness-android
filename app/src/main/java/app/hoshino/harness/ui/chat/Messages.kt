@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.hoshino.harness.core.ApprovalDecision
+import app.hoshino.harness.core.approvalChoices
 import app.hoshino.harness.core.AttachmentKind
 import app.hoshino.harness.core.ChatItem
 import app.hoshino.harness.ui.components.IconBtn
@@ -173,6 +174,7 @@ private fun UserBubble(item: ChatItem.User) {
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
+        if (item.steer) SteerStatusLine(item.id)
     }
 }
 
@@ -213,13 +215,6 @@ private fun ThinkingBlock(item: ChatItem.Thinking) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(item.running) {
-        while (item.running) {
-            now = System.currentTimeMillis()
-            delay(500)
-        }
-    }
     Column(Modifier.fillMaxWidth().animateContentSize()) {
         Row(
             Modifier.clip(HoshinoShapes.small).clickable { expanded = !expanded }.padding(vertical = 6.dp, horizontal = 2.dp),
@@ -228,8 +223,8 @@ private fun ThinkingBlock(item: ChatItem.Thinking) {
             HIcon(HIcons.Bulb, size = 16.dp, tint = c.text3)
             Spacer(Modifier.width(6.dp))
             if (item.running) {
-                val secs = ((now - item.startedAt) / 1000).coerceAtLeast(0)
-                ShimmerText("思考过程 · ${secs}s", t.caption)
+                // 计时只让这一小段文字每 500ms 重组，不牵动整块思考内容。
+                ElapsedLabel(item.startedAt, 500) { secs -> ShimmerText("思考过程 · ${secs}s", t.caption) }
             } else {
                 Text("思考过程 · ${(item.durationMs / 1000).coerceAtLeast(1)}s", style = t.caption, color = c.text3)
             }
@@ -246,14 +241,22 @@ private fun ThinkingBlock(item: ChatItem.Thinking) {
     }
 }
 
+/** 局部计时：只有 [content] 这一小块随时钟重组。 */
+@Composable
+internal fun ElapsedLabel(startedAt: Long, periodMs: Long = 1000, content: @Composable (Long) -> Unit) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(startedAt) { while (true) { now = System.currentTimeMillis(); delay(periodMs) } }
+    content(((now - startedAt) / 1000).coerceAtLeast(0))
+}
+
 // ------------------------------------------------------------ 助手
 
 @Composable
 private fun AssistantMessage(item: ChatItem.Assistant) {
-    if (item.markdown.isBlank() && item.streaming) {
+    if (item.streaming && item.content.isBlankText()) {
         ShimmerText("正在生成…", HoshinoTheme.type.body)
     } else {
-        MarkdownText(item.markdown, Modifier.fillMaxWidth())
+        MarkdownText(item.content, Modifier.fillMaxWidth())
     }
 }
 
@@ -309,7 +312,9 @@ private fun ToolCallCard(item: ChatItem.Tool) {
             Column(Modifier.fillMaxWidth()) {
                 Hairline()
                 IoBlock("IN", item.input)
+                if (item.inputLength > item.input.length) TruncatedNote("参数共 ${item.inputLength} 字符，仅显示开头", null)
                 if (item.output.isNotEmpty()) IoBlock("OUT", item.output)
+                if (item.outputTruncated) TruncatedNote("输出共 ${item.outputLength} 字符，内存仅保留末尾 64 KiB", item.callId)
             }
         }
     }
@@ -329,6 +334,55 @@ private fun IoBlock(label: String, body: String) {
         Spacer(Modifier.height(4.dp))
         Box(Modifier.fillMaxWidth().clip(HoshinoShapes.small).background(c.surface2).horizontalScroll(rememberScrollState()).padding(10.dp)) {
             SelectionContainer { Text(if(full)body else body.take(4000), style = HoshinoTheme.type.codeSmall, color = c.text, softWrap = false) }
+        }
+    }
+}
+
+/** 当前消息列表所属会话（「查看完整输出」按需从会话日志读取时使用）。 */
+val LocalChatSessionId = androidx.compose.runtime.staticCompositionLocalOf { "" }
+
+@Composable
+internal fun TruncatedNote(text: String, callId: String?) {
+    val c = HoshinoTheme.colors
+    val sessionId = LocalChatSessionId.current
+    var open by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(text, style = HoshinoTheme.type.caption, color = c.text3, modifier = Modifier.weight(1f))
+        if (callId != null && sessionId.isNotBlank()) HButton("查看完整输出", { open = true }, compact = true)
+    }
+    if (open && callId != null) FullOutputSheet(sessionId, callId) { open = false }
+}
+
+/** 按需从 dsh 会话日志读取完整输出；分块懒渲染，关闭即释放。 */
+@Composable
+internal fun FullOutputSheet(sessionId: String, callId: String, onDismiss: () -> Unit) {
+    val c = HoshinoTheme.colors
+    val context = LocalContext.current
+    var chunks by remember { mutableStateOf<List<String>?>(null) }
+    var file by remember { mutableStateOf<java.io.File?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(sessionId, callId) {
+        runCatching {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val f = app.hoshino.harness.core.Hoshino.client.fullToolOutput(sessionId, callId) ?: error("会话日志中没有找到这次调用的完整输出")
+                val out = ArrayList<String>()
+                f.bufferedReader().use { r -> val buf = CharArray(8192); var total = 0L; while (true) { val n = r.read(buf); if (n < 0) break; out.add(String(buf, 0, n)); total += n; if (total >= 32L * 1024 * 1024) { out.add("\n…（超过 32 MiB，其余请分享为文件查看）"); break } } }
+                f to out
+            }
+        }.onSuccess { (f, out) -> file = f; chunks = out }.onFailure { error = it.message ?: "读取失败" }
+    }
+    HSheet(onDismiss = onDismiss, title = "完整输出") {
+        when {
+            error != null -> Text(error!!, style = HoshinoTheme.type.caption, color = c.danger)
+            chunks == null -> ShimmerText("正在从会话日志读取…", HoshinoTheme.type.caption)
+            else -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    file?.let { f -> HButton("分享为文件", { runCatching { app.hoshino.harness.core.AppMedia(context).shareFile(f) } }, compact = true) }
+                }
+                androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 560.dp).background(c.surface2).padding(10.dp)) {
+                    items(chunks!!.size) { i -> Text(chunks!![i], style = HoshinoTheme.type.codeSmall, color = c.text) }
+                }
+            }
         }
     }
 }
@@ -371,6 +425,7 @@ private fun TerminalCard(item: ChatItem.Terminal) {
                 }
                 SelectionContainer{Text(shown,style=t.codeSmall,color=c.text2,softWrap=false)}
             }
+            if (item.outputTruncated) TruncatedNote("输出共 ${item.outputLength} 字符，内存仅保留末尾 64 KiB", item.callId)
           }
         }
     }
@@ -523,10 +578,13 @@ private fun ApprovalCard(item: ChatItem.Approval, onDecide: (String, ApprovalDec
         val d = item.decision
         if (d == null) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                HButton("允许一次", { onDecide(item.id, ApprovalDecision.AllowOnce) }, Modifier.fillMaxWidth(), style = BtnStyle.Primary)
+                // Same choices as the notification and the phone capsule (approvalChoices).
+                val choices = approvalChoices(item.oneShot)
+                HButton(ApprovalDecision.AllowOnce.label, { onDecide(item.id, ApprovalDecision.AllowOnce) }, Modifier.fillMaxWidth(), style = BtnStyle.Primary)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HButton("本会话总是允许", { onDecide(item.id, ApprovalDecision.AllowSession) }, Modifier.weight(1f), style = BtnStyle.Secondary)
-                    HButton("拒绝", { onDecide(item.id, ApprovalDecision.Deny) }, Modifier.weight(1f), style = BtnStyle.Secondary)
+                    for (choice in choices.filter { it != ApprovalDecision.AllowOnce }) {
+                        HButton(choice.label, { onDecide(item.id, choice) }, Modifier.weight(1f), style = BtnStyle.Secondary)
+                    }
                 }
             }
         } else {

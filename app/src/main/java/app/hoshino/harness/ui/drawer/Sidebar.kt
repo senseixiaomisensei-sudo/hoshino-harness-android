@@ -3,6 +3,13 @@ package app.hoshino.harness.ui.drawer
 import app.hoshino.harness.R
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,7 +66,7 @@ import app.hoshino.harness.ui.theme.HIcons
 import app.hoshino.harness.ui.theme.HoshinoShapes
 import app.hoshino.harness.ui.theme.HoshinoTheme
 
-enum class SessionAction { Rename, Fork, Export, Archive, Unarchive, Delete }
+enum class SessionAction { Rename, Fork, Export, ExportJson, Pin, Unpin, Archive, Unarchive, Delete }
 private data class SidebarNav(val route:String,val icon:ImageVector?,val label:String)
 
 enum class SessionSort(val label: String) { Updated("按更新时间"), Created("按创建时间"), Title("按标题") }
@@ -79,6 +86,8 @@ fun Sidebar(
     modifier: Modifier = Modifier,
     onSearchSessions: suspend (String)->SessionSearchResults = { SessionSearchResults(emptyList()) },
     customization: UiCustomization = UiCustomization(),
+    /** 删除一个或多个会话（调用方弹确认）。 */
+    onDeleteSessions: (List<SessionInfo>) -> Unit = { list -> list.forEach { onSessionAction(it, SessionAction.Delete) } },
 ) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
@@ -89,6 +98,9 @@ fun Sidebar(
     var showTools by rememberSaveable { mutableStateOf(false) }
     var collapsed by remember { mutableStateOf(setOf<String>()) }
     var actionFor by remember { mutableStateOf<SessionInfo?>(null) }
+    var selection by remember { mutableStateOf(SessionSelection()) }
+    LaunchedEffect(sessions) { selection = selection.retain(sessions.mapTo(HashSet()) { it.id }) }
+    androidx.activity.compose.BackHandler(enabled = selection.active) { selection = selection.clear() }
     var sortMenu by remember { mutableStateOf(false) }
     var addWs by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf(SessionSearchResults(emptyList())) }
@@ -117,11 +129,23 @@ fun Sidebar(
                 SessionSort.Title -> list.sortedBy { it.title }
             }
         }
-    val active = filtered.filter { !it.archived }
-    val archived = filtered.filter { it.archived }
+    val sections = sessionSections(filtered)
+    val pinned = sections.pinned
+    val active = sections.active
+    val archived = sections.archived
+    val visibleIds = (pinned + active + if (showArchived || needle.isNotBlank()) archived else emptyList()).map { it.id }
+    fun rowClick(s: SessionInfo) { if (selection.active) selection = selection.toggle(s.id) else onOpenSession(s.id) }
+    fun rowLongClick(s: SessionInfo) { if (selection.active) selection = selection.toggle(s.id) else actionFor = s }
 
     Column(modifier.fillMaxHeight().width(304.dp).background(c.bg).statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (selection.active) {
+            Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconBtn(HIcons.Close, "退出多选", { selection = selection.clear() }, tint = c.text2)
+                Text("已选 ${selection.ids.size} 个", style = t.bodyMedium, color = c.text, modifier = Modifier.weight(1f))
+                Text("全选", style = t.caption, color = c.accent, modifier = Modifier.clip(HoshinoShapes.small).clickable { selection = selection.selectAll(visibleIds) }.padding(horizontal = 10.dp, vertical = 10.dp))
+                IconBtn(HIcons.Trash, "删除所选", { onDeleteSessions(sessions.filter { it.id in selection.ids }); }, tint = c.danger)
+            }
+        } else Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             HoshinoWordmark(24.dp, Modifier.weight(1f))
         }
         LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
@@ -196,6 +220,19 @@ fun Sidebar(
                     )
                 }
             }
+            if (pinned.isNotEmpty()) {
+                item(key = "pinned-header") {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        HIcon(HIcons.Flag, size = 15.dp, tint = c.text3)
+                        Spacer(Modifier.width(8.dp))
+                        Text("置顶", style = t.caption, color = c.text2)
+                    }
+                }
+                items(pinned, key = { "p-${it.id}" }) { s ->
+                    SessionRow(s, s.id == currentId, onClick = { rowClick(s) }, onLongClick = { rowLongClick(s) }, selecting = selection.active, checked = s.id in selection.ids, onSwipeDelete = { onDeleteSessions(listOf(s)) })
+                    hits[s.id]?.snippet?.takeIf{it.isNotBlank()}?.let{Text(it,style=t.caption,color=c.text3,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))}
+                }
+            }
             groups.forEach { ws ->
                 val list = active.filter { it.workspaceId == ws.id }
                 if (list.isNotEmpty()) {
@@ -214,7 +251,7 @@ fun Sidebar(
                     }
                     if (ws.id !in collapsed || needle.isNotBlank()) {
                         items(list, key = { it.id }) { s ->
-                            SessionRow(s, s.id == currentId, onClick = { onOpenSession(s.id) }, onLongClick = { actionFor = s })
+                            SessionRow(s, s.id == currentId, onClick = { rowClick(s) }, onLongClick = { rowLongClick(s) }, selecting = selection.active, checked = s.id in selection.ids, onSwipeDelete = { onDeleteSessions(listOf(s)) })
                             hits[s.id]?.snippet?.takeIf{it.isNotBlank()}?.let{Text(it,style=t.caption,color=c.text3,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))}
                         }
                     }
@@ -234,7 +271,7 @@ fun Sidebar(
                 }
                 if (showArchived || needle.isNotBlank()) {
                     items(archived, key = { "a-${it.id}" }) { s ->
-                        SessionRow(s, s.id == currentId, onClick = { onOpenSession(s.id) }, onLongClick = { actionFor = s })
+                        SessionRow(s, s.id == currentId, onClick = { rowClick(s) }, onLongClick = { rowLongClick(s) }, selecting = selection.active, checked = s.id in selection.ids, onSwipeDelete = { onDeleteSessions(listOf(s)) })
                         hits[s.id]?.snippet?.takeIf{it.isNotBlank()}?.let{Text(it,style=t.caption,color=c.text3,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))}
                     }
                 }
@@ -257,12 +294,16 @@ fun Sidebar(
     actionFor?.let { s ->
         ActionSheet(
             title = s.title,
-            entries = listOf(
+            entries = listOfNotNull(
+                if (s.archived) null else if (s.pinned) MenuEntry("取消置顶", HIcons.Flag) { onSessionAction(s, SessionAction.Unpin) }
+                else MenuEntry("置顶", HIcons.Flag) { onSessionAction(s, SessionAction.Pin) },
                 MenuEntry("重命名", HIcons.Edit) { onSessionAction(s, SessionAction.Rename) },
+                MenuEntry("导出为 Markdown", HIcons.Download) { onSessionAction(s, SessionAction.Export) },
+                MenuEntry("导出为 JSON", HIcons.Braces) { onSessionAction(s, SessionAction.ExportJson) },
                 MenuEntry("分叉会话", HIcons.Fork) { onSessionAction(s, SessionAction.Fork) },
-                MenuEntry("导出 ZIP", HIcons.Download) { onSessionAction(s, SessionAction.Export) },
                 if (s.archived) MenuEntry("取消归档", HIcons.Archive) { onSessionAction(s, SessionAction.Unarchive) }
                 else MenuEntry("归档", HIcons.Archive) { onSessionAction(s, SessionAction.Archive) },
+                MenuEntry("多选", HIcons.Check) { selection = selection.start(s.id) },
                 MenuEntry("删除", HIcons.Trash, danger = true) { onSessionAction(s, SessionAction.Delete) },
             ),
             onDismiss = { actionFor = null },
@@ -304,8 +345,39 @@ private fun NavEntry(icon: ImageVector?, label: String, indent: Boolean = false,
     }
 }
 
+/** 会话行：点按打开（多选时勾选），长按弹出操作（多选时勾选），向左滑出删除（确认后才删）。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SessionRow(s: SessionInfo, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun SessionRow(
+    s: SessionInfo,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    selecting: Boolean = false,
+    checked: Boolean = false,
+    onSwipeDelete: (() -> Unit)? = null,
+) {
+    val c = HoshinoTheme.colors
+    if (onSwipeDelete == null || selecting) { SessionRowContent(s, selected, onClick, onLongClick, selecting, checked); return }
+    val state = rememberSwipeToDismissBoxState(confirmValueChange = { value ->
+        if (value == SwipeToDismissBoxValue.EndToStart) onSwipeDelete()
+        false // 不在滑动时直接删：交给确认对话框，行复位。
+    })
+    SwipeToDismissBox(
+        state = state,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            Row(Modifier.fillMaxSize().padding(horizontal = 8.dp).clip(HoshinoShapes.small).background(c.danger).padding(end = 18.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                HIcon(HIcons.Trash, size = 18.dp, tint = c.onAccent)
+                Spacer(Modifier.width(6.dp))
+                Text("删除", style = HoshinoTheme.type.caption, color = c.onAccent)
+            }
+        },
+    ) { SessionRowContent(s, selected, onClick, onLongClick, selecting, checked) }
+}
+
+@Composable
+private fun SessionRowContent(s: SessionInfo, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, selecting: Boolean, checked: Boolean) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
     Row(
@@ -313,12 +385,19 @@ private fun SessionRow(s: SessionInfo, selected: Boolean, onClick: () -> Unit, o
             .padding(horizontal = 8.dp)
             .fillMaxWidth()
             .clip(HoshinoShapes.small)
-            .background(if (selected) c.surface2 else c.bg)
+            .background(if (selected || checked) c.surface2 else c.bg)
             .longPressClickable(onClick = onClick, onLongClick = onLongClick)
             .heightIn(min = 44.dp)
-            .padding(start = 36.dp, end = 12.dp),
+            .padding(start = if (selecting) 8.dp else 36.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (selecting) {
+            Box(Modifier.size(20.dp).clip(HoshinoShapes.small).background(if (checked) c.accent else c.surface).border(1.5.dp, if (checked) c.accent else c.text3, HoshinoShapes.small), contentAlignment = Alignment.Center) {
+                if (checked) HIcon(HIcons.Check, size = 13.dp, tint = c.onAccent)
+            }
+            Spacer(Modifier.width(8.dp))
+        }
+        if (s.pinned && !selecting) { HIcon(HIcons.Flag, size = 12.dp, tint = c.text3); Spacer(Modifier.width(4.dp)) }
         Text(s.title, style = t.body, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(8.dp))
         if (s.running) {

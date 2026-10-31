@@ -17,6 +17,8 @@ dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
     testImplementation("junit:junit:4.13.2")
-    // 纯逻辑单测（评测、度量）用真实 org.json：android.jar 里的是桩
+    // JVM unit tests use the real org.json (android.jar only ships stubs) and a local HTTP fixture.
     testImplementation("org.json:json:20250517")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }

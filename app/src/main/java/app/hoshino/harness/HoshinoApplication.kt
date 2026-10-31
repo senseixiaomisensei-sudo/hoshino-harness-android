@@ -14,5 +14,6 @@ class HoshinoApplication : Application() {
         Hoshino.store
         (Hoshino.client as DshHarnessClient).restoreVisibleCache()
         (Hoshino.client as DshHarnessClient).restoreWaitingMessages()
+        app.hoshino.harness.phone.PhoneBoot.start(this)
     }
 }

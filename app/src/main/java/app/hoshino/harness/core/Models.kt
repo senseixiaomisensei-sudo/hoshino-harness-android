@@ -12,11 +12,11 @@ enum class ConnectionState(val label: String) {
 enum class PermissionTier(val label: String, val key: String, val description: String) {
     ReadOnly("只读", "read-only", "只看不改，所有写操作都会被拒绝。"),
     WorkspaceWrite("工作区内修改", "workspace-write", "只能修改当前工作区；危险操作会弹出审批卡。"),
-    FullAccess("完全访问", "full-access", "通过 Shizuku 使用系统执行能力；危险操作仍需审批。"),
+    FullAccess("完全访问", "full-access", "通过 Shizuku 或 内置无线调试助手使用系统执行能力；危险操作仍需审批。打开/操作 App 不需要完全访问。"),
 }
 
 enum class ReasoningEffort(val label: String, val key: String) {
-    Off("关", "off"), Low("低", "low"), Medium("中", "medium"), High("高", "high"), Max("max", "max")
+    Off("关", "off"), Low("低", "low"), Medium("中", "medium"), High("高", "high"), XHigh("超高", "xhigh"), Max("max", "max")
 }
 
 enum class ShizukuStatus(val label: String) {
@@ -40,7 +40,11 @@ data class SessionInfo(
     val running: Boolean = false,
     val archived: Boolean = false,
     val parentId: String? = null,
-)
+    /** 置顶时间（毫秒）；0 表示未置顶。 */
+    val pinnedAt: Long = 0L,
+) {
+    val pinned: Boolean get() = pinnedAt > 0L
+}
 
 enum class AttachmentKind(val label: String) { File("文件"), Image("图片"), Camera("拍照"), WorkspaceFile("工作区文件") }
 
@@ -122,6 +126,17 @@ data class Schedule(
 
 enum class ApprovalDecision(val label: String) { AllowOnce("允许一次"), AllowSession("本会话总是允许"), Deny("拒绝") }
 
+/**
+ * The choices every approval surface offers (chat card, notification, phone capsule), so they never disagree.
+ * One-shot approvals (an irreversible phone step bound to that step on that screen; clipboard/share) cannot be
+ * remembered for the session: the kernel would ignore it, so the button is not shown.
+ */
+fun approvalChoices(oneShot: Boolean): List<ApprovalDecision> =
+    if (oneShot) listOf(ApprovalDecision.AllowOnce, ApprovalDecision.Deny) else listOf(ApprovalDecision.AllowOnce, ApprovalDecision.AllowSession, ApprovalDecision.Deny)
+
+/** Approval actions the kernel treats as one-shot (mirrors android-policy `onceOnly` and android-phone `phone_irreversible`). */
+val ONE_SHOT_APPROVAL_TOOLS = setOf("phone_irreversible", "clipboard_read", "clipboard_write", "app_screenshot", "share_text", "share_file")
+
 // ---------- 模型供应商（opencode 风格：一个供应商 → 多个模型） ----------
 
 enum class ProviderProtocol(val label: String) {
@@ -136,6 +151,10 @@ data class ModelInfo(
     val vision: Boolean,
     val reasoning: Boolean,
     val defaultEffort: ReasoningEffort,
+    /** Model-hosted web search override: "auto" | "on" | "off" (see dev.hoshino.bridge.WebSearchMode). */
+    val webSearchMode: String = "auto",
+    /** Detected hosted-search method id, "none", or "" when not yet known (see dev.hoshino.bridge.WebSearchMethods). */
+    val webSearchMethod: String = "",
 )
 
 data class Provider(
