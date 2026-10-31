@@ -669,7 +669,12 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     suspend fun control(action:String,request:JSONObject=JSONObject()):JSONObject=api().mobile("control",JSONObject().put("action",action).put("request",request))
     suspend fun m2Control(operation:String,request:JSONObject=JSONObject()):JSONObject=control("m2",request.put("operation",operation).apply{if(!has("sessionId"))put("sessionId",activeSession)})
     override suspend fun setSessionPreset(sessionId:String,presetId:String){metadata.edit().putString("preset:$sessionId",presetId).apply();sessionRows.update{rows->rows.map{if(it.id==sessionId)it.copy(presetId=presetId)else it}}}
-    override suspend fun upsertPreset(preset:AgentPreset){val current=m2Control("config",JSONObject().put("name","modes.json"));val rows=current.optJSONArray("modes")?:JSONArray();val next=JSONArray();for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("id")!=preset.id)next.put(row)};next.put(JSONObject().put("id",preset.id).put("name",preset.name).put("description",preset.description).put("systemPrompt",preset.systemPrompt).put("tools",JSONArray(preset.tools)));m2Control("config",JSONObject().put("name","modes.json").put("value",JSONObject().put("modes",next)));refreshControl()}
+    override suspend fun upsertPreset(preset:AgentPreset){val current=m2Control("config",JSONObject().put("name","modes.json"));val rows=current.optJSONArray("modes")?:JSONArray();val next=JSONArray();for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("id")!=preset.id)next.put(row)};next.put(presetRow(preset));m2Control("config",JSONObject().put("name","modes.json").put("value",JSONObject().put("modes",next)));refreshControl()}
+    /**
+     * m2.9: an empty tool selection is written as "no tools field" (= every tool, including ones added later such as
+     * phone_*). Writing `"tools": []` used to disable every tool for an edited or copied preset. Only chat keeps [].
+     */
+    internal fun presetRow(preset:AgentPreset):JSONObject=PresetRows.row(preset)
     override suspend fun deletePreset(presetId:String){val current=m2Control("config",JSONObject().put("name","modes.json"));val rows=current.optJSONArray("modes")?:JSONArray();val next=JSONArray();for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("id")!=presetId)next.put(row)};m2Control("config",JSONObject().put("name","modes.json").put("value",JSONObject().put("modes",next)));refreshControl()}
     suspend fun refreshControl() {
         val state=control("inspect");val manifest=state.optJSONObject("manifest")

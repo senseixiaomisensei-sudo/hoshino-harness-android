@@ -3,6 +3,7 @@ import { readFile, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { workspacePath } from './paths.js';
 import { tierGate, READ_TOOLS, FULL_ACCESS_PROMPT } from './tier.js';
+import { guardSystemShell, touchesScreen } from './shell-guard.js';
 import {resolve} from 'node:path';
 import type {} from '@deepseek-ai/dsh-working-directory';
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs';
@@ -46,6 +47,11 @@ export function apply(ctx: Context): void {
     const gate=tierGate(policy?.tier,policy?.planMode,exec.name);
     if(gate.kind==='deny')return gate;
     const args=exec.arguments as Record<string,unknown>;
+    // m2.9: app operations only on the background agent display. Refused before the approval prompt.
+    if(exec.name==='system_shell') {
+      const shell=await systemShellScreenGuard(ctx,String(args.command ?? ''),sessionId,exec.signal);
+      if(shell.kind==='deny')return {kind:'deny',reason:shell.reason};
+    }
     let path: string|undefined;
     if(['read','read_image','write','edit'].includes(exec.name)) {
       const cwd=exec.agent ? await ctx.workingDirectory.ensure(exec.agent,exec.signal) : ctx.androidBridge.bootstrap.workspace;
@@ -117,3 +123,17 @@ export function apply(ctx: Context): void {
 }
 
 
+
+/** Current agent display id from Android (null when no phone task holds one or the bridge cannot tell). */
+export async function agentDisplayId(ctx:Context,sessionId:string,signal?:AbortSignal):Promise<number|null> {
+  try {
+    const r=await ctx.androidBridge.call<{display?:unknown}>('phone',{action:'display',sessionId},signal);
+    return typeof r?.display==='number' && Number.isInteger(r.display) ? r.display : null;
+  } catch { return null; }
+}
+
+/** guardSystemShell with the display id fetched only for commands that touch a screen. */
+export async function systemShellScreenGuard(ctx:Context,command:string,sessionId:string,signal?:AbortSignal) {
+  if(!touchesScreen(command))return {kind:'continue'} as const;
+  return guardSystemShell(command,await agentDisplayId(ctx,sessionId,signal));
+}

@@ -273,13 +273,35 @@ class AndroidPhoneScreen(
         if (display == null) return ActionOutcome(false, "apps are only opened on the agent display")
         val pkg = PhoneApps.resolve(context, app) ?: return ActionOutcome(false, "no installed app matches \"$app\"; use phone_list_apps")
         if (pkg == context.packageName) return ActionOutcome(false, "own_app: Hoshino does not operate itself")
+        val mainBefore = runCatching { s.topPackage(Display.DEFAULT_DISPLAY) }.getOrNull()
+        // startApp only ever targets our display (PhoneShellService checks ownership; no main-screen fallback).
         val code = runCatching { s.startApp(displayId, pkg) }.getOrDefault(3)
         return when (code) {
-            0 -> { PhoneLedger.mute(context, s, pkg); ActionOutcome(true, "opened $pkg") }
+            0 -> placeOnAgent(s, pkg, mainBefore) ?: run { PhoneLedger.mute(context, s, pkg); ActionOutcome(true, "opened $pkg on the agent display") }
             1 -> ActionOutcome(false, "in_use: the user is using $pkg on the main screen; ask before taking it over")
             2 -> ActionOutcome(false, "no launcher entry for $pkg")
             7 -> ActionOutcome(false, "busy: the agent display is used by another task")
             else -> ActionOutcome(false, "could not start $pkg")
+        }
+    }
+
+    /** m2.9: null when the app is on the agent display (or not visible anywhere yet); an error outcome if it landed on the main screen and could not be moved back. */
+    private suspend fun placeOnAgent(s: IHoshinoPhoneShell, pkg: String, mainBefore: String?): ActionOutcome? {
+        val deadline = SystemClock.uptimeMillis() + PLACEMENT_WAIT_MS
+        while (true) {
+            val agentTop = runCatching { s.topPackage(displayId) }.getOrNull()
+            val mainTop = runCatching { s.topPackage(Display.DEFAULT_DISPLAY) }.getOrNull()
+            when (LaunchPlacement.verdict(pkg, mainBefore, agentTop, mainTop)) {
+                Placement.OnAgent -> return null
+                Placement.LeakedToMain -> {
+                    val task = runCatching { s.topTaskId(Display.DEFAULT_DISPLAY) }.getOrDefault(-1)
+                    val moved = task >= 0 && runCatching { s.moveTask(task, displayId) }.getOrDefault(false)
+                    return if (moved) null
+                    else ActionOutcome(false, "opened_on_main_screen: Android put $pkg on the user's main screen and it could not be moved to the agent display; tell the user, do not retry with system_shell")
+                }
+                Placement.Pending -> if (SystemClock.uptimeMillis() >= deadline) return null
+            }
+            delay(PLACEMENT_POLL_MS)
         }
     }
 
@@ -308,6 +330,8 @@ class AndroidPhoneScreen(
         const val LONG_PRESS_MS = 650L
         const val SWIPE_MS = 350L
         const val SWIPE_POINTS = 12
+        const val PLACEMENT_WAIT_MS = 1500L
+        const val PLACEMENT_POLL_MS = 150L
     }
 }
 

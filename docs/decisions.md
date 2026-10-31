@@ -167,3 +167,23 @@
 - `phone_*` 失败时（`code` 为 helper / accessibility / unsupported）错误文本带「设置 → 设置手机操作」和「Shizuku 与完全访问都不需要」（`phoneError`）；UI（权限弹层、风险确认、引导弹层、设置页、预设页、`PermissionTier.FullAccess` 描述）改为「需要 Shizuku 或 内置无线调试助手」，引导弹层首推「去设置手机操作」。
 
 测试：`node-host/test/m281.test.mjs`（tier gate 文案、system_shell 隐藏、phoneError、手机提示词、callbackError 及端到端 500 消息）；`SystemAccessTest`（执行器判定、内核档位优先、回退顺序）；`BuiltinSystemShellTest`（命令包装/引号、超时钳制、结果形状、执行写文件、取消）；`AndroidCallbackServerTest`（500 带脱敏 JSON 错误）。未真机验证：内置助手执行 system_shell、取消杀进程、Shizuku 绑定超时回退。
+
+## 2026-10-31 M2.9 App 操作只在后台虚拟屏；修复 phone_* 不在会话工具列表
+
+背景：用户在 m2.8.1 上看到两件事：① AI 用 `system_shell` 跑 `monkey -p com.ss.android.ugc.aweme 1`，抖音在**主屏**打开，打断了用户；② AI 回答「当前会话提供给我的工具列表里没有虚拟屏的启动工具」。
+
+根因（② 是 ① 的直接原因）：
+- **android-phone 插件从未激活**。`@deepseek-ai/dsh-tools` 的 `defineTool` 要求每个 `type:'object'` 参数显式写 `additionalProperties: true|false`，否则抛 `JsonSchemaError: unsupported JSON schema: parameters.expect.additionalProperties must be explicitly true or false`。`phone_tap` 等的 `expect` 和 `phone_do_steps` 的 `steps.items` 都没写，`apply()` 抛错；该条目是可选插件，dsh 只在 stderr 打一行「1 entry did not activate」，于是**所有会话里都没有任何 phone_* 工具**（m2.8 / m2.8.1 一直如此；单测只测了 `steps.ts` 纯函数，没加载插件）。模型只剩 system_shell 能「打开 App」，就用了 monkey。新增内核级测试 `node-host/test/m29-phone-tools.test.mjs` 启动真内核 + mock LLM，读取模型实际收到的工具列表，修复前即复现（standard 模式缺 phone_launch_app）。
+- **次要：模式白名单会屏蔽新工具**。`DshHarnessClient.upsertPreset` 总写 `"tools": JSONArray(preset.tools)`，编辑/复制内置预设时空列表写成 `[]`（内核读作「禁用全部工具」）；用户自定义预设的白名单（且预设页 `ALL_TOOLS` 多是 UI 标签而非真实工具名）不含 m2.8 新增的 phone_*。
+
+决定：
+- `android-phone` 的 `expect` / step 参数改为严格 schema（`EXPECT_SCHEMA`、`STEP_SCHEMA`，`additionalProperties:false`，字段与 Android `PhoneStep` / `Expectation` 一致）。
+- 模式白名单语义（`hoshino-m2/tool-mask.ts`）：非数组 = 全部工具；空数组且 `id!=='chat'` = 全部工具（兼容旧 app 写入的 `[]`）；chat 的 `[]` = 无工具；其余白名单照常生效，但 `phone_` 前缀工具族永远放行（`ALWAYS_ALLOWED_PREFIXES`），chat 除外。`syncTools`（隐藏）和 `tools/pre-execute`（拒绝）共用 `modeAllows`。写入 `modes.json` 后立即对现有会话重新 `syncTools`。
+- `upsertPreset` 改用 `PresetRows.row`：空选择不写 `tools` 字段（chat 保留 `[]`），并保留 `readOnly`（原来保存会丢掉只读）。
+- **插件激活失败不再静默**：`self_doctor` 按每个内置插件的标志工具（`BUILTIN_TOOL_MARKERS`）检查，缺失时 `kernel:'degraded'` 并列出 `inactivePlugins`；设置里的 M2 诊断页直接显示该 JSON。
+- **system_shell 不能操作主屏**（`android-policy/shell-guard.ts`，纯函数 `guardSystemShell`）：在 tier gate 之后、审批弹窗之前判定；`android-shizuku` 执行前再判一次。解析普通 shell 语法（引号、`; && || | &`、换行、`$( )`、`sh -c`/`su -c`/`su 0`/`adb shell`/`env`/`nohup`/`timeout`/`busybox` 前缀、绝对路径）。拒绝：`monkey`（没有 display 参数，一律拒绝）、`am start|start-activity` / `cmd activity start…`（指向 phone_launch_app）、`input tap|swipe|text|keyevent…` / `cmd input`（指向 phone_tap / phone_do_steps）、`cmd statusbar`、`am display move-stack` 等跨屏移动（指向 phone_handoff）。只放行显式 `--display <agent>` / `-d <agent>` 且等于当前 agent display 的命令（通过新 bridge 动作 `phone {action:'display'}` 取 id；display 0 永远拒绝）。不自动补 `--display`：直接改写命令会绕过 phone_* 的「主屏正在用该 App」检查、静音与不可逆步骤审批，所以只在拒绝原因里给出 agent display id。这是防模型习惯的护栏，不是沙箱。
+- **phone_launch_app 永远只用 agent display**：`PhoneShellService.startApp` 已校验 display 归属、无主屏回退（反射失败时退到 `am start --display <agent>`）。新增启动后放置检查（纯函数 `LaunchPlacement.verdict`）：若 App 新出现在主屏前台（Android 复用了它在主屏的后台任务），立即 `moveTask` 挪回 agent display；挪不回就报 `opened_on_main_screen` 错误，不重试、不回退。
+- **后台照常运行**：`PhoneController` / `AgentDisplay` 只用 application context，不依赖 Activity；内核由 `KernelService`（specialUse 前台服务）保活。新增 `PhoneTaskService`（specialUse 前台服务，常驻通知「Hoshino 正在后台操作手机 · 包名」+「停止」），**只在 agent display 存在期间运行**（`PhoneController.display` 非空时启动，`phone_finish` / 空闲 5 分钟释放后停止）。Android 12+ 后台启动前台服务可能被拒，失败只记入本地审计，任务本身不受影响（进程仍由 KernelService 保活）。锁屏时步骤仍按原设计等待解锁（`locked` 守卫未改）。
+- 系统提示：`PHONE_PROMPT` 写明所有 App 操作只在后台虚拟屏、与主屏并发、Hoshino 退到后台也继续，不要用 system_shell 操作 App；虚拟屏只在任务运行时创建，看不到额外 display 不代表没有该功能，直接调用 phone_launch_app。`FULL_ACCESS_PROMPT`、`system_shell` 与 `phone_launch_app` 描述同步。`phone_status` 未就绪时返回逐项设置指引（`phoneStatusText`）。
+
+测试：`m29-phone-tools.test.mjs`（真内核：standard / auto / goal 含 phone_*，chat 无工具；旧 `[]` 的 standard 与旧自定义白名单仍含 phone_*，旧白名单其余限制不变）；`m29-vd-guard.test.mjs`（命令守卫各写法、显式 agent display 放行、提示词、phone_status 指引、插件加载、模式白名单、doctor）；`m281.test.mjs` 中「白名单屏蔽 phone_*」的两条断言按新语义改为期望值（未删）；`PresetRowsTest`、`VirtualDisplayGuardTest`。未真机验证：前台服务后台启动是否被系统拒绝、App 复用主屏任务时的挪回、Hoshino 退后台/熄屏时虚拟屏持续渲染。
