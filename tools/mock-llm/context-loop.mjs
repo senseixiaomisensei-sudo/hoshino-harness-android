@@ -63,9 +63,12 @@ export function createContextLoopMock() {
       } else if (human.includes('notdone-fixture')) {
         if (!hasResult) { tool = 'end_not_done'; args = { message: '设置里没有这个开关 notpossible-verdict', subtype: 'route_failed' }; } else reply = '没办成。';
       } else reply = '好的。';
-      // prefix-cache accounting for main requests
-      let common = 0; const max = Math.min(raw.length, previousMain.length); while (common < max && raw.charCodeAt(common) === previousMain.charCodeAt(common)) common++;
-      record.cachedChars = common; previousMain = raw;
+      // prefix-cache accounting for main requests. Providers render tool definitions before the conversation (OpenAI /
+      // DeepSeek chat templates), so the cacheable prefix is tools → messages, not the JSON key order of the request
+      // body (where a long tools array after `messages` would never count as cached).
+      const prefix = JSON.stringify({ tools: body.tools ?? [], messages: body.messages ?? [] });
+      let common = 0; const max = Math.min(prefix.length, previousMain.length); while (common < max && prefix.charCodeAt(common) === previousMain.charCodeAt(common)) common++;
+      record.cachedChars = common; previousMain = prefix;
     }
     record.tool = tool; record.reply = reply;
     const promptTokens = Math.ceil(raw.length / 4); const cached = Math.floor((record.cachedChars ?? 0) / 4);
