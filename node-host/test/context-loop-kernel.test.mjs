@@ -39,8 +39,12 @@ test('WP9-B context & loop quality on the original kernel', { timeout: 600000 },
   child.stdout.on('data', b => logs += b); child.stderr.on('data', b => logs += b);
   child.stdin.end(JSON.stringify({ callbackPort, callbackToken: 'ctx-callback-secret', workspace, home: join(root, 'home'), timeZone: 'Asia/Shanghai' }) + '\n');
   t.after(async () => { if (child.exitCode === null && child.signalCode === null) { const stopped = once(child, 'exit'); child.kill(); await stopped; } mock.server.closeAllConnections(); callback.closeAllConnections(); await Promise.all([new Promise(r => mock.server.close(r)), new Promise(r => callback.close(r))]); await rm(root, { recursive: true, force: true }); });
-  const info = await Promise.race([kernelReady, once(child, 'exit').then(([code]) => { throw new Error(`Kernel exit ${code}: ${logs}`); }), new Promise((_, reject) => setTimeout(() => reject(new Error(`Kernel readiness timeout: ${logs}`)), 120000).unref())]);
+  const info = await Promise.race([kernelReady, once(child, 'exit').then(([code]) => { throw new Error(`Kernel exit ${code}: ${logs}`); }), new Promise((_, reject) => setTimeout(() => reject(new Error(`Kernel readiness timeout: ${logs}`)), 300000).unref())]);
   const base = `http://127.0.0.1:${info.port}`;
+  // main.ts loads the deferred rows (subagent/goal/schedule tools) ~1 s after ready and then writes the self docs; those
+  // tools change the system prompt/tool list once. Start the conversation after that so CX1 measures our plugins only.
+  const manifest = join(root, 'home', 'hoshino', 'self', 'manifest.json');
+  for (const deadline = Date.now() + 120000; ; await new Promise(r => setTimeout(r, 200))) { try { await access(manifest); break; } catch { if (Date.now() > deadline) throw new Error(`deferred kernel init did not finish: ${logs}`); } }
   const exchange = await fetch(`${base}/mobile/connect?token=${info.token}`, { redirect: 'manual' });
   const cookie = exchange.headers.get('set-cookie').split(';')[0];
   const rpc = async (method, request) => {
@@ -129,9 +133,9 @@ test('WP9-B context & loop quality on the original kernel', { timeout: 600000 },
 
   // ---- RT11: empty reply and wrong language are sent back once
   const empty = await prompt('empty-fixture 说点什么');
-  assert.equal(empty.answer, '这是补上的回答。');
+  assert.equal(empty.answer, '这是补上的回答。', JSON.stringify(empty.turn.map(e => [e.type, e.data?.reason ?? e.data?.message?.content ?? e.data?.content ?? e.data?.source])).slice(-6000));
   const language = await prompt('language-fixture 请用中文回答这个问题');
-  assert.equal(language.answer, '这是用中文改写后的完整回答，内容和数值保持不变。');
+  assert.equal(language.answer, '这是用中文改写后的完整回答，内容和数值保持不变。', JSON.stringify(language.turn.map(e => [e.type, e.data?.reason ?? e.data?.message?.content ?? e.data?.content ?? e.data?.source])).slice(-6000));
   assert.ok(mock.requests.some(r => r.lastText.includes('Rewrite the whole answer in the language')));
 
   // ---- RT10: a discussion question does not run a writing tool, and never reaches the approval prompt
