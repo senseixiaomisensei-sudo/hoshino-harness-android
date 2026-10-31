@@ -62,5 +62,13 @@
   "@deepseek-ai/dsh-schedule",
   "@deepseek-ai/dsh-tool-schedule",
   "fflate",
-  "@deepseek-ai/dsh-tool-executor-native"
+  "@deepseek-ai/dsh-tool-executor-native",
+  "@deepseek-ai/dsh-compaction",
+  "@deepseek-ai/dsh-compaction-basic",
+  "@deepseek-ai/dsh-compaction-tool-result-pruner",
+  "@deepseek-ai/dsh-compaction-image-offload",
+  "@deepseek-ai/dsh-command-compact",
+  "@deepseek-ai/dsh-repeat-tool-reminder",
+  "@deepseek-ai/dsh-tool-call-timeout-policy",
+  "@deepseek-ai/dsh-time-context"
 ]

@@ -57,6 +57,19 @@ Copyright 2026 wangzan101
   - `app/ui/AgentPip.kt`、`PipPhysics.kt` → `app/src/main/java/app/hoshino/harness/ui/chat/PhonePip.kt`
   - 没有移植：`core/cap/phone/{GesturePacing,TypingPacing,AppPacing}.kt`、`core/uistate/IdleScroll.kt`（规避式拟人，mika-gap §2 PL4）；`core/shell/WirelessDebuggingAutoOn.kt` 的静默开启与 `RecoveryPermissions` 的静默授权改为向导里逐项同意（PL3）；ML Kit 的 `PhoneOcr` 换成下面的开源 OCR（PL1）。
 
+### WP9-B 上下文与循环（`feat/m2.9-context-loop`）移植/改写的文件
+
+被移植或改写的文件头保留 `Portions derived from Mika … Apache-2.0. Modified by Hoshino Harness contributors.`。
+
+| 本仓库文件 | 对应 Mika 源文件 | 说明 |
+|---|---|---|
+| `plugins/hoshino-context/core.ts` | `core/agent/ContextCompressor.kt`、`core/context/StepSummary.kt`、`core/observation/Untrusted.kt` | 无模型检查点格式（目标/已确认事实/进展/下一步）、不可信内容包裹，改写为 TypeScript 并接入 dsh 压缩钩子 |
+| `plugins/hoshino-turn-policy/language.ts` | `core/agent/ReplyLanguage.kt` | 回答语言判定，逐条移植 |
+| `plugins/hoshino-turn-policy/rules.ts` | `core/agent/IntentGate.kt`、`core/agent/TurnPolicy.kt`、`core/agent/StopRules.kt`、`core/agent/StuckAdvice.kt`、`core/guard/GuardRules.kt`、`core/cap/sandbox/SandboxGuard.kt`、`core/model/ModelAccessErrors.kt`、`resources/prompts/roles/intent_gate.md`、`resources/prompts/feedback/loop.md` | 意图提示词、交答前提醒措辞、守卫阶梯、沙箱守卫、模型访问错误分类与中文原因 |
+| `plugins/hoshino-turn-policy/index.ts` | 同上 | 接入 dsh `tools/pre-execute`、`tools/post-execute`、`agent/turn-stopping`、`agent/request-error` |
+| `plugins/hoshino-outcome/index.ts` | `core/general/OutcomeTools.kt`、`core/agent/OutcomeJudge.kt`、`resources/prompts/roles/outcome_judge.md`、`resources/prompts/tools/end_not_done.md` | `end_not_done` 工具与结局判定 |
+| `plugins/hoshino-outcome/grounding.ts` | `core/verify/Grounding.kt` | 规则核对的轻量子集（引文、带单位/小数/三位以上的数、日期时刻、带数字的编号） |
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy

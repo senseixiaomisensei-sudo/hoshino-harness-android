@@ -69,7 +69,7 @@ class ProotKernelLauncher : KernelLauncher {
         currentCoroutineContext().ensureActive()
         val child = builder.start(); process = child
         owner?.invokeOnCompletion { cause -> if(cause is CancellationException)child.destroy() }
-        child.outputStream.bufferedWriter().use { it.write(bootstrap.put("workspace", "/root/workspace").put("home", "/home/hoshino").put("selfHome","/root/.hoshino").put("safeMode",context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE).getBoolean("safe",false)).toString()); it.newLine() }
+        child.outputStream.bufferedWriter().use { it.write(bootstrap.put("workspace", "/root/workspace").put("home", "/home/hoshino").put("selfHome","/root/.hoshino").put("safeMode",context.getSharedPreferences("hoshino-startup",Context.MODE_PRIVATE).getBoolean("safe",false)).put("timeZone",java.util.TimeZone.getDefault().id).toString()); it.newLine() }
         Thread {
             // Arbitrary child output may contain tool data or credentials. Keep only classified diagnostics.
             try {
