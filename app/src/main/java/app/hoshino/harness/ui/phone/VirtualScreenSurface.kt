@@ -69,6 +69,12 @@ fun VirtualScreenSurface(
     doubleTapZoom: Boolean = true,
     hiRes: Boolean = true,
     onNotice: (String) -> Unit = {},
+    /**
+     * m2.9.4: when set, a two-finger pinch resizes the virtual screen window itself (factor since the last event) instead
+     * of magnifying the picture inside it; double tap no longer zooms the content either.
+     */
+    onResize: ((Float) -> Unit)? = null,
+    onResizeEnd: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val controller = remember { PhoneController.of(context) }
@@ -78,7 +84,9 @@ fun VirtualScreenSurface(
     var size by remember { mutableStateOf(IntSize.Zero) }
     val currentZoom by rememberUpdatedState(zoom)
     val currentView by rememberUpdatedState(viewMode)
-    val currentDoubleTap by rememberUpdatedState(doubleTapZoom)
+    val currentResize by rememberUpdatedState(onResize)
+    val currentResizeEnd by rememberUpdatedState(onResizeEnd)
+    val currentDoubleTap by rememberUpdatedState(doubleTapZoom && onResize == null)
     // Read by the GL thread for every drawn frame: always the latest shape and zoom.
     val holder = remember(display) { ViewportHolder() }
     holder.srcW = shape.first; holder.srcH = shape.second; holder.zoom = zoom
@@ -115,6 +123,12 @@ fun VirtualScreenSurface(
                         if (pressed.size >= 2) {
                             multi = true
                             val factor = event.calculateZoom()
+                            val resize = currentResize
+                            if (resize != null) {
+                                if (factor.isFinite() && factor > 0f) resize(factor)
+                                event.changes.forEach { it.consume() }
+                                continue
+                            }
                             val pan = event.calculatePan()
                             val c = event.calculateCentroid(useCurrent = true)
                             if (c != Offset.Unspecified && size.width > 0) {
@@ -141,6 +155,7 @@ fun VirtualScreenSurface(
                         last = p.position
                         p.consume()
                     }
+                    if (multi && currentResize != null) currentResizeEnd()
                     val duration = upTime - down.uptimeMillis
                     val gesture = PreviewGeometry.classify(moved, duration, slop)
                     // A tap may be the first half of a double tap (zoom): wait for a second press near it.

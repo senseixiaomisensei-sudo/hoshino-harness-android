@@ -50,6 +50,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
 import app.hoshino.harness.phone.InAppTakeover
+import app.hoshino.harness.phone.PhoneCapsule
 import app.hoshino.harness.phone.PhoneController
 import app.hoshino.harness.phone.PhoneTaskState
 import app.hoshino.harness.phone.PipLayout
@@ -96,7 +97,8 @@ fun PhonePip(modifier: Modifier = Modifier, onExpand: () -> Unit = {}) {
     if (!open || !lifecycle.isAtLeast(Lifecycle.State.STARTED)) return
     DisposableEffect(d) {
         controller.retainViewer()
-        onDispose { controller.releaseViewer() }
+        PhoneCapsule.inAppShown()
+        onDispose { controller.releaseViewer(); PhoneCapsule.inAppHidden() }
     }
     val shape by d.shape.collectAsState()
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -152,7 +154,15 @@ fun PhonePip(modifier: Modifier = Modifier, onExpand: () -> Unit = {}) {
                 Text("×", color = Color.White, fontSize = 16.sp, modifier = Modifier.clickable { PhonePipPrefs.set(context, false) }.padding(horizontal = 8.dp))
             }
             Box(Modifier.fillMaxWidth().height(with(density) { win.pictureH.toDp() })) {
-                VirtualScreenSurface(display = d, zoom = zoom, onZoom = { zoom = it }, modifier = Modifier.fillMaxSize(), hiRes = false, onNotice = { toast(context, it) })
+                VirtualScreenSurface(
+                    display = d, zoom = zoom, onZoom = { zoom = it }, modifier = Modifier.fillMaxSize(), hiRes = false, onNotice = { toast(context, it) },
+                    // m2.9.4: pinch enlarges / shrinks the mini window itself, not the picture inside it.
+                    onResize = { f ->
+                        val p = PipLayout.place(w * f, curWin.x.toFloat(), curWin.y.toFloat(), shape.first, shape.second, curLimits)
+                        w = p.w.toFloat(); x = p.x.toFloat(); y = p.y.toFloat()
+                    },
+                    onResizeEnd = { save() },
+                )
                 // Bottom-right resize handle.
                 Box(
                     Modifier.align(Alignment.BottomEnd).size(28.dp)

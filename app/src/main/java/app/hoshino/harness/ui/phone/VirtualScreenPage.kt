@@ -4,6 +4,8 @@ import android.view.KeyEvent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +26,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +47,7 @@ import app.hoshino.harness.phone.FpsMath
 import app.hoshino.harness.phone.InAppTakeover
 import app.hoshino.harness.phone.OrientationMode
 import app.hoshino.harness.phone.PhoneApps
+import app.hoshino.harness.phone.PhoneCapsule
 import app.hoshino.harness.phone.PhoneController
 import app.hoshino.harness.phone.PhoneDisplayFps
 import app.hoshino.harness.phone.PhoneTaskState
@@ -105,8 +109,11 @@ fun VirtualScreenPage(onBack: () -> Unit) {
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val foreground = lifecycle.isAtLeast(Lifecycle.State.STARTED)
     var zoom by remember { mutableStateOf(PreviewZoom.IDENTITY) }
+    // m2.9.4: pinch enlarges / shrinks the virtual screen itself (fraction of the space that fits it), not its content.
+    val screenPrefs = remember { context.getSharedPreferences("phone_inapp_screen", android.content.Context.MODE_PRIVATE) }
+    var screenScale by remember { mutableFloatStateOf(screenPrefs.getFloat("scale", 1f).coerceIn(MIN_SCREEN_SCALE, 1f)) }
     var viewMode by remember { mutableStateOf(false) }
-    var doubleTapZoom by remember { mutableStateOf(true) }
+    val doubleTapZoom = false // m2.9.4: double tap goes to the app; pinch resizes the screen
     var showInput by remember { mutableStateOf(false) }
     var showApps by remember { mutableStateOf(false) }
     var showMore by remember { mutableStateOf(false) }
@@ -116,7 +123,8 @@ fun VirtualScreenPage(onBack: () -> Unit) {
     // While this page is shown the display is not released for idleness; leaving hands back an automatic takeover.
     DisposableEffect(Unit) {
         controller.retainViewer()
-        onDispose { takeover.leaving(); controller.releaseViewer() }
+        PhoneCapsule.inAppShown()
+        onDispose { takeover.leaving(); controller.releaseViewer(); PhoneCapsule.inAppHidden() }
     }
     LaunchedEffect(foreground) { if (!foreground) takeover.leaving() }
     LaunchedEffect(notice) { notice?.let { toast(context, it); takeover.consumeNotice() } }
@@ -126,7 +134,9 @@ fun VirtualScreenPage(onBack: () -> Unit) {
     val title = "虚拟屏"
     val subtitle = phoneStatusLabel(state, manual != null) + (since?.let { " · " + BallPanelModel.formatElapsed((now - it).coerceAtLeast(0)) } ?: "")
     PageScaffold(title = title, onBack = onBack, subtitle = subtitle, scrollable = false, actions = {
-        if (display != null) HButton(if (zoom.zoomed) "复位 ${"%.1f".format(zoom.scale)}×" else "适配", { zoom = PreviewZoom.IDENTITY }, style = BtnStyle.Ghost, compact = true)
+        if (display != null) HButton(if (screenScale < 0.995f) "复位 ${(screenScale * 100).toInt()}%" else "最大", {
+            screenScale = 1f; zoom = PreviewZoom.IDENTITY; screenPrefs.edit().putFloat("scale", 1f).apply()
+        }, style = BtnStyle.Ghost, compact = true)
     }) {
         val d = display
         if (d == null) {
@@ -151,12 +161,20 @@ fun VirtualScreenPage(onBack: () -> Unit) {
             state.reason?.takeIf { it.isNotBlank() }?.let { Text(it, style = t.caption, color = c.accent, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             handoff?.let { Text("AI 请你处理：${it.reason.ifBlank { "这一步需要你亲手完成" }}（在对话或通知里点「我来处理 / 处理好了」）", style = t.caption, color = c.danger, maxLines = 2) }
         }
-        Box(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 8.dp)) {
+        val shape by d.shape.collectAsState()
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
             if (foreground) {
+                // The largest size with the display's aspect that fits, times the user's scale.
+                val sw = shape.first.coerceAtLeast(1).toFloat(); val sh = shape.second.coerceAtLeast(1).toFloat()
+                val fitW = minOf(maxWidth.value, maxHeight.value * sw / sh)
+                val fitH = fitW * sh / sw
                 VirtualScreenSurface(
-                    display = d, zoom = zoom, onZoom = { zoom = it }, modifier = Modifier.fillMaxSize(),
+                    display = d, zoom = zoom, onZoom = { zoom = it },
+                    modifier = Modifier.size((fitW * screenScale).dp, (fitH * screenScale).dp),
                     viewMode = viewMode, doubleTapZoom = doubleTapZoom, hiRes = true,
                     onNotice = { toast(context, it) },
+                    onResize = { f -> screenScale = (screenScale * f).coerceIn(MIN_SCREEN_SCALE, 1f) },
+                    onResizeEnd = { screenPrefs.edit().putFloat("scale", screenScale).apply() },
                 )
             }
         }
@@ -192,11 +210,7 @@ fun VirtualScreenPage(onBack: () -> Unit) {
                     Text("查看模式（单指拖动画面，不操作手机）", style = t.caption, color = c.text2, modifier = Modifier.weight(1f))
                     HSwitch(viewMode, { viewMode = it })
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("双击缩放（关掉后单击立即送达，双击送给 App）", style = t.caption, color = c.text2, modifier = Modifier.weight(1f))
-                    HSwitch(doubleTapZoom, { doubleTapZoom = it })
-                }
-                Text("双指捏合缩放、双指拖动平移；点「接管」后 AI 暂停，单指点按/长按/滑动才会操作虚拟屏；点「交还」AI 继续。", style = t.caption, color = c.text3)
+                Text("双指捏合放大/缩小虚拟屏本身（不是放大画面内容），右上角「复位」回到最大；点「接管」后 AI 暂停，单指点按/长按/滑动才会操作虚拟屏；点「交还」AI 继续。", style = t.caption, color = c.text3)
             }
         }
         Spacer(Modifier.navigationBarsPadding())
@@ -257,3 +271,5 @@ fun PhoneScreenBar(onOpen: () -> Unit, modifier: Modifier = Modifier) {
         if (display != null) HButton(if (pip) "收起小窗" else "小窗", { PhonePipPrefs.set(context, !pip) }, style = BtnStyle.Ghost, compact = true)
     }
 }
+
+private const val MIN_SCREEN_SCALE = 0.25f

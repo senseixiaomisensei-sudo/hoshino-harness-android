@@ -104,6 +104,16 @@ object PhoneCapsule {
 
     fun foregroundChanged(pkg: String) { host?.foreground(pkg) }
 
+    /**
+     * m2.9.4: in-app virtual screen surfaces (page / chat mini window) currently shown. While any is shown the floating
+     * ball and its panel stay hidden, so the in-app screen never pops up the overlay on top of itself; a takeover made
+     * in the app is not ended by that hiding.
+     */
+    private val _inApp = MutableStateFlow(0)
+    val inApp: StateFlow<Int> = _inApp.asStateFlow()
+    fun inAppShown() { _inApp.value = _inApp.value + 1; host?.foreground(null) }
+    fun inAppHidden() { _inApp.value = (_inApp.value - 1).coerceAtLeast(0); host?.foreground(null) }
+
     private data class Approval(val sessionId: String, val id: String, val title: String, val command: String, val oneShot: Boolean)
     private data class RenderKey(val state: PhoneTaskState, val count: Int, val takeover: PhoneTakeover.Pending?, val approvalId: String?, val questionId: String?, val manual: Boolean)
     private data class Question(val sessionId: String, val id: String, val text: String, val options: List<String>)
@@ -320,7 +330,7 @@ object PhoneCapsule {
             }
         }
 
-        fun foreground(pkg: String) { foreground.value = pkg; refreshVisibility() }
+        fun foreground(pkg: String?) { if (pkg != null) foreground.value = pkg; refreshVisibility() }
 
         private fun onEvent(e: HarnessEvent) {
             when (e) {
@@ -337,11 +347,15 @@ object PhoneCapsule {
             return runCatching { Hoshino.client.sessions.value.firstOrNull { it.id == sid }?.running == true }.getOrDefault(false)
         }
 
+        private fun ownApp(): Boolean = _inApp.value > 0 || foreground.value == ctx.packageName
+
         /** (want, hideImmediately). Screen off / locked hide at once; everything else goes through the debounce. */
         private fun wanted(): Pair<Boolean, Boolean> {
             val keyguard = runCatching { ctx.getSystemService(KeyguardManager::class.java).isKeyguardLocked }.getOrDefault(false)
             if (!screenOn.value || keyguard) return false to true
             val manual = controller.manual.active.value != null
+            // m2.9.4: inside Hoshino (or while an in-app virtual screen is shown) the overlay never appears, even during a takeover.
+            if (ownApp()) return false to true
             if (foreground.value == ctx.packageName && !manual) return false to false
             val s = controller.state.value
             // The controller drops to Idle between steps; while its session's turn is still running the task is on.
@@ -360,8 +374,9 @@ object PhoneCapsule {
                 if (d.shown && !dotAdded) { runCatching { wm.addView(dot, dotParams); dotAdded = true }; scheduleFade() }
                 if (!d.shown) {
                     // Screen off / locked: nobody can operate the picture any more, so hand back before hiding.
-                    if (controller.manual.active.value != null) controller.endManualTakeover()
-                    if (immediate) model.screenOff()
+                    val own = ownApp()
+                    if (!own && controller.manual.active.value != null) controller.endManualTakeover()
+                    if (immediate && !own) model.screenOff()
                     closePanel()
                     if (dotAdded) { runCatching { wm.removeView(dot) }; dotAdded = false }
                 }
