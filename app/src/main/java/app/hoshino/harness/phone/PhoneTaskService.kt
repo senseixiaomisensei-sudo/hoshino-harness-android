@@ -30,11 +30,11 @@ class PhoneTaskService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        running = true
         val manager = getSystemService(NotificationManager::class.java)
         if (manager.getNotificationChannel(CHANNEL) == null) manager.createNotificationChannel(NotificationChannel(CHANNEL, "手机操作 · 后台任务进行中", NotificationManager.IMPORTANCE_LOW))
-        val first = notification(PhoneTaskState())
-        if (Build.VERSION.SDK_INT >= 34) startForeground(ID, first, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(ID, first)
         val controller = PhoneController.of(this)
+        promote(controller.state.value)
         scope.launch {
             combine(controller.display, controller.state) { d, s -> d to s }.distinctUntilChanged().collect { (display, state) ->
                 if (display == null) { stopSelf(); return@collect }
@@ -55,20 +55,35 @@ class PhoneTaskService : Service() {
             .build()
     }
 
+    /**
+     * Every start goes through startForeground first. PhoneTaskForeground.sync may call stopService and then
+     * startForegroundService again (display released and re-created quickly); when the second start reaches the
+     * still-alive instance, onCreate does not run again, and Android requires startForeground after every
+     * startForegroundService (else ForegroundServiceDidNotStartInTimeException), even if we are about to stop.
+     */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val controller = PhoneController.of(this)
+        promote(controller.state.value)
         if (intent?.action == ACTION_STOP) { controller.stop(null, "stopped by user"); controller.release(null) }
         if (controller.display.value == null) stopSelf()
         return START_NOT_STICKY
     }
 
+    private fun promote(state: PhoneTaskState) {
+        val n = notification(state)
+        if (Build.VERSION.SDK_INT >= 34) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(ID, n)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
-    override fun onDestroy() { scope.cancel(); super.onDestroy() }
+    override fun onDestroy() { running = false; scope.cancel(); super.onDestroy() }
 
     companion object {
         const val CHANNEL = "hoshino-phone-task"
         const val ID = 4510
         const val ACTION_STOP = "app.hoshino.harness.phone.STOP_TASK"
+        /** True between onCreate and onDestroy (read by the WP-9 keep-alive retry). */
+        @Volatile var running = false
+            private set
     }
 }
 

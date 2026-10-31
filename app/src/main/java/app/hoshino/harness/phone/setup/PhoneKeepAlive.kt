@@ -1,33 +1,26 @@
 package app.hoshino.harness.phone.setup
 
-import android.app.ActivityManager
 import android.content.Context
-import android.content.Intent
 import app.hoshino.harness.phone.PhoneConsent
-import dev.hoshino.app.KernelService
+import app.hoshino.harness.phone.PhoneTaskForeground
+import app.hoshino.harness.phone.PhoneTaskService
 
 /**
- * Keeps the process in the foreground-service state while a phone task runs (WP-9). The kernel already lives in
- * [KernelService] (a foreground service), so normally this does nothing; it covers the case where the kernel
- * service was stopped (notification "停止", or the process was restarted by the self-heal path without UI) while a
- * phone task is still being driven. Never starts anything when no task runs.
+ * WP-9 keep-alive fallback, folded into the m2.9 [PhoneTaskService] (integ/m2.9): there is exactly one foreground
+ * service for a phone task. PhoneController starts it when the agent display appears, but Android 12+ can refuse a
+ * foreground-service start from the background (ForegroundServiceStartNotAllowedException; only audited there).
+ * This retries that same start when the task state changes while a task is busy and the service is not running.
+ * It never starts KernelService (a user who tapped 停止 on the kernel notification stays stopped) and does nothing
+ * when no task runs.
  */
 object PhoneKeepAlive {
     /** Pure rule: only while a task is busy and the foreground service is not already running. */
     fun needsStart(taskBusy: Boolean, serviceRunning: Boolean) = taskBusy && !serviceRunning
 
-    fun ensure(context: Context, taskBusy: Boolean) {
+    fun ensure(context: Context, taskBusy: Boolean, displayExists: Boolean) {
         val app = context.applicationContext
-        if (!needsStart(taskBusy, running(app))) return
-        runCatching { app.startForegroundService(Intent(app, KernelService::class.java)) }
-            .onSuccess { PhoneConsent.of(app).audit("keepalive started foreground service for a phone task") }
-            .onFailure { PhoneConsent.of(app).audit("keepalive could not start foreground service: ${it.javaClass.simpleName}") }
+        if (!displayExists || !needsStart(taskBusy, PhoneTaskService.running)) return
+        val error = PhoneTaskForeground.sync(app, true)
+        PhoneConsent.of(app).audit(if (error == null) "keepalive restarted phone task foreground service" else "keepalive could not start phone task foreground service: ${error.javaClass.simpleName}")
     }
-
-    @Suppress("DEPRECATION")
-    private fun running(context: Context): Boolean = runCatching {
-        // Still returns the caller's own services on current Android.
-        context.getSystemService(ActivityManager::class.java).getRunningServices(Int.MAX_VALUE)
-            .any { it.service.className == KernelService::class.java.name && it.foreground }
-    }.getOrDefault(true)
 }

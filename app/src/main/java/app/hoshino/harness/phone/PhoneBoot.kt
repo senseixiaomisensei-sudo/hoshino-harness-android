@@ -51,10 +51,11 @@ object PhoneBoot {
         val connected = PhoneAccessibilityService.instance.map { it != null }.distinctUntilChanged()
             .stateIn(scope, SharingStarted.Eagerly, PhoneAccessibilityService.instance.value != null)
         services.startSelfHeal(connected, SelfHealSettings.of(app))
-        // Foreground service while a phone task is busy (no-op when KernelService already runs, the normal case).
+        // Retry the phone task foreground service (PhoneTaskService) if Android refused it while a task is busy.
         scope.launch {
-            PhoneController.of(app).state.map { it.status != PhoneTaskState.Status.Idle }.distinctUntilChanged()
-                .collect { busy -> PhoneKeepAlive.ensure(app, busy) }
+            val controller = PhoneController.of(app)
+            controller.state.map { it.status != PhoneTaskState.Status.Idle }.distinctUntilChanged()
+                .collect { busy -> PhoneKeepAlive.ensure(app, busy, controller.display.value != null) }
         }
     }
 }
