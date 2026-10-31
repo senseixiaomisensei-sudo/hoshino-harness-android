@@ -1,0 +1,53 @@
+name: M2.8 phone compile and unit tests
+# Compile + unit-test check for the phone work. No signing key, no runtime assets, no release:
+# it only proves that Kotlin/AIDL/resources/manifest compile and that JVM unit tests and plugin typecheck pass.
+on:
+  push:
+    branches: ['feat/m2.8-phone']
+  pull_request:
+    branches: [codex/m2]
+    paths: ['app/**', 'core-bridge/**', 'plugins/**', 'node-host/**', '.github/workflows/m28-phone-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m28-phone-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  plugins:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: npm, cache-dependency-path: node-host/package-lock.json }
+      - name: Typecheck host and plugins, run plugin unit tests
+        working-directory: node-host
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx tsc
+          node --test test/m2.test.mjs test/phone.test.mjs
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+          log-accepted-android-sdk-licenses: false
+      - name: Compile app (arm64 debug) and run JVM unit tests without runtime assets
+        run: |
+          chmod +x gradlew
+          ./gradlew :core-bridge:testDebugUnitTest :app:compileArm64DebugKotlin :app:testArm64DebugUnitTest \
+            -x verifyKernelAssets -x stageRuntimeAssets -Pkotlin.compiler.execution.strategy=in-process --console=plain
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m28-unit-test-reports
+          path: |
+            app/build/reports/tests
+            core-bridge/build/reports/tests
+          if-no-files-found: ignore

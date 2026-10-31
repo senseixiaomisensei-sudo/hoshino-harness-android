@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.hoshino.harness.core.ApprovalDecision
+import app.hoshino.harness.core.approvalChoices
 import app.hoshino.harness.core.AttachmentKind
 import app.hoshino.harness.core.ChatItem
 import app.hoshino.harness.ui.components.IconBtn
@@ -577,10 +578,13 @@ private fun ApprovalCard(item: ChatItem.Approval, onDecide: (String, ApprovalDec
         val d = item.decision
         if (d == null) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                HButton("允许一次", { onDecide(item.id, ApprovalDecision.AllowOnce) }, Modifier.fillMaxWidth(), style = BtnStyle.Primary)
+                // Same choices as the notification and the phone capsule (approvalChoices).
+                val choices = approvalChoices(item.oneShot)
+                HButton(ApprovalDecision.AllowOnce.label, { onDecide(item.id, ApprovalDecision.AllowOnce) }, Modifier.fillMaxWidth(), style = BtnStyle.Primary)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HButton("本会话总是允许", { onDecide(item.id, ApprovalDecision.AllowSession) }, Modifier.weight(1f), style = BtnStyle.Secondary)
-                    HButton("拒绝", { onDecide(item.id, ApprovalDecision.Deny) }, Modifier.weight(1f), style = BtnStyle.Secondary)
+                    for (choice in choices.filter { it != ApprovalDecision.AllowOnce }) {
+                        HButton(choice.label, { onDecide(item.id, choice) }, Modifier.weight(1f), style = BtnStyle.Secondary)
+                    }
                 }
             }
         } else {

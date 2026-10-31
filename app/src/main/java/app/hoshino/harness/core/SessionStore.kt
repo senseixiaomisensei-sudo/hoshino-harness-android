@@ -80,6 +80,7 @@ sealed interface ChatItem {
         val detail: String,
         val command: String,
         val decision: ApprovalDecision?,
+        val oneShot: Boolean = false,
     ) : ChatItem
     @Immutable
     data class Question(
@@ -398,7 +399,7 @@ class SessionStore(
         is HarnessEvent.DiffResolved ->
             s.replace(e.id) { if (it is ChatItem.Diff) it.copy(state = e.state) else it }
         is HarnessEvent.ApprovalRequested ->
-            s.append(ChatItem.Approval(e.id, e.title, e.detail, e.command, null))
+            s.append(ChatItem.Approval(e.id, e.title, e.detail, e.command, null, e.oneShot))
                 .traj(TrajSource.System, "请求审批", e.command)
         is HarnessEvent.ApprovalResolved ->
             s.replace(e.id) { if (it is ChatItem.Approval) it.copy(decision = e.decision) else it }

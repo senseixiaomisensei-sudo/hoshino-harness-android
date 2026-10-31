@@ -2,28 +2,26 @@
 
 开源原生 Android AI Agent：Kotlin Compose 界面 + 原版 DeepSeek Harness（DSH）/ Cordis 内核，本地运行，使用你自己的模型 API Key。MIT。
 
-## 最新版本：0.2.1-m2.7（2026-10-31）
+## 最新版本：0.2.1-m2.8（2026-10-31）
 
-包名 `dev.hoshino.app`，versionCode 209，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
+包名 `dev.hoshino.app`，versionCode 210，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
 
-- [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.7/Hoshino-Harness-0.2.1-m2.7-arm64-v8a.apk)（非调试 fast 构建）
-- [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.7)
-- arm64 APK：68,189,245 字节，SHA-256 `67c1340cd44bd03fbdc215833b491ecf6dbcda840b412c2e69892b744a731241`；签名证书 SHA-256 `e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1`；构建与验收 [Actions run 41153355806](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/41153355806)
+- [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.8/Hoshino-Harness-0.2.1-m2.8-arm64-v8a.apk)（非调试 fast 构建）
+- [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8)
 
-主要内容：
+主要内容：**手机操作**——Hoshino 在后台虚拟屏上替你操作 App，你照常用主屏。
 
-- **流畅度**：流式输出只追加，长会话按轮缓存、稳定 key、Markdown 增量渲染；工具输出内存只留 64 KiB 尾部，需要时从 dsh 日志读全量；会话 LRU 释放。文件卡跟随产生它的那一轮；已处理的审批卡折叠进过程组（可关）。
-- **无审批档**（只能由用户主动开启，出厂默认仍是手动审批）：仍受权限档和用户自设 deny 规则约束，每次自动放行写审计日志。
-- **插话与停止**：运行中继续发送走 dsh 原生 steer，下一步并入当前任务；停止后作废未处理的插话，并写一段停止交代供「继续」使用。
-- **会话管理**：删除（多选、左滑）、置顶、重命名、导出 Markdown / JSON 到「下载/Hoshino」并分享。
-- **ChatGPT 登录**：与 Mika 相同的「用 ChatGPT 登录」（动态客户端、本机回环、PKCE、JWKS），走标准 `api.openai.com/v1/responses`；旧方式登录过的需重新登录一次。套餐模型列表动态读取，新增 `gpt-6.1-terra` 与 xhigh 推理档。
-- **模型自带联网搜索**优先，服务商不支持时自动回退到 Hoshino 搜索。
+- **设置向导**「设置手机操作」：同意页所有项默认不勾，未保存前不改任何系统设置；内置手机助手（移植 Mika 的无线调试配对与 ADB 连接），已授权 Shizuku 时直接用 Shizuku。
+- **读屏与操作**：无障碍读屏（压缩元素、稳定 ref、差异读屏），一次连续执行 1–20 步并由代码等待结果；开源文字识别 ONNX Runtime + PP-OCRv4，本机运行、模型按需下载并校验，不用 ML Kit / GMS / Firebase。
+- **接管与胶囊**：登录、验证码、密码、付款交给你（我来处理 / 处理好了 / 跳过）；悬浮胶囊可看小画面、停止、审批、插话。
+- **审批**沿用 m2.7 审批档（出厂手动）：不可逆步骤（发送、删除、下单、提交）逐步单独确认；用户主动开「无审批」时直接执行并记审计；**付款、密码、验证码、人机验证任何档位都交给你亲手完成**。
+- **体积代价**：ONNX Runtime 让 arm64 APK 增加约 6.6 MB（安装后约 +18.3 MB）。
 
-需真机验收（CI 未覆盖）：长会话流畅度；ChatGPT 真账号登录、套餐模型与 `gpt-6.1-terra`、模型联网搜索及回退；无审批、插话、停止交代；删除 / 置顶 / 重命名 / 导出；重启后文件卡归轮。CI 已验证：arm64 真内核启动、x86_64 模拟器从旧版覆盖安装保留会话与配置、聊天与工具调用。
+需小米 15S Pro 真机验收（CI 未覆盖）：见 [docs/m2.8-phone-acceptance.md](docs/m2.8-phone-acceptance.md)。CI 已验证：编译与单测、arm64 真内核启动、x86_64 模拟器从旧版覆盖安装保留会话与配置、聊天与工具调用。
 
 构建与发布：推送 `codex/dsh-upgrade` 触发 `.github/workflows/dsh-upgrade.yml`，含 arm64 真内核启动、x86_64 覆盖安装 + 聊天 + 工具调用验收后自动发布。
 
-上一版 [0.2.1-m2.6](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.6)（2026-10-29）：DSH 内核升级到与电脑版一致、插件市场（`format: 1` 索引、npm / Git 安装）、索引读取走 Android 系统网络与 jsDelivr 镜像、arm64 非调试构建。
+上一版 [0.2.1-m2.7](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.7)（2026-10-31）：流畅度、无审批档、插话与停止交代、会话管理、与 Mika 相同的 ChatGPT 登录、模型自带联网搜索。arm64 APK 68,189,245 字节，SHA-256 `67c1340cd44bd03fbdc215833b491ecf6dbcda840b412c2e69892b744a731241`。
 
 ## M2（2026-10-27，历史）
 

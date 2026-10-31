@@ -136,3 +136,18 @@
 - **事实**：M2.3 提交 `064eaa0`（fix: send plain Anthropic Messages requests to third-party Anthropic-compatible endpoints (relay 502)）新增 `plugins/android-api/anthropic-compat.ts`：对 `api.anthropic.com` 以外的 Anthropic 兼容地址，去掉 pi-ai 的 Claude 专用字段（`output_config`、adaptive thinking、beta 头、工具 eager streaming 等），推理档换算成显式 `thinking.budget_tokens`（max=16000）。官方地址不改。文件头写明了理由（中转站/DeepSeek 等对这些字段回 4xx/502），当时没有在本文件记录。
 - **测试**：`kernel.test.mjs` 的 claude-max 断言仍按官方形状（`output_config.effort=max`、`thinking.type=adaptive`）检查发往本机 mock 的请求；本机 mock 属于「第三方兼容端点」，因此自 M2.3 起该断言不成立，只是被前面 M2.1 的 network 断言失败挡住、一直没跑到。改为断言当前设计：无 `output_config`、`thinking.type=enabled`、`budget_tokens=16000`；其余 max 预算断言（`max_tokens>=32768`）不变。官方形状没有离线可测的端点，未覆盖，如需覆盖应给 `sanitizeAnthropicBody`/地址判定单独写单测。
 
+
+## 2026-10-31 M2.8 手机操作接入 m2.7 审批档（含无审批）
+
+背景：`feat/m2.8-phone` 基于 m2.7 之前的 `bce6285` 开发，m2.7 新增了审批档（manual / rules / model / auto / none）、无审批和审批折叠。集成分支 `integ/m2.8` 合并时按下面的规则统一语义。依据：mika-gap（PR #1，`docs/mika-gap.md`）PL2「保留默认审批，付款永远交用户亲手做；无审批只能用户主动开」、AP2「风险判定在无人在场、自主、无审批模式下照样运行并记审计」、AP4「付款本身永远交用户亲手做」、AP6（Mika 自主模式连付款也不问——我们不跟），以及本文件 M2.7「无审批下 resolveApproval 直接 allow，只有用户自己的 deny 规则仍生效，`ask` 规则不会把卡带回来」。
+
+- **普通 phone_* 工具走同一个审批口子**：android-policy 的 `tools/pre-execute`（先权限档，后审批），所有 phone_* 共享一个「本会话允许」。审批由 hoshino-m2 的 `resolveApproval` 决定，因此：出厂 manual 下首次弹卡；无审批下自动放行、不弹卡，审计 `approver=auto-none`。
+- **不可逆步骤（发送 / 删除 / 下单 / 提交）**：Android 侧按「这一步 + 这个屏」算指纹停下，android-phone 以 `tool=phone_irreversible` 发一次性审批（永不记为本会话允许）。
+  - `phone_irreversible` 算**高危**：开着「高危确认」（出厂默认开）时，manual / rules / model / **auto** 档都逐步问一次；用户的 allow 规则也越不过高危确认（与 rm、git reset 等一致）。
+  - **无审批下不再弹一次性确认，直接放行并记审计**（`approver=auto-none`、`risk=irreversible:<kind>`、`app=<包名>`，不记步骤文字、输入内容或屏上文字）。理由：无审批是用户看过风险说明后主动开启的，M2.7 已定「ask 规则不把卡带回来」；在无审批里对一类工具单独保留确认，会让「无审批」名不副实，也和 AP2 的表述（照样运行并记审计，而不是照样拦截）不符。用户仍可写 `{"tool":"phone_irreversible","decision":"deny"}` 规则，在无审批下也生效。无审批的风险说明（`ApprovalModeRules.PHONE_LIMITS`）写明这一点。
+- **付款与「要你亲手来」的屏，任何审批档都绕不过**（与审批无关，在 Android 执行入口里判定）：
+  - 付款步骤从不送去审批（android-phone 直接返回 `reason=payment` 要求 `phone_handoff`），Android `StepRunner` 也**不接受付款授权**：即使有人对付款指纹调用 `grant`，也直接停下交给用户。
+  - 在需要用户的屏（密码 / 登录 / 验证码 / 人机验证 / 付款）上，`type`/`clear` 一律停下；在人机验证和付款屏上 `tap`/`long_press`/`swipe` 也停下（滑块、支付密码键盘）。返回、按键、等待、打开别的 App 仍允许，以便交接或离开。
+  - 交接（`phone_handoff`）由用户点「处理好了 / 跳过」，与审批档无关。
+- **审批折叠与胶囊一致**：聊天审批卡、通知、胶囊三处都用同一个 `approvalChoices(oneShot)`：一次性审批（`phone_irreversible`，以及剪贴板/分享/应用截图这些 `onceOnly` 工具）只给「允许一次 / 拒绝」，其余给「允许一次 / 本会话总是允许 / 拒绝」，标签一致；Android 对一次性审批返回 `remember=false`。在任一处处理后发 `ApprovalResolved`，聊天按 m2.7 规则把已处理的审批折叠进过程组，胶囊同时移除。手机不可逆审批卡标题为「手机不可逆操作」，通知显示插件给的摘要。
+- 测试：`node-host/test/phone.test.mjs`（各审批档对 phone_irreversible 的结果、无审批端到端放行且审计不含屏上文字、付款不进审批口子、其他会话仍弹卡）；`StepRunnerTest`（付款授权无效、验证码/人机验证在「全部批准」下仍停）；`SessionStorePerformanceTest`（一次性审批三处选项一致并照常折叠）；`ApprovalSessionsTest`（风险说明含手机边界）。

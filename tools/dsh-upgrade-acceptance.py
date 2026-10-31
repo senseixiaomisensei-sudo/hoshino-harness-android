@@ -11,7 +11,7 @@ def test(name,label):
 try:
  adb('reverse','tcp:8099','tcp:8099');adb('install','--no-streaming','-r','old-m2.apk');adb('install','--no-streaming','-r','artifacts/app/build/outputs/apk/androidTest/x86/debug/app-x86-debug-androidTest.apk');adb('shell','pm','grant',pkg,'android.permission.POST_NOTIFICATIONS')
  test('app.hoshino.harness.M21UpgradeSeedTest','old-data-setup')
- adb('shell','am','force-stop',pkg);adb('install','--no-streaming','-r','artifacts/build/deliverables/Hoshino-Harness-0.2.1-m2.7-x86_64-debug.apk')
+ adb('shell','am','force-stop',pkg);adb('install','--no-streaming','-r','artifacts/build/deliverables/Hoshino-Harness-0.2.1-m2.8-x86_64-debug.apk')
  test('app.hoshino.harness.DshUpgradeAcceptanceTest#overwriteConnectsAndRetainsOldSessions','case2-overwrite')
  test('app.hoshino.harness.DshUpgradeAcceptanceTest#realKernelChatsAndExecutesTools','case3-chat-tools')
  data=json.loads(adb('exec-out','run-as',pkg,'cat','files/dsh-upgrade-acceptance.json'));assert set(data)=={'2','3'} and all(v['passed'] for v in data.values());(out/'dsh-upgrade-acceptance.json').write_text(json.dumps(data,ensure_ascii=False,indent=2))

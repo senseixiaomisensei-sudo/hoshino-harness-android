@@ -236,6 +236,25 @@ class SessionStorePerformanceTest {
         assertFalse((TurnPresenter().present(s.state(sid).value, true).single().rows.first { it is ChatRow.ProcessRow } as ChatRow.ProcessRow).waiting)
     }
 
+    @Test fun oneShotPhoneApprovalOffersNoSessionChoiceOnAnySurfaceAndCollapsesLikeOthers() {
+        val s = store()
+        val sid = "p"
+        s.dispatch(HarnessEvent.TurnStarted(sid, "e:1"))
+        s.dispatch(HarnessEvent.UserMessage(sid, "u", "给张三发晚上好", emptyList()))
+        s.dispatch(HarnessEvent.ApprovalRequested(sid, "ph", "手机不可逆操作", "{\"action\":\"send\"}", "send: tap \"发送\" @ com.tencent.mm", oneShot = true))
+        s.dispatch(HarnessEvent.ApprovalRequested(sid, "w", "工具执行审批", "/root/workspace/a.md", "write"))
+        val pending = TurnPresenter().present(s.state(sid).value, true).single().actions.filterIsInstance<ChatItem.Approval>()
+        assertEquals(listOf(true, false), pending.map { it.oneShot })
+        // Chat card, notification and capsule all render approvalChoices(oneShot).
+        assertEquals(listOf(ApprovalDecision.AllowOnce, ApprovalDecision.Deny), approvalChoices(pending[0].oneShot))
+        assertEquals(listOf(ApprovalDecision.AllowOnce, ApprovalDecision.AllowSession, ApprovalDecision.Deny), approvalChoices(pending[1].oneShot))
+        assertTrue("phone_irreversible" in ONE_SHOT_APPROVAL_TOOLS)
+        s.dispatch(HarnessEvent.ApprovalResolved(sid, "ph", ApprovalDecision.AllowOnce))
+        val turn = TurnPresenter().present(s.state(sid).value, true).single()
+        assertEquals(listOf("w"), turn.actions.map { it.id })
+        assertEquals("已允许 · send: tap \"发送\" @ com.tencent.mm", TurnPresenter.approvalLine(turn.process.filterIsInstance<ChatItem.Approval>().single()))
+    }
+
     @Test fun cancelledTurnClosesRunningItemsWithoutTouchingFinishedTurns() {
         val s = store()
         val sid = "c"
