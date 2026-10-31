@@ -8,6 +8,7 @@
 
 - [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.7/Hoshino-Harness-0.2.1-m2.7-arm64-v8a.apk)（非调试 fast 构建）
 - [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.7)
+- arm64 APK：68,189,245 字节，SHA-256 `67c1340cd44bd03fbdc215833b491ecf6dbcda840b412c2e69892b744a731241`；签名证书 SHA-256 `e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1`；构建与验收 [Actions run 41153355806](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/41153355806)
 
 主要内容：
 
