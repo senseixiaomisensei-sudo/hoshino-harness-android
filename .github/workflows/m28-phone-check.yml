@@ -26,7 +26,7 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npx tsc
-          node --test test/m2.test.mjs
+          node --test test/m2.test.mjs test/phone.test.mjs
   android:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
