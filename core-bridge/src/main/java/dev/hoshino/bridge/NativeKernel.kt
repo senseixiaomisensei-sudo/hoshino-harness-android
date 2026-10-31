@@ -58,8 +58,11 @@ class NativeKernel(private val context: Context,
                             val connected=SessionClient({}, { if(current==generation.get()) {diagnostic("connection: $it"); state.update { s -> s.copy(phase=if(it=="restored")"已连接"else"重新连接") }} }, { id,frame -> if(current==generation.get())incoming.trySend(id to frame) })
                             connected.connect(body.getInt("port"),body.getString("token"));api=connected
                             ready.complete(connected)
-                            state.update { it.copy(phase="已连接",readyAt=SystemClock.elapsedRealtime()) }
-                            java.io.File(context.filesDir,"m2-runtime-health.json").writeText(JSONObject().put("phase","ready").put("dshVersion",body.optString("dshVersion")).put("startedAt",state.value.startedAt).put("readyAt",state.value.readyAt).toString())
+                            // Health record first, then 已连接: observers of the phase (UI, upgrade acceptance) must never read a stale
+                            // record from an older install (0.2.0-m2 wrote it without dshVersion).
+                            val readyAt=SystemClock.elapsedRealtime()
+                            java.io.File(context.filesDir,"m2-runtime-health.json").writeText(JSONObject().put("phase","ready").put("dshVersion",body.optString("dshVersion")).put("startedAt",state.value.startedAt).put("readyAt",readyAt).toString())
+                            state.update { it.copy(phase="已连接",readyAt=readyAt) }
                             JSONObject()
                         }
                         else -> callbackHandler(method,body)
