@@ -8,23 +8,23 @@
   },
   "phone": {
     "systemChars": 1684,
-    "toolsChars": 11502,
+    "toolsChars": 11847,
     "contextChars": 463,
     "tools": 23,
-    "estimatedTokens": 3413
+    "estimatedTokens": 3499
   },
   "web": {
     "systemChars": 1684,
-    "toolsChars": 11026,
+    "toolsChars": 11371,
     "contextChars": 463,
     "tools": 20,
-    "estimatedTokens": 3294
+    "estimatedTokens": 3380
   },
   "all": {
     "systemChars": 2352,
-    "toolsChars": 34165,
+    "toolsChars": 34510,
     "contextChars": 1298,
     "tools": 67,
-    "estimatedTokens": 9454
+    "estimatedTokens": 9540
   }
 }

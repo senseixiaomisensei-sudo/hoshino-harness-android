@@ -340,7 +340,7 @@
     },
     {
       "name": "phone_do_steps",
-      "description": "Run 1-20 known actions in a row without a round-trip per step; each step: {action: tap|long_press|type|clear|scroll|swipe|back|key|open_app|wait, ref?, target?, x?, y?, text?, enter?, direction?, key?, app?, expect?}. Stops early on choosers, screens that need the user, missing targets, or an irreversible step that needs approval.",
+      "description": "Run 1-20 known actions in a row without a round-trip per step; each step: {action: tap|long_press|type|clear|scroll|swipe|back|key|open_app|wait, ref?, target?, x?, y?, text?, enter?, direction?, key?, app?, cold?, expect?}. Stops early on choosers, screens that need the user, missing targets, or an irreversible step that needs approval.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -400,6 +400,10 @@
                 },
                 "app": {
                   "type": "string"
+                },
+                "cold": {
+                  "type": "boolean",
+                  "description": "open_app only: restart the app from its first page"
                 },
                 "expect": {
                   "type": "object",
@@ -464,12 +468,16 @@
     },
     {
       "name": "phone_launch_app",
-      "description": "Open an app (e.g. 抖音, WeChat) on the background agent display by package or label (never Hoshino itself), without disturbing the user's main screen. This is how to open apps; it needs no Shizuku and no full-access. The display is created on demand, so call it directly.",
+      "description": "Open an app (e.g. 抖音, WeChat) on the background agent display by package or label (never Hoshino itself), without disturbing the user's main screen. This is how to open apps; it needs no Shizuku and no full-access. The display is created on demand, so call it directly. Returns once the app is usable (past its splash screen) with opened_in_ms; cold=true restarts it from its first page.",
       "parameters": {
         "type": "object",
         "properties": {
           "app": {
             "type": "string"
+          },
+          "cold": {
+            "type": "boolean",
+            "description": "Force-stop and start fresh (only when the app has no task outside the agent display)"
           },
           "expect": {
             "type": "object",
@@ -1748,9 +1756,9 @@
   ],
   "size": {
     "systemChars": 2352,
-    "toolsChars": 34165,
+    "toolsChars": 34510,
     "contextChars": 1298,
     "tools": 67,
-    "estimatedTokens": 9454
+    "estimatedTokens": 9540
   }
 }
