@@ -22,7 +22,7 @@ object ScreenCompressor {
         }
         val lines = kept.take(maxLines).map(::line)
         val more = kept.size - lines.size
-        return (listOf(header) + lines + if (more > 0) listOf("… $more more (scroll or use phone_read_screen with query)") else emptyList()).joinToString("\n")
+        return (listOf(header) + lines + if (more > 0) listOf("… $more more (phone_query to search them, phone_collect to read the whole list)") else emptyList()).joinToString("\n")
     }
 
     /** Elements worth showing, in reading order. */

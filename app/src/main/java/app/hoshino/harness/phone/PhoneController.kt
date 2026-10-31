@@ -89,6 +89,8 @@ class PhoneController private constructor(private val context: Context) {
             "observe" -> observe(session(body), body.optBoolean("full", false))
             "screenshot" -> screenshot(session(body))
             "steps" -> steps(session(body), body)
+            // WP-4 (B-1): composite reads that loop on the phone and return one structured result.
+            "query", "extract", "find", "collect" -> read(session(body), action, body)
             "grant" -> grant(session(body), body.getString("fingerprint"))
             "list_apps" -> listApps(body.optString("query"))
             // m2.9: lets the kernel's system_shell guard accept only commands that explicitly target the agent display.
@@ -232,6 +234,64 @@ class PhoneController private constructor(private val context: Context) {
             throw e
         } finally {
             if (wake.isHeld) wake.release()
+        }
+    }
+
+    /**
+     * WP-4 composite reads. query/extract read the current screen once; find/collect scroll on the phone (each scroll goes
+     * through [GuardedPort], so the lock and own-app guards apply) until done and come back once. Parameters are validated
+     * before the screen is touched. The final screen becomes the session's last shown screen, so the next phone_observe
+     * is a small diff and refs in the result stay valid.
+     */
+    private suspend fun read(sessionId: String, action: String, body: JSONObject): JSONObject {
+        val query = if (action == "query") ElementQuery.parse(body) else null
+        val extract = if (action == "extract") ExtractParams.parse(body) else null
+        val find = if (action == "find") FindParams.parse(body) else null
+        val collect = if (action == "collect") CollectParams.parse(body) else null
+        return lock.withLock {
+            val shell = requireReady()
+            val scrolling = find != null || collect != null
+            if (scrolling && locked()) throw PhoneUnavailable("locked", "手机锁屏中，解锁后再继续")
+            val s = screenFor(shell)
+            claim(sessionId)
+            touchIdle()
+            stops.remove(sessionId)
+            val wake = if (scrolling) context.getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "hoshino:phone-read").also { it.acquire(WAKE_MS) } else null
+            if (scrolling) _state.update { it.copy(sessionId = sessionId, status = PhoneTaskState.Status.Working, reason = null) }
+            try {
+                val reader = ScreenReader(GuardedPort(s, sessionId)) { stops[sessionId] }
+                val out = JSONObject().put("ok", true)
+                val last: ScreenSnapshot = when {
+                    query != null -> s.read().also { snap ->
+                        val (ms, total) = ScreenQueries.query(snap, query)
+                        out.put("total", total).put("shown", ms.size).put("screen", ScreenQueries.renderMatches(ms).ifEmpty { "no match" })
+                    }
+                    extract != null -> s.read().also { snap -> out.put("mode", extract.mode.name).put("screen", ScreenQueries.extract(snap, extract).ifEmpty { "(empty)" }) }
+                    find != null -> reader.find(find).let { r ->
+                        out.put("ok", r.matches.isNotEmpty()).put("found", r.matches.isNotEmpty()).put("total", r.total).put("scrolls", r.scrolls).put("stop", r.stop)
+                        r.detail?.let { out.put("detail", it) }
+                        if (r.matches.isNotEmpty()) out.put("screen", ScreenQueries.renderMatches(r.matches))
+                        r.screen
+                    }
+                    else -> reader.collect(collect!!).let { r ->
+                        out.put("items", r.rows.size).put("screens", r.screens).put("scrolls", r.scrolls).put("stop", r.stop)
+                        r.detail?.let { out.put("detail", it) }
+                        if (r.cursorLost) out.put("cursor_lost", true)
+                        r.cursor?.let { out.put("cursor", it.encode()) }
+                        out.put("screen", r.rows.indices.joinToString("\n") { i -> r.keys[i] + " " + r.rows[i].text }.ifEmpty { "(no rows)" })
+                        r.screen
+                    }
+                }
+                out.put("app", last.packageName ?: JSONObject.NULL)
+                if (last.secure) out.put("secure", true).put("hint", "secure screen: use phone_handoff")
+                SystemScreens.needsUser(last)?.let { n -> out.put("needs_user", JSONObject().put("reason", n.reason)) }
+                shown[sessionId] = last
+                _state.update { it.copy(sessionId = sessionId, app = last.packageName) }
+                out
+            } finally {
+                if (scrolling) _state.update { if (it.status == PhoneTaskState.Status.Working) it.copy(status = PhoneTaskState.Status.Idle) else it }
+                if (wake?.isHeld == true) wake.release()
+            }
         }
     }
 

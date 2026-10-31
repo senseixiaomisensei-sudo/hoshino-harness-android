@@ -61,7 +61,7 @@ export function needsReadback(name: string, args: string, extra: readonly string
   return extra.includes(name) && name !== 'web_render';
 }
 /** Tools that count as reading back. */
-export const READBACK_TOOLS = /^(read|read_image|web_fetch|web_render|bash|phone_observe|phone_list|phone_find|phone_query|observe|list_elements|screenshot|describe|app_screenshot|get_device_info|self_read)$/;
+export const READBACK_TOOLS = /^(read|read_image|web_fetch|web_render|bash|phone_observe|phone_list|phone_find|phone_query|phone_extract|phone_collect|observe|list_elements|screenshot|describe|app_screenshot|get_device_info|self_read)$/;
 
 // ---------------------------------------------------------------- RT12 / SB4
 export const SANDBOX_TOOLS = new Set(['bash', 'system_shell', 'terminal']);

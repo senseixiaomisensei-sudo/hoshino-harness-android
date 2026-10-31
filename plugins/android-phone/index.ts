@@ -2,6 +2,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { Context } from '../../node-host/src/platform.js';
 import type {} from '../android-policy/index.js';
+import { READ_TOOLS, readArgs } from './read.js';
 import { checkSteps, phoneError, phoneStatusText, render, runSteps, stepFor, PHONE_PROMPT, type Data } from './steps.js';
 
 /**
@@ -70,6 +71,9 @@ export function apply(ctx: Context): void {
   text('phone_do_steps', 'Run 1-20 known actions in a row without a round-trip per step; each step: {action: tap|long_press|type|clear|scroll|swipe|back|key|open_app|wait, ref?, target?, x?, y?, text?, enter?, direction?, key?, app?, cold?, expect?}. Stops early on choosers, screens that need the user, missing targets, or an irreversible step that needs approval.',
     {steps: {type: 'array', required: true, items: STEP_SCHEMA}, app_label: {type: 'string'}},
     async (a, exec) => render(await runSteps(call, approve, sid(exec), checkSteps(a.steps), a.app_label ? String(a.app_label) : undefined, exec.signal)));
+
+  // WP-4 (B-1): query / extract / find / collect loop on the phone and return once (read.ts validates first).
+  for (const t of READ_TOOLS) text(t.name, t.description, t.parameters, (a, exec) => phone(t.action, (({action: _, ...rest}) => rest)(readArgs(t.action, a)), exec));
 
   ctx.tools.register(defineTool({name: 'phone_screenshot', description: 'Picture of the agent display (requires an image-capable model). Secure screens cannot be captured.', parameters: {} as any,
     output: {schema: {type: 'string'}, render: (_, value) => [{type: 'image', attachment: JSON.parse(String(value)) as ImageAttachmentRef}]},
