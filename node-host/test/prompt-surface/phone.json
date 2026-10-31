@@ -76,24 +76,6 @@
           "text"
         ]
       }
-    },
-    {
-      "name": "system_shell",
-      "description": "Execute an Android system shell command with the actual Shizuku adb/root uid. Requires an authorized full-access session and approval. Android cwd is /data/local/tmp; ordinary dsh bash and file tools still use the private workspace.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "command": {
-            "type": "string"
-          },
-          "timeout_ms": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "command"
-        ]
-      }
     }
   ],
   "context": [
@@ -104,9 +86,9 @@
   ],
   "size": {
     "systemChars": 1385,
-    "toolsChars": 1530,
+    "toolsChars": 1129,
     "contextChars": 181,
-    "tools": 7,
-    "estimatedTokens": 774
+    "tools": 6,
+    "estimatedTokens": 674
   }
 }

@@ -925,24 +925,6 @@
       }
     },
     {
-      "name": "system_shell",
-      "description": "Execute an Android system shell command with the actual Shizuku adb/root uid. Requires an authorized full-access session and approval. Android cwd is /data/local/tmp; ordinary dsh bash and file tools still use the private workspace.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "command": {
-            "type": "string"
-          },
-          "timeout_ms": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "command"
-        ]
-      }
-    },
-    {
       "name": "todo_write",
       "description": "Record and update a task list to plan multi-step work and show progress; skip it for trivial single-step tasks. Add one todo per concrete step before you start. While work remains, keep the todos being worked on `in_progress`, several only when work runs in parallel. Mark each todo `completed` as soon as it is done.",
       "parameters": {
@@ -1111,9 +1093,9 @@
   ],
   "size": {
     "systemChars": 2053,
-    "toolsChars": 23421,
+    "toolsChars": 23020,
     "contextChars": 1016,
-    "tools": 50,
-    "estimatedTokens": 6623
+    "tools": 49,
+    "estimatedTokens": 6523
   }
 }

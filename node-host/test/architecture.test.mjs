@@ -27,6 +27,10 @@ const BASELINE = new Set([
   'plugins/hoshino-m2/index.ts -> plugins/android-policy/paths.js',
   'plugins/hoshino-m2/operations.ts -> plugins/android-policy/paths.js',
   'plugins/hoshino-self/index.ts -> plugins/android-policy/paths.js',
+  // 2026-10-31 合入 codex/m2 2d075de（0.2.1-m2.8.1 热修复，已发版）时带进来的：system_shell 拒绝文案与隐藏规则以 android-policy/tier.ts 为准。
+  // 不是本分支新增；待后续把 tier 的纯函数挪进 hh-bridge 或改走 ctx.mobilePolicy 后删掉这两行。
+  'plugins/android-shizuku/index.ts -> plugins/android-policy/tier.js',
+  'plugins/hoshino-m2/tool-mask.ts -> plugins/android-policy/tier.js',
 ]);
 
 const walk = dir => readdirSync(dir).flatMap(name => {
