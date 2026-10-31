@@ -3,10 +3,22 @@
 import type { Context } from '../../node-host/src/platform.js';
 import { join } from 'node:path';
 import { isOverflowFailure, isUntrustedTool, wrapUntrusted, UNTRUSTED_RULE, recordRequest, hitRate, sha } from './core.js';
-import { settings, loadSettings, saveSettings, cacheOf, budgetOf, outcomesOf, notify, DEFAULT_SETTINGS } from './state.js';
+import { settings, loadSettings, saveSettings, cacheOf, budgetOf, outcomesOf, notify, DEFAULT_SETTINGS, type ContextSettings } from './state.js';
 import type {} from '@deepseek-ai/dsh-tools';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-system-prompt';
+
+/**
+ * Shared WP9-B state for hoshino-turn-policy and hoshino-outcome, handed over as a Cordis service so those plugins
+ * never import this plugin's files (EV4 architecture guard, node-host/test/architecture.test.mjs).
+ */
+export interface HoshinoContextService {
+  readonly settings: ContextSettings;
+  budgetOf: typeof budgetOf;
+  outcomesOf: typeof outcomesOf;
+  notify: typeof notify;
+}
+declare module '@deepseek-ai/cordis' { interface Context { hoshinoContext: HoshinoContextService } }
 
 export const name = 'hoshino-context';
 export const inject = ['androidBridge', 'agents', 'webServer', 'connection'];
@@ -16,6 +28,7 @@ const textBlocks = (content: readonly any[]) => content.filter(b => b?.type === 
 export async function apply(ctx: Context) {
   const bootstrap = ctx.androidBridge.bootstrap;
   await loadSettings(bootstrap.selfHome ?? join(bootstrap.home, 'hoshino'));
+  ctx.provide('hoshinoContext', { settings, budgetOf, outcomesOf, notify } satisfies HoshinoContextService);
 
   // ---------------------------------------------------------------- CX5: one stable rule + wrap external content once.
   ctx.on('system-prompt/assemble', async (assembly: any, _context: any, next: () => Promise<any>) => {

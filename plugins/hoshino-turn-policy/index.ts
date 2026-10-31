@@ -11,7 +11,7 @@ import { createUserMessage, BlockAssembler } from '@deepseek-ai/dsh-llm';
 import type { ContextFormed } from '@deepseek-ai/dsh-llm';
 import type {} from '@deepseek-ai/dsh-tools';
 import type {} from '@deepseek-ai/dsh-agent';
-import { settings, budgetOf, notify } from '../hoshino-context/state.js';
+import type {} from '../hoshino-context/index.js';
 import { mismatch } from './language.js';
 import { ruleIntent, parseIntent, LOOKUP_TOOLS, INTENT_PROMPT, DISCUSS_DENIAL, NUDGE, needsReadback, READBACK_TOOLS, SANDBOX_TOOLS, ADVICE, climb, signature, classify, isTransient, userReason, detail, type Intent } from './rules.js';
 
@@ -22,7 +22,7 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 export const name = 'hoshino-turn-policy';
-export const inject = ['androidBridge', 'agents', 'llm'];
+export const inject = ['androidBridge', 'agents', 'llm', 'hoshinoContext'];
 
 const text = (content: readonly any[] = []) => content.filter(b => b?.type === 'text').map(b => String(b.text ?? '')).join('');
 const notice = (kind: 'hoshino-turn-policy' | 'hoshino-guard', summary: string, body: string) =>
@@ -53,6 +53,7 @@ function humanText(events: any[]): string | null {
 type TurnState = { turn: number; nudges: Set<string>; intent?: Intent | null; intentDone?: boolean; failures: number; failureRung: number; warnings: number; lastSig?: string; sigRepeats: number; sandboxSig?: string; sandboxRepeats: number; sandboxRung: number; stopped?: string; sandboxMs: number; retries: number; retryWaitMs: number };
 
 export function apply(ctx: Context) {
+  const { settings, budgetOf, notify } = ctx.hoshinoContext;
   const states = new Map<string, TurnState>();
   const stateOf = (agent: any, turn: number): TurnState => {
     let s = states.get(agent.id);

@@ -13,6 +13,8 @@ interface Change { sessionId: string; target: FsTarget; before: string|null; aft
 export interface MobilePolicy {
   options: Map<string,SessionOptions>;
   resolveDiff(sessionId: string,id: string,accept: boolean): Promise<void>;
+  /** m2.9 main-screen guard for system_shell, shared with android-shizuku through this service (no cross-plugin import). */
+  screenGuard(command: string,sessionId: string,signal?: AbortSignal): Promise<{kind:'continue'}|{kind:'deny';reason:string}>;
 }
 declare module '@deepseek-ai/cordis' { interface Context { mobilePolicy: MobilePolicy } }
 export const name = 'android-policy';
@@ -23,7 +25,7 @@ export function apply(ctx: Context): void {
   const guards=new Map<ToolExecutionToken,{path: string;target: FsTarget;before: string|null;info: FsInfo|undefined}>();
   const remembered=new Set<string>();
   const reads=READ_TOOLS;
-  ctx.provide('mobilePolicy',{ options,async resolveDiff(sessionId,id,accept) {
+  ctx.provide('mobilePolicy',{ options,screenGuard:(command,sessionId,signal)=>systemShellScreenGuard(ctx,command,sessionId,signal),async resolveDiff(sessionId,id,accept) {
     const change=changes.get(id);if(!change || change.sessionId!==sessionId)throw new Error('Diff is no longer available');
     if(!accept) {
       const path=await workspacePath(ctx.androidBridge.bootstrap.workspace,change.target.displayPath);
