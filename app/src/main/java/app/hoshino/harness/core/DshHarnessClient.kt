@@ -203,6 +203,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override suspend fun respondApproval(sessionId: String,approvalId: String,decision: ApprovalDecision) { approvals[approvalId]?.complete(decision) }
     override suspend fun answerQuestion(sessionId:String,questionId:String,answer:String){questions[questionId]?.complete(answer.take(32000))}
     private fun JSONArray.rows()=(0 until length()).map { getJSONObject(it) }
+    /** Kernel recovery audit (redacted, no tool data): filesDir/hoshino/kernel-audit.log, last ~200 lines kept. */
+    private fun audit(kind:String,detail:String){runCatching{val f=java.io.File(context.filesDir,"hoshino/kernel-audit.log");f.parentFile?.mkdirs();val crash=runCatching{dev.hoshino.bridge.KernelRecovery.crashReason(runtime.state.value.logs.map{it.toString()})}.getOrNull();val lines=(if(f.isFile)f.readLines() else emptyList())+("${System.currentTimeMillis()} $kind $detail"+(crash?.let{" crash=$it"}?:""));f.writeText(lines.takeLast(200).joinToString("\n")+"\n")}}
     private fun content(array: JSONArray?,type: String)=array?.rows()?.filter { it.optString("type")==type }?.joinToString("") { it.optString("text") }.orEmpty()
     private fun attachmentsOf(array: JSONArray?)=array?.rows().orEmpty().filter{it.optString("type") in setOf("image","file")}.map{block->val a=block.optJSONObject("attachment") ?: JSONObject();Attachment(a.optString("attachmentId"),a.optString("name","附件"),if(block.optString("type")=="image")AttachmentKind.Image else AttachmentKind.File,"${a.optLong("bytes")/1024} KB")}
     private fun inboxMessage(m: JSONObject):InboxMessage{val source=m.optJSONObject("source")?:JSONObject();return InboxMessage(m.optString("id"),source.optString("kind"),source.optString("rpcId").ifEmpty{null},content(m.optJSONArray("content"),"text"),source.optString("display").ifEmpty{null},attachmentsOf(m.optJSONArray("content")))}
@@ -404,7 +406,34 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         control("session-options",JSONObject().put("sessionId",sessionId).put("tier",tier.key))
         syncLocalTier(sessionId,tier)
     }
-    override suspend fun send(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) {
+    /**
+     * One user turn with kernel recovery: an orphaned/crashed kernel (session.lock still held → "is already owned by an
+     * active write handle", or the loopback link dropped) restarts the kernel and retries once; a busy session cancels the
+     * stale turn and waits for idle instead of failing; a session the kernel no longer has open is reloaded via session/list.
+     */
+    override suspend fun send(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) =
+        dev.hoshino.bridge.KernelRecovery.runWithRecovery({ sendOnce(sessionId,text,attachments,options) }) { action, failure, cause ->
+            audit("kernel-recovery", "${failure.name}/${action.name}: "+vault.redact(cause.message.orEmpty()).take(300))
+            when(action){
+                dev.hoshino.bridge.KernelRecovery.Action.RestartKernel -> { restartKernel(); publish(HarnessEvent.Notice(sessionId,"kernel-recovered:${System.currentTimeMillis()}","内核已重启，已自动恢复")) }
+                dev.hoshino.bridge.KernelRecovery.Action.CancelStaleTurn -> {
+                    var polls=0
+                    while(true){
+                        val running=sessions.value.firstOrNull{it.id==sessionId}?.running==true||runCatching{api().rpc("session/list",JSONObject()).getJSONArray("items").rows().firstOrNull{it.optString("sessionId")==sessionId}?.optBoolean("running")==true}.getOrDefault(false)
+                        when(dev.hoshino.bridge.KernelRecovery.nextBusyState(running,polls)){
+                            dev.hoshino.bridge.KernelRecovery.BusyState.Ready -> break
+                            dev.hoshino.bridge.KernelRecovery.BusyState.Cancel -> runCatching{api().rpc("session/cancel",JSONObject().put("sessionId",sessionId))}
+                            dev.hoshino.bridge.KernelRecovery.BusyState.Wait -> kotlinx.coroutines.delay(500)
+                            dev.hoshino.bridge.KernelRecovery.BusyState.GiveUp -> throw cause
+                        }
+                        polls++
+                    }
+                }
+                dev.hoshino.bridge.KernelRecovery.Action.ReloadSession -> runCatching{api().rpc("session/list",JSONObject())}
+                dev.hoshino.bridge.KernelRecovery.Action.None -> throw cause
+            }
+        }
+    private suspend fun sendOnce(sessionId: String,text: String,attachments: List<Attachment>,options: TurnOptions) {
         if(runtime.state.value.phase!="已连接"){
             val id="waiting:"+UUID.randomUUID();outbox.add(PendingKernelMessages.Pending(id,sessionId,text,attachments,options,workspaceRows.value.firstOrNull{it.id==sessionRows.value.firstOrNull{s->s.id==sessionId}?.workspaceId}?.path?:"/root/workspace"));Hoshino.store.enqueue(sessionId,QueuedMessage(id,text,attachments));persistCache();startKernel();return
         }

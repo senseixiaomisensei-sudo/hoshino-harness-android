@@ -140,7 +140,18 @@ fun ChatScreen(
     LaunchedEffect(Unit) { vm.exports.collect { e -> runCatching { e.shareFile?.let { f -> app.hoshino.harness.core.AppMedia(ctx).shareFile(f, e.format.mime) } } } }
     var openTask by remember { mutableStateOf<SubTask?>(null) }
 
-    LaunchedEffect(Unit) { vm.messages.collect { toast(ctx, it) } }
+    // Kernel/long errors: show the full text (a Toast clips it to "session … is …") with 重试.
+    var errorText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { vm.messages.collect { if (vm.isFullError(it)) errorText = it else toast(ctx, it) } }
+    errorText?.let { text ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { errorText = null },
+            title = { Text("请求未完成") },
+            text = { androidx.compose.foundation.text.selection.SelectionContainer { Text(text) } },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { errorText = null; vm.retryLast() }, enabled = vm.canRetry()) { Text("重试") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { errorText = null }) { Text("关闭") } },
+        )
+    }
 
     val tier = (current?.tier ?: composer.tier).takeIf { it in vm.supportedPermissionTiers } ?: PermissionTier.WorkspaceWrite
     val presetName = presets.firstOrNull { it.id == composer.presetId }?.name ?: "Standard"

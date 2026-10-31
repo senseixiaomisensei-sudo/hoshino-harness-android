@@ -243,9 +243,15 @@ class ChatViewModel : ViewModel() {
     // ---------- 发送 ----------
 
     @Volatile var lastSendClickEpoch:Long=0;private set
+    @Volatile private var lastSentText: String? = null
+    /** Errors shown in full in a dialog with 重试 rather than a clipped Toast. */
+    fun isFullError(message: String) = ChatErrors.isFullError(message)
+    fun canRetry() = !lastSentText.isNullOrBlank()
+    fun retryLast() { lastSentText?.let { send(it) } }
     fun send(text: String, onComplete: (Boolean) -> Unit = {}) {
         lastSendClickEpoch=System.currentTimeMillis()
         val trimmed = text.trim()
+        if (trimmed.isNotEmpty()) lastSentText = trimmed
         if (trimmed.isEmpty() && _composer.value.attachments.isEmpty()) { onComplete(false);return }
         if (_composer.value.model==null) { _messages.tryEmit("请先在设置 → 供应商中添加模型");onComplete(false);return }
         if(!submission.tryLock()){onComplete(false);return}

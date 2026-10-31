@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFailure: (String) -> Unit,
                     private val onScopedFrame: (String, JSONObject) -> Unit) : Closeable {
     constructor(onFrame: (JSONObject) -> Unit,onFailure: (String) -> Unit): this(onFrame,onFailure,{ _, _ -> })
-    private val http = OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY).followRedirects(false).connectTimeout(2,TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY).followRedirects(false).connectTimeout(2,TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS).pingInterval(15,TimeUnit.SECONDS).retryOnConnectionFailure(true).build()
     private var base = ""
     private var cookie = ""
     private var socket: WebSocket? = null
@@ -62,7 +62,7 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 if(closed||generation!=socketGeneration.get())return
                 onFailure("reconnecting")
-                if(reconnecting.compareAndSet(false,true))scope.launch{delay(100);reconnecting.set(false);if(!closed)open()}
+                if(reconnecting.compareAndSet(false,true))scope.launch{var wait=100L;while(!closed&&generation==socketGeneration.get()){delay(wait);runCatching{open()}.onSuccess{reconnecting.set(false);return@launch};wait=minOf(wait*2,5000)};reconnecting.set(false)}
             }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(code, null)
