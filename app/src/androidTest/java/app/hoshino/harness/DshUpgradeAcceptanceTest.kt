@@ -18,13 +18,13 @@ class DshUpgradeAcceptanceTest {
  private fun record(key:String,value:JSONObject){val f=File(context.filesDir,"dsh-upgrade-acceptance.json");val result=runCatching{JSONObject(f.readText())}.getOrDefault(JSONObject());result.put(key,value.put("passed",true));f.writeText(result.toString(2))}
  @Test fun overwriteConnectsAndRetainsOldSessions(){
   ActivityScenario.launch(MainActivity::class.java).use{
-   ready();assertEquals(212L,context.packageManager.getPackageInfo(context.packageName,0).longVersionCode)
+   ready();assertEquals(213L,context.packageManager.getPackageInfo(context.packageName,0).longVersionCode)
    val actual=JSONObject(File(context.filesDir,"m2-runtime-health.json").readText()).getString("dshVersion");assertEquals("0.2.2-alpha.2",actual)
    val seed=JSONObject(File(context.filesDir,"m21-upgrade-seed.json").readText());val old=seed.getJSONArray("sessions")
    val live=runBlocking{client.api().rpc("session/list",JSONObject())}.getJSONArray("items");val ids=(0 until live.length()).map{i->live.getJSONObject(i).getString("sessionId")}
    for(i in 0 until old.length())assertTrue("Upstream failed to retain old session",old.getString(i) in ids)
    assertTrue(client.providers.value.any{it.id=="m21-mock"});assertEquals("m21-fixture-key",dev.hoshino.bridge.ProviderStore(context).resolve("KEY_M21_MOCK"))
-   record("2",JSONObject().put("dshVersion",actual).put("oldSessionsRetained",old.length()).put("versionCode",212).put("originalConfigurationRetained",true))
+   record("2",JSONObject().put("dshVersion",actual).put("oldSessionsRetained",old.length()).put("versionCode",213).put("originalConfigurationRetained",true))
   }
  }
  @Test fun realKernelChatsAndExecutesTools(){

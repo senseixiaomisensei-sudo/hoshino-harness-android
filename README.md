@@ -2,22 +2,24 @@
 
 开源原生 Android AI Agent：Kotlin Compose 界面 + 原版 DeepSeek Harness（DSH）/ Cordis 内核，本地运行，使用你自己的模型 API Key。MIT。
 
-## 最新版本：0.2.1-m2.8.2（2026-10-31，热修复）
+## 最新版本：0.2.1-m2.9（2026-10-31）
 
-包名 `dev.hoshino.app`，versionCode 212，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
+包名 `dev.hoshino.app`，versionCode 213，沿用原证书，**直接覆盖安装，配置与会话保留，不要卸载**。
 
-- [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.8.2/Hoshino-Harness-0.2.1-m2.8.2-arm64-v8a.apk)（非调试 fast 构建）
-- [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8.2)
-- arm64 APK：75,924,673 字节（比 m2.8.1 大 43,008 字节），SHA-256 `f69a949734c5acbec591fd81d64e5175cc08bd89c6462a18287c335d0c751e80`；签名证书 SHA-256 `e20b0b97868f158e8570f712b4d488b4f7671ecfc7f5ad72cd66b04a8a5e8fd1`；构建与验收 [Actions run 41167475356](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/actions/runs/41167475356)
+- [下载 arm64-v8a APK](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9/Hoshino-Harness-0.2.1-m2.9-arm64-v8a.apk)（非调试 fast 构建）
+- [全部产物、SHA256 与 Release 说明](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.9)
 
-修复：
-- **`phone_*` 手机工具从未加载**（m2.8 / m2.8.1）：`android-phone` 插件 Schema 缺 `additionalProperties` 导致插件未激活，AI 改用 `system_shell` 在主屏开 App；已修复，构建时缺内置工具直接失败，旧模式白名单也不再屏蔽 `phone_*`。
-- **`system_shell` 拒绝主屏启动/输入命令**（`monkey`、`am start`、`input`、`cmd statusbar` 等未指向后台虚拟屏的），改走 `phone_launch_app` / `phone_do_steps`；App 被拉到主屏时自动挪回虚拟屏。
-- **虚拟屏任务前台服务保活**：任务进行中常驻通知（带「停止」），Hoshino 在后台时任务不被回收。
+主要内容：
+- **Agent 循环**：上下文循环与压缩（原话逐字保留）、评测门（Mika 128 题、提示词金样、架构守卫、许可证门）。
+- **手机操作**：动作后等待判定（慢页面不误判）；复合读工具 `phone_query` / `phone_extract` / `phone_find` / `phone_collect`；剪贴板安全打字与 `typeAt`；首配 ≤ 2 分钟与无障碍自愈；每步测速；悬浮球面板（实时虚拟屏 + 当前进程 + 停止）、预览无极缩放、手动接管/交还；虚拟屏帧率 5–60 fps 可调（默认 30）。
+- **国内不开代理连接修复**：系统 DNS + 国内备用 DNS、网络切换自动更新、IPv4 优先、应用内 HTTP 代理/继承系统代理、错误分类提示（见 [docs/cn-network.md](docs/cn-network.md)）。官方 ChatGPT 在国内仍需代理。
+- 实验：零拷贝预览默认关。
 
-需小米 15S Pro 真机验收（CI 未覆盖）：开 App 只出现在后台虚拟屏、主屏不被打断；`system_shell` 开 App 被拒；前台服务通知与「停止」；HyperOS 后台长任务保活。CI 已验证：编译与单测、插件工具注册与守卫测试、arm64 真内核启动、x86_64 模拟器覆盖安装保留会话与配置、聊天与工具调用。
+需小米 15S Pro 真机验收（CI 未覆盖）：悬浮球面板、接管/交还、帧率、复合读工具、剪贴板打字、首配与无障碍自愈、国内不开代理连接。CI 已验证：编译与单测、评测门、arm64 真内核启动、x86_64 模拟器覆盖安装保留会话与配置、聊天与工具调用。
 
-上一版 [0.2.1-m2.8.1](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8.1)（2026-10-31，热修复：悬浮胶囊稳定、系统命令权限与报错）：arm64 APK 75,881,665 字节，SHA-256 `dd05836796d1fca75c9093004cc1efa918966efe5e8d9058df151b8f565cbfb3`。
+上一版 [0.2.1-m2.8.2](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8.2)（2026-10-31，热修复：`phone_*` 工具加载、主屏命令守卫、虚拟屏任务保活）：arm64 APK 75,924,673 字节，SHA-256 `f69a949734c5acbec591fd81d64e5175cc08bd89c6462a18287c335d0c751e80`。
+
+[0.2.1-m2.8.1](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8.1)（2026-10-31，热修复：悬浮胶囊稳定、系统命令权限与报错）：arm64 APK 75,881,665 字节，SHA-256 `dd05836796d1fca75c9093004cc1efa918966efe5e8d9058df151b8f565cbfb3`。
 
 [0.2.1-m2.8](https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.8)（2026-10-31）：**手机操作**——后台虚拟屏、无障碍读屏、开源 OCR、接管与悬浮胶囊，审批沿用 m2.7 审批档；清单见 [docs/m2.8-phone-acceptance.md](docs/m2.8-phone-acceptance.md)。arm64 APK 75,818,353 字节，SHA-256 `33e6ff3f1e78ecd3516afe9fa16ccf41c5caa687515c46f674fe11223cabbacc`。
 
