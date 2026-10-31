@@ -880,11 +880,11 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val existing=stored?.metadata?.optJSONArray("headerRefs")?.rows()?.associate { it.getString("name") to vault.resolve(it.getString("ref")).orEmpty() }.orEmpty()
         val headers=provider.headers.associate { it.first to if(it.second=="••••••••")existing[it.first].orEmpty() else it.second }
         val result=try { dev.hoshino.bridge.ProviderProbe().models(StoredProvider(provider.id,if(provider.protocol==ProviderProtocol.Anthropic)"anthropic" else "openai-compatible",provider.baseUrl,emptyList()),key,headers) }
-            catch(cancelled: CancellationException) { throw cancelled } catch(_: Exception) { throw IllegalStateException("拉取模型失败，请检查协议、地址与凭据") }
+            catch(cancelled: CancellationException) { throw cancelled } catch(e: Exception) { throw IllegalStateException("拉取模型失败：" + (e.message?.takeIf { it.isNotBlank() } ?: "请检查协议、地址与凭据"), e) }
         return result.rows().map { row -> provider.models.firstOrNull { it.id==row.getString("id") } ?: ModelInfo(row.getString("id"),row.getString("name"),128000,4096,false,provider.protocol==ProviderProtocol.Anthropic,if(provider.protocol==ProviderProtocol.Anthropic)ReasoningEffort.Medium else ReasoningEffort.Off) }
     }
     override suspend fun testProvider(provider: Provider): Result<String> = try {
         Result.success("连接成功，可获取 ${fetchModels(provider).size} 个模型")
-    } catch(cancelled: CancellationException) { throw cancelled } catch(_: Exception) { Result.failure(IllegalStateException("连接失败，请检查协议、地址和凭据")) }
+    } catch(cancelled: CancellationException) { throw cancelled } catch(e: Exception) { Result.failure(IllegalStateException((e.message?.removePrefix("拉取模型失败：")?.let { "连接失败：$it" }) ?: "连接失败，请检查协议、地址和凭据")) }
 }
 

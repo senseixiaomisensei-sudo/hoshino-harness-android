@@ -69,10 +69,11 @@ object KernelNetwork {
      * Node's fetch, so a socks proxy only reaches shell tools via ALL_PROXY (curl, git, pip…).
      * Loopback always bypasses the proxy: the Android callback bridge and local Ollama live there.
      */
-    fun proxyEnvironment(appProxy: String?, systemProxy: String?): Map<String, String> {
+    fun proxyEnvironment(appProxy: String?, systemProxy: String?, localHosts: Collection<String> = emptyList()): Map<String, String> {
         val proxy = normalizeProxy(appProxy) ?: normalizeProxy(systemProxy) ?: return emptyMap()
         val env = linkedMapOf<String, String>()
-        val noProxy = "127.0.0.1,localhost,::1"
+        // m2.9.5: LAN model servers (Ollama on a PC) must not go through the proxy either.
+        val noProxy = (listOf("127.0.0.1", "localhost", "::1", ".local", ".lan") + localHosts.filter { isLocalNetworkHost(it) }).distinct().joinToString(",")
         env["ALL_PROXY"] = proxy; env["all_proxy"] = proxy
         if (proxy.startsWith("http")) {
             env["HTTPS_PROXY"] = proxy; env["https_proxy"] = proxy
@@ -107,7 +108,8 @@ object KernelNetwork {
     }
 
     fun kernelProxyEnvironment(context: Context): Map<String, String> =
-        proxyEnvironment(appProxy(context), if (inheritSystemProxy(context)) systemProxy(context) else null)
+        proxyEnvironment(appProxy(context), if (inheritSystemProxy(context)) systemProxy(context) else null,
+            runCatching { ProviderStore(context).list().mapNotNull { runCatching { java.net.URI(normalizeProviderInput(it.baseURL)).host }.getOrNull() } }.getOrDefault(emptyList()))
 
     /** Rewrites [file] in place (proot binds the path, so the running kernel sees new contents on its next lookup). */
     fun writeResolvConf(file: File, systemDns: List<String>) {

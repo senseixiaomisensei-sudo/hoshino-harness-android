@@ -183,7 +183,7 @@ fun ProviderEditScreen(vm: ConfigViewModel, providerId: String, onBack: () -> Un
     fun draft() = initial.copy(
         name = name.trim().ifBlank { "未命名" },
         protocol = protocol,
-        baseUrl = baseUrl.trim(),
+        baseUrl = dev.hoshino.bridge.normalizeProviderInput(baseUrl),
         apiKey = apiKey.trim().ifBlank { initial.apiKey },
         headers = headers.lines().filter { it.contains(':') }.map { it.substringBefore(':').trim() to it.substringAfter(':').trim() },
         enabled = enabled,
@@ -217,7 +217,7 @@ fun ProviderEditScreen(vm: ConfigViewModel, providerId: String, onBack: () -> Un
                     testing = true
                     testResult = null
                     scope.launch {
-                        val r = vm.client.testProvider(draft())
+                        val r = try { vm.client.testProvider(draft()) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (e: Throwable) { Result.failure(e) }
                         testResult = r.fold({ true to it }, { false to (it.message ?: "失败") })
                         testing = false
                     }
@@ -233,11 +233,20 @@ fun ProviderEditScreen(vm: ConfigViewModel, providerId: String, onBack: () -> Un
             HButton(if (fetching) "拉取中…" else "从接口拉取", {
                 fetching = true
                 scope.launch {
-                    val fetched = vm.client.fetchModels(draft())
-                    val existing = models.map { it.id }.toSet()
-                    models = models + fetched.filter { it.id !in existing }
-                    fetching = false
-                    vm.toast("拉取到 ${fetched.size} 个模型")
+                    // m2.9.5: a failed fetch used to throw out of this coroutine and crash the app.
+                    try {
+                        val fetched = vm.client.fetchModels(draft())
+                        val existing = models.map { it.id }.toSet()
+                        models = models + fetched.filter { it.id !in existing }
+                        vm.toast("拉取到 ${fetched.size} 个模型")
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (e: Throwable) {
+                        testResult = false to (e.message ?: "拉取模型失败")
+                        vm.toast(e.message?.take(80) ?: "拉取模型失败")
+                    } finally {
+                        fetching = false
+                    }
                 }
             }, style = BtnStyle.Ghost, compact = true, enabled = !fetching, icon = HIcons.Refresh)
             HButton("手动添加", {
