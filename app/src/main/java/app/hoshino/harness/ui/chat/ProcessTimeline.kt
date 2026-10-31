@@ -54,6 +54,13 @@ internal fun ProcessTimeline(row: ChatRow.ProcessRow, actions: MessageActions, d
             }
         }
         if (expanded) {
+            // 无审批模式自动放行的调用不产生审批卡；在过程组里留一行审计（与「审批后折叠」的一行小字同级）。
+            if (summary.autoApproved > 0) Text(
+                ProcessSummary.autoApprovalLine(summary.autoApproved),
+                style = HoshinoTheme.type.caption,
+                color = c.text3,
+                modifier = Modifier.padding(start = 18.dp, end = 12.dp, top = 2.dp, bottom = 6.dp),
+            )
             val steps = remember(row) { items.filterNot { it is ChatItem.Approval } }
             val stepIndex = remember(row) { HashMap<String, Int>().apply { steps.forEachIndexed { i, it -> put(it.id, i) } } }
             items.forEach { item ->
@@ -116,15 +123,20 @@ internal data class ProcessSummary(
     val waiting: Boolean,
     val finishedMs: Long,
     val runningSince: Long?,
+    /** 无审批模式下自动放行的工具调用数。 */
+    val autoApproved: Int = 0,
 ) {
     fun title(durationMs: Long): String {
         val status = if (waiting) "等待审批" else if (running) "运行中" else if (failed) "失败" else "已完成"
-        val approvalsText = if (approvals > 0) " · 审批 $approvals" else ""
+        val approvalsText = (if (approvals > 0) " · 审批 $approvals" else "") + (if (autoApproved > 0) " · 自动放行 $autoApproved" else "")
         return if (running) "$action · $tools 步 · ${formatDuration(durationMs)} · $status"
         else "已运行 $tools 步 · ${formatDuration(durationMs)}${if (files > 0) " · 改了 $files 个文件" else ""}$approvalsText · $status"
     }
 
     companion object {
+        fun isAutoApproved(item: ChatItem): Boolean = item is ChatItem.Tool && item.autoApproved || item is ChatItem.Terminal && item.autoApproved
+        fun autoApprovalLine(count: Int): String = "无审批 · 自动放行 $count 次工具调用（已记入审计日志）"
+
         fun of(items: List<ChatItem>, waiting: Boolean): ProcessSummary {
             val running = items.any { it is ChatItem.Thinking && it.running || it is ChatItem.Tool && it.status == ToolStatus.Running || it is ChatItem.Terminal && it.status == ToolStatus.Running }
             val failed = items.any { it is ChatItem.Tool && it.status == ToolStatus.Failed || it is ChatItem.Terminal && it.status == ToolStatus.Failed }
@@ -141,6 +153,7 @@ internal data class ProcessSummary(
                 waiting = waiting,
                 finishedMs = thinking.filter { !it.running }.sumOf { it.durationMs },
                 runningSince = thinking.filter { it.running }.minOfOrNull { it.startedAt },
+                autoApproved = items.count(::isAutoApproved),
             )
         }
     }

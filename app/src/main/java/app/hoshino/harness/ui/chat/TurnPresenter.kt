@@ -160,13 +160,26 @@ class TurnPresenter {
             val byTurn = HashMap<String, String>(marks.size * 2).apply { marks.forEach { if (it.groupKey in keys) put(it.turnId, it.groupKey) } }
             val timed = marks.filter { it.groupKey in keys && it.startedAt > 0 }.sortedBy { it.startedAt }
             val last = turns.last().key
+            // 插话（steer）的用户消息在界面上另起一组，但仍属于同一个 dsh 轮次：把文件放到该轮最后一个插话分组里，
+            // 让文件卡紧跟这一轮真正的最终回答。只跨过没有自己轮次标记、且以插话开头的分组。
+            val marked = HashSet<String>(marks.size * 2).apply { marks.forEach { add(it.groupKey) } }
+            val index = HashMap<String, Int>(turns.size * 2).apply { turns.forEachIndexed { i, t -> put(t.key, i) } }
+            fun spanEnd(key: String): String {
+                var i = index[key] ?: return key
+                while (i + 1 < turns.size) {
+                    val next = turns[i + 1]
+                    if (next.key in marked || (next.items.firstOrNull() as? ChatItem.User)?.steer != true) break
+                    i++
+                }
+                return turns[i].key
+            }
             val out = LinkedHashMap<String, MutableList<DeliveredFile>>()
             for (f in deliveries) {
-                val key = f.turnId?.let { byTurn[it] }
+                val key = f.turnId?.let { byTurn[it] }?.let(::spanEnd)
                     ?: if (f.deliveredAt > 0 && timed.isNotEmpty()) {
                         var lo = 0; var hi = timed.lastIndex; var found = -1
                         while (lo <= hi) { val mid = (lo + hi) ushr 1; if (timed[mid].startedAt <= f.deliveredAt) { found = mid; lo = mid + 1 } else hi = mid - 1 }
-                        timed[if (found < 0) 0 else found].groupKey
+                        spanEnd(timed[if (found < 0) 0 else found].groupKey)
                     } else last
                 out.getOrPut(key) { ArrayList() }.add(f)
             }

@@ -25,6 +25,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.hoshino.harness.core.ApprovalMode
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import app.hoshino.harness.core.ApprovalModeRules
 import app.hoshino.harness.core.ApprovalScope
 import app.hoshino.harness.core.ApprovalState
@@ -78,8 +80,9 @@ fun NoApprovalBanner(state: ApprovalState, onClick: () -> Unit) {
 /** 插话气泡下的去向：已收到，下一步处理 → 已加入当前任务（停止时作废的标为已停止）。 */
 @Composable
 fun SteerStatusLine(itemId: String) {
-    val states by app.hoshino.harness.core.Steering.states.collectAsStateWithLifecycle()
-    val steer = states[itemId] ?: return
+    // 只订阅这一条插话的状态：其它插话变化不让这个气泡重组（与 M2.7 稳定 key / @Immutable 行渲染配合）。
+    val flow = remember(itemId) { app.hoshino.harness.core.Steering.states.map { it[itemId] }.distinctUntilChanged() }
+    val steer = flow.collectAsStateWithLifecycle(app.hoshino.harness.core.Steering.states.value[itemId]).value ?: return
     val c = HoshinoTheme.colors
     Text(steer.label, style = HoshinoTheme.type.caption, color = if (steer == app.hoshino.harness.core.SteerState.Cancelled) c.text3 else c.accent, modifier = Modifier.padding(top = 4.dp, end = 4.dp))
 }

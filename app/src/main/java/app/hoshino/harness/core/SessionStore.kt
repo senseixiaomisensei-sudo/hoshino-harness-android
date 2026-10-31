@@ -46,6 +46,8 @@ sealed interface ChatItem {
         val inputLength: Long = input.length.toLong(),
         val outputLength: Long = output.length.toLong(),
         val callId: String? = null,
+        /** 无审批模式下自动放行（M2.7）：过程组里显示一行审计。 */
+        val autoApproved: Boolean = false,
     ) : ChatItem {
         val outputTruncated: Boolean get() = outputLength > output.length
     }
@@ -367,7 +369,7 @@ class SessionStore(
             val item: ChatItem = if (e.kind == ToolKind.Bash) {
                 ChatItem.Terminal(e.id, e.summary, "", ToolStatus.Running, null, e.autoApproved, callId = e.callId)
             } else {
-                ChatItem.Tool(e.id, e.name, e.summary, OutputTail.head(e.input), "", ToolStatus.Running, inputLength = e.input.length.toLong(), callId = e.callId)
+                ChatItem.Tool(e.id, e.name, e.summary, OutputTail.head(e.input), "", ToolStatus.Running, inputLength = e.input.length.toLong(), callId = e.callId, autoApproved = e.autoApproved)
             }
             s.append(item).copy(stats = s.stats.copy(toolCalls = s.stats.toolCalls + 1))
                 .traj(TrajSource.ToolCall, e.name, e.input)
