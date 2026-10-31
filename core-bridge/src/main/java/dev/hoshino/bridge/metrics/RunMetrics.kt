@@ -300,7 +300,8 @@ object ToolKinds {
         "clipboard_read", "session_search",
     )
     private val CONTROL_NAMES = setOf("ask_user", "todo_write", "todo_read", "subagent_wait", "goal_status")
-    private val OBSERVE_HINT = Regex("(^|_)(read|get|list|search|fetch|inspect|observe|screenshot|query|status|find|view|peek)(_|$)")
+    // WP-4: phone_extract / phone_collect only read (collect scrolls, but changes nothing in the app).
+    private val OBSERVE_HINT = Regex("(^|_)(read|get|list|search|fetch|inspect|observe|screenshot|query|status|find|view|peek|extract|collect)(_|$)")
 
     /** "observe" / "act"；控制类返回 null。 */
     fun kindOf(name: String): String? = when {

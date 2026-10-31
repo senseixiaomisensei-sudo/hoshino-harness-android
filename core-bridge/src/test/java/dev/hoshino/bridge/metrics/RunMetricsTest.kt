@@ -163,6 +163,7 @@ class RunMetricsTest {
         assertEquals(ToolKinds.OBSERVE, ToolKinds.kindOf("read"))
         assertEquals(ToolKinds.OBSERVE, ToolKinds.kindOf("web_search"))
         assertEquals(ToolKinds.OBSERVE, ToolKinds.kindOf("phone_read_screen"))
+        for (read in listOf("phone_query", "phone_extract", "phone_find", "phone_collect")) assertEquals(read, ToolKinds.OBSERVE, ToolKinds.kindOf(read))
         assertEquals(ToolKinds.ACT, ToolKinds.kindOf("bash"))
         assertEquals(ToolKinds.ACT, ToolKinds.kindOf("write"))
         assertEquals(ToolKinds.ACT, ToolKinds.kindOf("phone_tap"))
