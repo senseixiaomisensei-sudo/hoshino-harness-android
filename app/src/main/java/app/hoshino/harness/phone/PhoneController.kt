@@ -96,7 +96,7 @@ class PhoneController private constructor(private val context: Context) {
         PhoneAccessibilityService.instance.value ?: throw PhoneUnavailable("accessibility", "Hoshino 的无障碍服务没有开启")
         return services.shell.value ?: run {
             scope.launch { services.ensure() }
-            throw PhoneUnavailable("helper", "手机助手没有运行（内置无线调试助手或 Shizuku 都不可用）")
+            throw PhoneUnavailable("helper", "手机助手没有运行：请在 设置 → 设置手机操作 配对内置无线调试助手（不需要 Shizuku）；已配对的话确认连着 Wi-Fi 且无线调试开着")
         }
     }
 

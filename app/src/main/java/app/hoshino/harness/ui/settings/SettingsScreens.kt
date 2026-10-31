@@ -198,14 +198,15 @@ fun SecurityScreen(vm: ConfigViewModel, app: AppViewModel, onBack: () -> Unit, o
                 )
             }
         }
-        SectionLabel("Shizuku（完全访问所需）")
+        SectionLabel("完全访问的系统执行（Shizuku 或 内置无线调试助手，二选一）")
         GroupCard {
-            ListRow("Shizuku 状态与引导", icon = HIcons.Bolt, showChevron = true, onClick = { onNavigate(Routes.SHIZUKU) }, trailing = { ShizukuStatusPill(shizuku) })
+            ListRow("内置无线调试助手", icon = HIcons.Phone, subtitle = "不用装 Shizuku：在 设置手机操作 里配对一次即可", showChevron = true, onClick = { onNavigate(Routes.PHONE_SETUP) })
+            ListRow("Shizuku 状态与引导（可选）", icon = HIcons.Bolt, showChevron = true, onClick = { onNavigate(Routes.SHIZUKU) }, trailing = { ShizukuStatusPill(shizuku) })
         }
         SectionLabel("沙箱后端")
         GroupCard {
             ListRow(
-                kernel.sandbox, icon = HIcons.Terminal, subtitle = "bash 在 proot 中运行；system_shell 经 Shizuku 使用真实 ADB/Root 权限，仍需审批",
+                kernel.sandbox, icon = HIcons.Terminal, subtitle = "bash 在 proot 中运行；system_shell 经 Shizuku 或 内置无线调试助手使用真实 ADB 权限，仍需审批",
                 trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         StatusDot(if (kernel.sandboxReady) c.success else c.warning, size = 6.dp)
@@ -227,7 +228,7 @@ fun ShizukuScreen(vm: ConfigViewModel, onBack: () -> Unit) {
     val c = HoshinoTheme.colors
     PageScaffold("Shizuku", onBack) {
         Text(
-            "完全访问会话可通过 system_shell 使用 Shizuku 的真实 ADB/Root 权限。普通 bash 和文件工具仍在私有工作区中，系统命令继续走审批。",
+            "Shizuku 是可选的：完全访问会话的 system_shell 可经 Shizuku 或 内置无线调试助手（设置 → 设置手机操作）使用真实 ADB 权限。打开/操作 App 走手机操作，不需要 Shizuku。普通 bash 和文件工具仍在私有工作区中，系统命令继续走审批。",
             style = HoshinoTheme.type.caption, color = c.text2, modifier = Modifier.padding(20.dp),
         )
         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().hairlineCard(c.surface, c.line).padding(16.dp)) {

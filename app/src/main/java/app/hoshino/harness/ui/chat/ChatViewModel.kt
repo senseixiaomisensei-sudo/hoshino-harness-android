@@ -65,6 +65,7 @@ class ChatViewModel : ViewModel() {
     val providers = client.providers
     val routing = client.routing
     val shizuku = client.shizuku
+    val systemAccess = client.systemAccess
     val supportedPermissionTiers = client.supportedPermissionTiers
     private val submission=Mutex()
     val uiCustomization=client.uiCustomization
@@ -329,7 +330,7 @@ class ChatViewModel : ViewModel() {
 
     fun setTier(t: PermissionTier) {
         if(t !in supportedPermissionTiers) { _messages.tryEmit("系统完全访问即将支持；Shizuku 授权已单独保存，可继续使用工作区内修改");return }
-        if(t==PermissionTier.FullAccess && shizuku.value!=app.hoshino.harness.core.ShizukuStatus.Ready) { _messages.tryEmit("请先启动 Shizuku 并授权 Hoshino Harness");return }
+        if(t==PermissionTier.FullAccess && !app.hoshino.harness.core.SystemAccess.authorized(systemAccess.value)) { _messages.tryEmit(app.hoshino.harness.core.SystemAccess.ENABLE_FIRST);return }
         _composer.update { it.copy(tier = t) }
         val id = _currentId.value ?: return
         viewModelScope.launch(errors) { client.setSessionTier(id, t) }

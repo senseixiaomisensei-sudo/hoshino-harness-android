@@ -62,6 +62,7 @@ import app.hoshino.harness.core.ConnectionState
 import app.hoshino.harness.core.PermissionTier
 import app.hoshino.harness.core.SessionInfo
 import app.hoshino.harness.core.ShizukuStatus
+import app.hoshino.harness.core.SystemAccess
 import app.hoshino.harness.core.SlashCommand
 import app.hoshino.harness.core.SubTask
 import app.hoshino.harness.ui.components.HDialog
@@ -115,6 +116,7 @@ fun ChatScreen(
     val providers by vm.providers.collectAsStateWithLifecycle()
     val connection by vm.connection.collectAsStateWithLifecycle()
     val shizuku by vm.shizuku.collectAsStateWithLifecycle()
+    val systemAccess by vm.systemAccess.collectAsStateWithLifecycle()
     val slash by vm.slashCommands.collectAsStateWithLifecycle()
     val custom by vm.uiCustomization.collectAsStateWithLifecycle()
     val files by vm.fileSuggestions.collectAsStateWithLifecycle()
@@ -367,12 +369,13 @@ fun ChatScreen(
     }
 
     // ---------------- 弹层 / 对话框
-    if (showTier) TierSheet(tier, shizuku, onPick = { pickTier(it) }, onDismiss = { showTier = false }, supportedTiers=vm.supportedPermissionTiers)
+    if (showTier) TierSheet(tier, shizuku, onPick = { pickTier(it) }, onDismiss = { showTier = false }, supportedTiers=vm.supportedPermissionTiers, systemAccess = systemAccess)
     if (showRisk) {
         FullAccessRiskDialog(
             onConfirm = {
                 showRisk = false
-                if (shizuku == ShizukuStatus.Ready) vm.setTier(PermissionTier.FullAccess) else showShizuku = true
+                // m2.8.1: Shizuku 或 内置无线调试助手任一就绪即可；用户仍需在此会话手动确认风险。
+                if (SystemAccess.authorized(systemAccess)) vm.setTier(PermissionTier.FullAccess) else showShizuku = true
             },
             onDismiss = { showRisk = false },
         )
@@ -381,11 +384,13 @@ fun ChatScreen(
         ShizukuGuideSheet(
             status = shizuku,
             pendingEnable = true,
-            onRefresh = { scope.launch { Hoshino.client.refreshShizuku() } },
+            onRefresh = { scope.launch { Hoshino.client.refreshShizuku(); Hoshino.client.refreshSystemAccess() } },
             onRequest = { scope.launch { Hoshino.client.requestShizukuPermission() } },
             onEnable = { vm.setTier(PermissionTier.FullAccess); showShizuku = false },
             onDismiss = { showShizuku = false },
             executionAvailable = PermissionTier.FullAccess in vm.supportedPermissionTiers,
+            systemAccess = systemAccess,
+            onSetupPhone = { showShizuku = false; navigate(Routes.PHONE_SETUP) },
         )
     }
     if (showModel) {
