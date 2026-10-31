@@ -37,7 +37,7 @@ class NativeKernel(private val context: Context,
             try {
                 previous?.join();ensureActive()
                 val store=ProviderStore(context)
-                callback=AndroidCallbackServer(scope,::diagnostic) { method,body ->
+                callback=AndroidCallbackServer(scope,::diagnostic,{ text -> store.redact(text) }) { method,body ->
                     when(method) {
                         "providers" -> JSONArray(store.list().filter { it.metadata.optBoolean("enabled",true) }.map { store.runtimeJson(it) })
                         "credential" -> if(body.getString("ref")==ChatGptAuth.CREDENTIAL_REF) {

@@ -10,7 +10,11 @@ import java.net.ServerSocket
 import java.security.MessageDigest
 import java.security.SecureRandom
 
-class AndroidCallbackServer(scope: CoroutineScope, private val onDiagnostic: (String) -> Unit = {}, private val handler: suspend (String, JSONObject) -> Any) : Closeable {
+/**
+ * [redact] scrubs stored credentials from a failure message before it is returned to the kernel in a 500 body
+ * (m2.8.1: an empty 500 left the model with only "Android callback failed (500)"). Diagnostics stay class-name only.
+ */
+class AndroidCallbackServer(scope: CoroutineScope, private val onDiagnostic: (String) -> Unit = {}, private val redact: (String) -> String = { it }, private val handler: suspend (String, JSONObject) -> Any) : Closeable {
     private val server = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
     val port: Int get() = server.localPort
     val token: String = ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
@@ -42,7 +46,8 @@ class AndroidCallbackServer(scope: CoroutineScope, private val onDiagnostic: (St
                             socket.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray() + body)
                         } catch (failure: Exception) {
                             onDiagnostic("callback: ${failure.javaClass.simpleName}")
-                            runCatching { socket.getOutputStream().write("HTTP/1.1 500 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()) }
+                            val body = errorBody(failure, redact).toByteArray()
+                            runCatching { socket.getOutputStream().write("HTTP/1.1 500 Error\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray() + body) }
                         }
                     }
                 }
@@ -50,4 +55,13 @@ class AndroidCallbackServer(scope: CoroutineScope, private val onDiagnostic: (St
         }
     }
     override fun close() { server.close() }
+
+    companion object {
+        const val MAX_ERROR_CHARS = 2000
+        /** `{"error": message}` for a failed callback: redacted, capped, never empty (falls back to the exception type). */
+        fun errorBody(failure: Throwable, redact: (String) -> String): String {
+            val message = runCatching { redact(failure.message.orEmpty()) }.getOrDefault("").trim().take(MAX_ERROR_CHARS)
+            return JSONObject().put("error", message.ifEmpty { failure.javaClass.simpleName.ifEmpty { "Exception" } }).toString()
+        }
+    }
 }
