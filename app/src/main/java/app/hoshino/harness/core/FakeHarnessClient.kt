@@ -96,6 +96,11 @@ class FakeHarnessClient(
 
     override suspend fun setArchived(sessionId: String, archived: Boolean) = updateSession(sessionId) { it.copy(archived = archived) }
 
+    override suspend fun setPinned(sessionId: String, pinned: Boolean) = updateSession(sessionId) { it.copy(pinnedAt = if (pinned) now() else 0L) }
+    private val approvalBook = ApprovalBook()
+    override suspend fun approvalState(sessionId: String?) = approvalBook.state(sessionId)
+    override suspend fun setApprovalMode(sessionId: String?, mode: ApprovalMode, scope: ApprovalScope) = approvalBook.set(sessionId, mode, scope)
+
     override suspend fun deleteSession(sessionId: String) {
         runs.remove(sessionId)?.cancel()
         _sessions.update { list -> list.filterNot { it.id == sessionId } }

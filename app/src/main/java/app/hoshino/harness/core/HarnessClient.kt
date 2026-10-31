@@ -62,6 +62,18 @@ interface HarnessClient {
     suspend fun send(sessionId: String, text: String, attachments: List<Attachment>, options: TurnOptions)
     /** 插话：运行中把一条消息立即注入当前轮次上下文。 */
     suspend fun steer(sessionId: String, text: String)
+    /** 带附件的插话；不支持附件的实现只接受纯文字。 */
+    suspend fun steer(sessionId: String, text: String, attachments: List<Attachment>) { require(attachments.isEmpty()) { "插话暂不支持附件" }; steer(sessionId, text) }
+
+    // ---------- 会话管理与审批档（M2.7） ----------
+    /** 批量删除（确认后调用）；默认逐个删除。 */
+    suspend fun deleteSessions(sessionIds: List<String>) { for (id in sessionIds) deleteSession(id) }
+    suspend fun setPinned(sessionId: String, pinned: Boolean): Unit = throw UnsupportedOperationException("置顶即将支持")
+    /** 导出为 Markdown / JSON，保存到「下载/Hoshino」。 */
+    suspend fun exportSessionFile(sessionId: String, format: SessionExportFormat): ExportedSession = throw UnsupportedOperationException("导出即将支持")
+    /** 某会话（null = 新会话）当前的审批档。 */
+    suspend fun approvalState(sessionId: String?): ApprovalState = ApprovalState()
+    suspend fun setApprovalMode(sessionId: String?, mode: ApprovalMode, scope: ApprovalScope): ApprovalState = throw UnsupportedOperationException("审批设置需要真实内核")
     suspend fun stop(sessionId: String)
     suspend fun respondApproval(sessionId: String, approvalId: String, decision: ApprovalDecision)
     suspend fun answerQuestion(sessionId: String, questionId: String, answer: String)

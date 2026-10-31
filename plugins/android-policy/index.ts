@@ -2,6 +2,7 @@ import type { Context } from '../../node-host/src/platform.js';
 import { readFile, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { workspacePath } from './paths.js';
+import { tierGate, READ_TOOLS } from './tier.js';
 import {resolve} from 'node:path';
 import type {} from '@deepseek-ai/dsh-working-directory';
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs';
@@ -20,7 +21,7 @@ export function apply(ctx: Context): void {
   const changes=new Map<string,Change>();
   const guards=new Map<ToolExecutionToken,{path: string;target: FsTarget;before: string|null;info: FsInfo|undefined}>();
   const remembered=new Set<string>();
-  const reads=new Set(['get_device_info','read','read_image','skill','self_inspect','self_config_read','self_read','self_diff','self_doctor','ask_user']);
+  const reads=READ_TOOLS;
   ctx.provide('mobilePolicy',{ options,async resolveDiff(sessionId,id,accept) {
     const change=changes.get(id);if(!change || change.sessionId!==sessionId)throw new Error('Diff is no longer available');
     if(!accept) {
@@ -41,8 +42,9 @@ export function apply(ctx: Context): void {
   ctx.on('tools/pre-execute', async (exec, next) => {
     const sessionId=exec.agent?.id ?? '';
     const policy=options.get(sessionId);
-    if(exec.name==='system_shell' && policy?.tier!=='full-access')return {kind:'deny',reason:'System shell requires an authorized full-access session'};
-    if(!reads.has(exec.name) && (policy?.tier==='read-only' || policy?.planMode))return {kind:'deny',reason:'Read-only session'};
+    // Tier first: approval modes (even no-approval) never widen read-only / workspace / full-access boundaries.
+    const gate=tierGate(policy?.tier,policy?.planMode,exec.name);
+    if(gate.kind==='deny')return gate;
     const args=exec.arguments as Record<string,unknown>;
     let path: string|undefined;
     if(['read','read_image','write','edit'].includes(exec.name)) {

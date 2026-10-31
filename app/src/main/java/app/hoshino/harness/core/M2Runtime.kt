@@ -80,6 +80,13 @@ class M2Runtime(
             else -> error("未知原生桥能力")
         }
     }
+    /** 删除会话时一并去掉它的交付文件记录（工作区里的文件本身属于用户，不删）。 */
+    suspend fun forgetSessions(ids:Set<String>)=withContext(Dispatchers.IO){
+        if(deliveries.value.none{it.sessionId in ids})return@withContext
+        deliveries.update{rows->rows.filterNot{it.sessionId in ids}}
+        // 用 M2.7 的编码器：保留其余会话记录的 turnId/deliveredAt/callId（文件卡归轮依赖它们）。
+        records.writeText(DeliveredFileCodec.encode(deliveries.value))
+    }
     suspend fun save(file:File,name:String=""):JSONObject=withContext(Dispatchers.IO) {
         val type=android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())?:"application/octet-stream"
         val values=android.content.ContentValues().apply{put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,name.ifBlank{file.name}.replace('/','_'));put(android.provider.MediaStore.MediaColumns.MIME_TYPE,type);put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,"Download/Hoshino");put(android.provider.MediaStore.MediaColumns.IS_PENDING,1)}

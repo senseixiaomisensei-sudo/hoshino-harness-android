@@ -36,8 +36,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val events=eventBus.asSharedFlow()
     override val connection=runtime.state.map { when(it.phase) { "已连接" -> ConnectionState.Connected; "启动中", "重新连接" -> ConnectionState.Connecting; else -> ConnectionState.Disconnected } }.stateIn(scope,SharingStarted.Eagerly,ConnectionState.Disconnected)
     override val kernel=runtime.state.map { KernelInfo("0.2.2-alpha.2","24.18.1",it.phase=="已连接","proot + Alpine",it.phase=="已连接") }.stateIn(scope,SharingStarted.Eagerly,KernelInfo("0.2.2-alpha.2","24.18.1",false,"proot + Alpine",false))
-    private val sessionRows=MutableStateFlow<List<SessionInfo>>(initialRows)
-    override val sessions=sessionRows.asStateFlow()
+    // 删除：墓碑立即隐藏，持久化文件在内核停止时删除（dsh 无删除 RPC，见 SessionPurge）。置顶：本地记录为准，同步到 dsh 工作区置顶。
+    private val purge=SessionPurge(java.io.File(context.filesDir,"hoshino-deleted-sessions.txt"),java.io.File(context.filesDir,"dsh-home/sessions"))
+    private val deletedIds=MutableStateFlow(purge.pending())
+    private val pinRows=MutableStateFlow(readPins())
+    private val sessionRows=MutableStateFlow<List<SessionInfo>>(initialRows.filterNot{it.id in deletedIds.value})
+    override val sessions=combine(sessionRows,pinRows,deletedIds){rows,pins,deleted->rows.filterNot{it.id in deleted}.map{row->row.copy(pinnedAt=pins[row.id]?:0L)}}
+        .stateIn(scope,SharingStarted.Eagerly,sessionRows.value.map{row->row.copy(pinnedAt=pinRows.value[row.id]?:0L)})
     private val workspaceRows=MutableStateFlow(listOf(Workspace("ws-default","workspace","/root/workspace")))
     override val workspaces=workspaceRows.asStateFlow()
     private val providerRows=MutableStateFlow<List<Provider>>(readProviders())
@@ -46,6 +51,10 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     override val routing=routingRow.asStateFlow()
     override val catalog=listOf(CatalogProvider("anthropic","Anthropic",ProviderProtocol.Anthropic,"https://api.anthropic.com"),CatalogProvider("openai","OpenAI",ProviderProtocol.OpenAICompatible,"https://api.openai.com/v1"),CatalogProvider("deepseek","DeepSeek",ProviderProtocol.OpenAICompatible,"https://api.deepseek.com/v1"),CatalogProvider("ollama","Ollama",ProviderProtocol.OpenAICompatible,"http://127.0.0.1:11434/v1"),CatalogProvider("custom","自定义供应商",ProviderProtocol.OpenAICompatible,""))
     private val approvals=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<ApprovalDecision>>()
+    private val approvalOwners=java.util.concurrent.ConcurrentHashMap<String,String>()
+    /** 每个会话最近一次读到的审批档（用于把无审批下的工具调用标成自动放行）。 */
+    val approvalStates=MutableStateFlow<Map<String,ApprovalState>>(emptyMap())
+    private val steerTrackers=java.util.concurrent.ConcurrentHashMap<String,SteerTracker>()
     private val questions=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<String>>()
     private val seen=mutableMapOf<String,MutableSet<Int>>()
     // 流式累积用 StringBuilder：旧实现 text+=delta 每个 token 复制整段，O(n²)。
@@ -94,7 +103,18 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         } }
         scope.launch { runtime.state.map { it.phase }.distinctUntilChanged().collect { if(it=="已连接")runCatching { flushOutbox();refreshSessions();scope.launch{runCatching{refreshControl();resumeInterrupted()}} }.onFailure { runtime.diagnostic("sessions: ${it.javaClass.simpleName}") } } }
     }
-    fun startKernel()=runtime.start()
+    fun startKernel(){if(runtime.state.value.phase in setOf("未连接","崩溃"))purgeDeleted();runtime.start()}
+    /** 只在内核进程不在时删除会话目录；上一个进程的内核仍活着（启动器稍后会结束它）就留到下次。 */
+    private fun purgeDeleted(){
+        if(purge.pending().isEmpty()||kernelProcessAlive())return
+        runCatching{purge.purge()}.onFailure{runtime.diagnostic("purge: ${it.javaClass.simpleName}")}
+        deletedIds.value=purge.pending()
+    }
+    private fun kernelProcessAlive():Boolean=runCatching{
+        val record=java.io.File(context.filesDir,"hoshino/runtime-process.json");if(!record.isFile)return false
+        val saved=JSONObject(record.readText());val proc=java.io.File("/proc/${saved.getInt("pid")}");if(!proc.isDirectory)return false
+        val stat=java.io.File(proc,"stat").readText();stat.substring(stat.lastIndexOf(')')+2).split(' ')[19]==saved.optString("startTicks")&&java.io.File(proc,"cmdline").readText().contains("node-host")
+    }.getOrDefault(false)
     fun stopKernel() { approvals.values.forEach { it.complete(ApprovalDecision.Deny) };systemShell.close();runtime.stop() }
     suspend fun closeForRestore(){stopKernel();runtime.stopAndWait()}
     fun disposeAfterRestore(){scope.cancel()}
@@ -102,7 +122,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         for(session in sessions.value.filter { it.running })runCatching { api().rpc("session/cancel",JSONObject().put("sessionId",session.id)) }
         withTimeoutOrNull(5000) { sessions.first { rows -> rows.none { it.running } } }
         approvals.values.forEach { it.complete(ApprovalDecision.Deny) }
-        runtime.stopAndWait();runtime.start()
+        runtime.stopAndWait();purgeDeleted();runtime.start()
         // Keep the reducer's delivered sequence set: replaying it would duplicate the ZIP store's items.
     }
     override suspend fun kernelLogs()=runtime.state.value.logs
@@ -153,7 +173,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         if(method!="approve")error("手机能力即将支持")
         val session=body.optString("sessionId").ifEmpty { activeSession }
         check(session.isNotEmpty())
-        val id=UUID.randomUUID().toString();val decision=CompletableDeferred<ApprovalDecision>();approvals[id]=decision
+        val id=UUID.randomUUID().toString();val decision=CompletableDeferred<ApprovalDecision>();approvals[id]=decision;approvalOwners[id]=session
         val network=body.optString("kind")=="network"
         val detail=if(network) "向所选模型接口发送本次上下文" else vault.redact(listOf(body.optString("path"),body.optString("before"),body.optString("after"),body.optJSONObject("arguments")?.toString(2).orEmpty()).filter {it.isNotBlank() && it!="null"}.joinToString("\n").take(12000))
         publish(HarnessEvent.ApprovalRequested(session,id,if(network) "模型网络请求" else "工具执行审批",detail,if(network) "发送到当前 provider" else body.optString("command").ifEmpty{body.optString("tool")}))
@@ -162,19 +182,39 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             val chosen=withTimeoutOrNull(290000) { decision.await() } ?: ApprovalDecision.Deny
             publish(HarnessEvent.ApprovalResolved(session,id,chosen))
             JSONObject().put("approved",chosen!=ApprovalDecision.Deny).put("remember",chosen==ApprovalDecision.AllowSession)
-        } finally { approvals.remove(id);M2Notifications.dismiss(context,id) }
+        } finally { approvals.remove(id);approvalOwners.remove(id);M2Notifications.dismiss(context,id) }
     }
     override suspend fun respondApproval(sessionId: String,approvalId: String,decision: ApprovalDecision) { approvals[approvalId]?.complete(decision) }
     override suspend fun answerQuestion(sessionId:String,questionId:String,answer:String){questions[questionId]?.complete(answer.take(32000))}
     private fun JSONArray.rows()=(0 until length()).map { getJSONObject(it) }
     private fun content(array: JSONArray?,type: String)=array?.rows()?.filter { it.optString("type")==type }?.joinToString("") { it.optString("text") }.orEmpty()
+    private fun attachmentsOf(array: JSONArray?)=array?.rows().orEmpty().filter{it.optString("type") in setOf("image","file")}.map{block->val a=block.optJSONObject("attachment") ?: JSONObject();Attachment(a.optString("attachmentId"),a.optString("name","附件"),if(block.optString("type")=="image")AttachmentKind.Image else AttachmentKind.File,"${a.optLong("bytes")/1024} KB")}
+    private fun inboxMessage(m: JSONObject):InboxMessage{val source=m.optJSONObject("source")?:JSONObject();return InboxMessage(m.optString("id"),source.optString("kind"),source.optString("rpcId").ifEmpty{null},content(m.optJSONArray("content"),"text"),source.optString("display").ifEmpty{null},attachmentsOf(m.optJSONArray("content")))}
+    /** 把 inbox 变化画到界面：插话气泡及其去向、停止后的交代。 */
+    private suspend fun applyInboxEffects(sid:String,effects:List<InboxEffect>){
+        val tracker=steerTrackers[sid]
+        for(effect in effects)when(effect){
+            is InboxEffect.SteerAdded -> {val item=SteerTracker.steerItemId(effect.message.id);Steering.set(item,tracker?.states?.get(effect.message.id)?:SteerState.Received);publish(HarnessEvent.UserMessage(sid,item,effect.message.text,effect.message.attachments,steer=true))}
+            is InboxEffect.SteerCancelled -> Steering.set(SteerTracker.steerItemId(effect.messageId),SteerState.Cancelled)
+            is InboxEffect.StopNoteAdded -> effect.message.display?.takeIf{it.isNotBlank()}?.let{text->val item=SteerTracker.stopNoteItemId(effect.message.id);publish(HarnessEvent.AssistantDelta(sid,item,"**已停止 · 停止前的交代**\n\n"+vault.redact(text)));publish(HarnessEvent.AssistantDone(sid,item))}
+        }
+    }
+    /** 快照只带最近一页事件；用其中的 dsh `inbox` 投影校正插话镜像（见 [SteerTracker.seed]）。 */
+    private suspend fun seedInbox(sid:String,projections:JSONObject?){
+        val inbox=projections?.optJSONObject("values")?.optJSONObject("inbox") ?: return
+        val turn=inbox.optJSONArray("next-turn")?.rows().orEmpty().map(::inboxMessage)
+        val step=inbox.optJSONArray("next-step")?.rows().orEmpty().map(::inboxMessage)
+        applyInboxEffects(sid,steerTrackers.getOrPut(sid){SteerTracker()}.seed(turn,step))
+    }
     private suspend fun accept(sid: String,frame: JSONObject) {
+        if(sid in deletedIds.value)return
         when(frame.optString("type")) {
             "snapshot" -> {
                 val pending=metadata.getBoolean("pending:$sid",false)
                 val records=frame.getJSONArray("records").rows()
                 records.forEach { record -> durable(sid,record.getJSONObject("event"),true) }
                 publishDeliveries(sid)
+                seedInbox(sid,frame.optJSONObject("projections"))
                 if(pending){val last=records.map{it.getJSONObject("event")}.lastOrNull{it.optString("type") in setOf("turn/start","turn/end")};if(last?.optString("type")=="turn/end"&&last.optJSONObject("data")?.optJSONObject("reason")?.optString("kind")=="completed")metadata.edit().remove("pending:$sid").apply()}
                 frame.optJSONObject("projections")?.optJSONObject("values")?.let{publishContext(sid,it)}
             }
@@ -221,9 +261,19 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                     publish(HarnessEvent.Notice(sid,"error:$seq","请求未完成${if(facts.isBlank()) "" else "（$facts）"}：$detail"))
                 }
             }
-            "user/message" -> if(data.optJSONObject("source")?.optString("kind")=="user") {
-                val attachments=data.optJSONArray("content")?.rows().orEmpty().filter{it.optString("type") in setOf("image","file")}.map{block->val a=block.optJSONObject("attachment") ?: JSONObject();Attachment(a.optString("attachmentId"),a.optString("name","附件"),if(block.optString("type")=="image")AttachmentKind.Image else AttachmentKind.File,"${a.optLong("bytes")/1024} KB")}
-                publish(HarnessEvent.UserMessage(sid,id,content(data.optJSONArray("content"),"text"),attachments))
+            "user/message" -> when(data.optJSONObject("source")?.optString("kind")) {
+                "user" -> {
+                    // 插话在进 inbox 时已画出气泡；被认领成 user/message 时只把状态改为「已加入当前任务」。
+                    val messageId=data.optString("id")
+                    if(messageId.isNotEmpty()&&steerTrackers[sid]?.onUserMessage(messageId)==true)Steering.set(SteerTracker.steerItemId(messageId),SteerState.Joined)
+                    else publish(HarnessEvent.UserMessage(sid,id,content(data.optJSONArray("content"),"text"),attachmentsOf(data.optJSONArray("content"))))
+                }
+                // 停止交代被下一轮认领；它进 inbox 的事件不在已加载的这一页里时在这里补画。
+                SteerTracker.STOP_NOTE_SOURCE -> steerTrackers.getOrPut(sid){SteerTracker()}.onNoteMessage(inboxMessage(data))?.let{applyInboxEffects(sid,listOf(it))}
+            }
+            "agent/inbox/spliced" -> {
+                val inserted=data.optJSONArray("inserted")?.rows().orEmpty().map(::inboxMessage)
+                applyInboxEffects(sid,steerTrackers.getOrPut(sid){SteerTracker()}.onSplice(data.optString("target"),data.optInt("start"),data.optInt("removedCount",0),inserted,data.optString("outcome").ifEmpty{null}))
             }
             "session/title" -> sessionRows.update { list -> list.map { if(it.id==sid)it.copy(title=data.optString("title",it.title)) else it } }
             "assistant/message" -> {
@@ -240,7 +290,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                 }
             }
             "request/context" -> {data.optInt("contextWindow").takeIf{it>0}?.let{capacities[sid]=it;publish(HarnessEvent.ContextUsageChanged(sid,ContextUsage(0,it,emptyList())))}}
-            "tool/call" -> { val call=data.getString("callId");calls["$sid:$call"]=id;currentTurn[sid]?.let{callTurn["$sid:$call"]=it};val name=data.getString("name");publish(HarnessEvent.ToolCallStarted(sid,id,name,name,data.getString("arguments"),when(name){"bash","terminal" -> ToolKind.Bash;"write","edit" -> ToolKind.Edit;else -> ToolKind.Generic},callId=call));if(name=="bash")appendAgentTerminal(sid,"$ "+JSONObject(data.getString("arguments")).optString("command"),TerminalStream.Input) }
+            "tool/call" -> { val call=data.getString("callId");calls["$sid:$call"]=id;currentTurn[sid]?.let{callTurn["$sid:$call"]=it};val name=data.getString("name");publish(HarnessEvent.ToolCallStarted(sid,id,name,name,data.getString("arguments"),when(name){"bash","terminal" -> ToolKind.Bash;"write","edit" -> ToolKind.Edit;else -> ToolKind.Generic},autoApproved=approvalStates.value[sid]?.noApproval==true,callId=call));if(name=="bash")appendAgentTerminal(sid,"$ "+JSONObject(data.getString("arguments")).optString("command"),TerminalStream.Input) }
             "tool/result" -> {
                 val result=data.getJSONObject("message");val callId=calls["$sid:${result.getString("toolCallId")}"] ?: return
                 publish(HarnessEvent.ToolCallOutput(sid,callId,content(result.optJSONArray("content"),"text")))
@@ -275,13 +325,15 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             val title=(row.optJSONObject("projections")?.optJSONObject("values")?.opt("title") as? String)?.takeIf{it.isNotBlank()} ?: old?.title
             SessionInfo(id,title ?: "会话 ${id.take(8)}",workspace.id,old?.presetId ?: metadata.getString("preset:$id","standard")!!,old?.tier ?: PermissionTier.entries.firstOrNull{it.key==metadata.getString("tier:$id",null)} ?: PermissionTier.WorkspaceWrite,history[id]?.created ?: old?.createdAt ?: OriginalSessionHistory.time(row.opt("updatedAt")),history[id]?.updated ?: old?.updatedAt ?: 0L,row.getBoolean("running"),old?.archived ?: metadata.getBoolean("archived:$id",false),row.optString("parentSessionId").ifEmpty { null })
         }
-        workspaceRows.value=recovered.distinctBy{it.id};sessionRows.value=rows+sessionRows.value.filter{local->metadata.getBoolean("local:${local.id}",false)&&rows.none{it.id==local.id}}
-        preferredSessionId?.let{client.follow(it)}
+        val deleted=deletedIds.value
+        workspaceRows.value=recovered.distinctBy{it.id};sessionRows.value=(rows+sessionRows.value.filter{local->metadata.getBoolean("local:${local.id}",false)&&rows.none{it.id==local.id}}).filterNot{it.id in deleted}
+        flushForgetQueue()
+        preferredSessionId?.takeIf{it !in deleted}?.let{client.follow(it)}
         scope.launch{persistCache()}
     }
     override suspend fun searchSessions(query:String):SessionSearchResults {
         val value=api().rpc("session/search",JSONObject().put("query",query.trim()))
-        val hits=value.getJSONArray("items").rows().map{SessionSearchHit(it.getString("sessionId"),vault.redact(it.getString("snippet")))}
+        val hits=value.getJSONArray("items").rows().map{SessionSearchHit(it.getString("sessionId"),vault.redact(it.getString("snippet")))}.filterNot{it.sessionId in deletedIds.value}
         if(hits.any{hit->sessionRows.value.none{it.id==hit.sessionId}})refreshSessions()
         return SessionSearchResults(hits,value.optBoolean("hasMore"))
     }
@@ -324,13 +376,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         if(providerRows.value.firstOrNull{it.id==model.providerId}?.models?.firstOrNull{it.id==model.modelId}?.reasoning==true)
             selection.put("reasoningEffort",options.effort.key)
         client.rpc("session/selectModel",selection)
-        val content=JSONArray().put(JSONObject().put("type","text").put("text",text))
-        val media=AppMedia(context)
-        for(attachment in attachments) {
-            val file=if(attachment.kind==AttachmentKind.WorkspaceFile)files.resolve(attachment.name) else media.keepOriginal(sessionId,attachment)
-            if(attachment.kind==AttachmentKind.Image || attachment.kind==AttachmentKind.Camera)content.put(media.imageBlock(file,attachment.name))
-            else content.put(JSONObject().put("type","file").put("receiptId",client.uploadFile(sessionId,file,attachment.name)))
-        }
+        val content=promptContent(client,sessionId,text,attachments)
         metadata.edit().putBoolean("pending:$sessionId",true).apply()
         try{client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",pendingRequestIds[sessionId]?:UUID.randomUUID().toString()).put("mode","queue").put("content",content))}catch(failure:Exception){metadata.edit().remove("pending:$sessionId").apply();throw failure}
     }
@@ -347,9 +393,138 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             }catch(failure:Exception){publish(HarnessEvent.Notice(p.sessionId,"waiting-error:${p.id}","等待内核消息仍已保留："+describeFailure(failure)))}finally{pendingRequestIds.remove(p.sessionId)}
         }}finally{draining.set(false)}
     }
-    override suspend fun steer(sessionId: String,text: String) { api().rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","steer").put("content",JSONArray().put(JSONObject().put("type","text").put("text",text)))) }
+    private suspend fun promptContent(client:dev.hoshino.bridge.SessionClient,sessionId:String,text:String,attachments:List<Attachment>):JSONArray{
+        val content=JSONArray().put(JSONObject().put("type","text").put("text",text))
+        val media=AppMedia(context)
+        for(attachment in attachments) {
+            val file=if(attachment.kind==AttachmentKind.WorkspaceFile)files.resolve(attachment.name) else media.keepOriginal(sessionId,attachment)
+            if(attachment.kind==AttachmentKind.Image || attachment.kind==AttachmentKind.Camera)content.put(media.imageBlock(file,attachment.name))
+            else content.put(JSONObject().put("type","file").put("receiptId",client.uploadFile(sessionId,file,attachment.name)))
+        }
+        return content
+    }
+    override suspend fun steer(sessionId: String,text: String)=steer(sessionId,text,emptyList())
+    /**
+     * 插话：dsh 原生 `session/prompt mode=steer`，消息进 inbox 的 next-step，在下一次模型请求前被当前任务认领，不另开任务。
+     * 气泡与「已收到 → 已加入当前任务」的状态都从持久化的 inbox 事件推出（见 [SteerTracker]），重放后一致。
+     */
+    override suspend fun steer(sessionId: String,text: String,attachments:List<Attachment>) {
+        val client=api();activeSession=sessionId
+        client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","steer").put("content",promptContent(client,sessionId,text,attachments)))
+    }
     private suspend fun resumeInterrupted(){if(M2SafeMode.enabled(context))return;val live=api().rpc("session/list",JSONObject()).getJSONArray("items").rows().associateBy{it.getString("sessionId")};for(row in sessions.value){if(metadata.getBoolean("pending:${row.id}",false)&&live[row.id]?.optBoolean("running")!=true){api().rpc("session/prompt",JSONObject().put("sessionId",row.id).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",JSONArray().put(JSONObject().put("type","text").put("text","Resume the interrupted user task from the persisted session log and last completed step. Inspect actual files before repeating any side effect. Do not duplicate completed actions."))))}}}
-    override suspend fun stop(sessionId: String) { api().rpc("session/cancel",JSONObject().put("sessionId",sessionId)) }
+    /**
+     * 停止：立即取消本轮（dsh `session/cancel`），还没被认领的插话随之作废（官方 `session/updateQueue remove`），
+     * 然后由插件补一段「停止后的交代」写进 inbox（下一轮「继续」能读到），界面从持久化事件画出来。
+     */
+    override suspend fun stop(sessionId: String) {
+        val draft=live[sessionId]?.text.orEmpty()
+        api().rpc("session/cancel",JSONObject().put("sessionId",sessionId))
+        for(item in steerTrackers[sessionId]?.unconsumed().orEmpty())runCatching{api().rpc("session/updateQueue",JSONObject().put("sessionId",sessionId).put("itemId",item).put("action",JSONObject().put("kind","remove")))}
+        scope.launch {
+            Steering.summarizing(sessionId,true)
+            try{m2Control("stop-summary",JSONObject().put("sessionId",sessionId).put("draft",vault.redact(draft).take(8000)))}
+            catch(failure:Exception){runtime.diagnostic("stop-summary: ${failure.javaClass.simpleName}")}
+            finally{Steering.summarizing(sessionId,false)}
+        }
+    }
+
+    // ---------------------------------------------------------------- 会话管理（M2.7）
+    private fun readPins():Map<String,Long> = metadata.all.mapNotNull{(key,value)->if(key.startsWith("pinned-at:")&&value is Long)key.removePrefix("pinned-at:") to value else null}.toMap()
+    private fun savePin(sessionId:String,pinned:Boolean){
+        if(pinned)metadata.edit().putLong("pinned-at:$sessionId",System.currentTimeMillis()).apply() else metadata.edit().remove("pinned-at:$sessionId").apply()
+        pinRows.value=readPins()
+    }
+    override suspend fun setPinned(sessionId:String,pinned:Boolean){
+        require(!pinned||sessionRows.value.firstOrNull{it.id==sessionId}?.archived!=true){"已归档的会话不能置顶，请先取消归档"}
+        savePin(sessionId,pinned)
+        // 同步到 dsh 工作区置顶（电脑端可见）；只存在于本机或内核未连接时只保留本地记录。
+        if(runtime.state.value.phase=="已连接")runCatching{api().rpc(if(pinned)"workspace/pinSession" else "workspace/unpinSession",JSONObject().put("sessionId",sessionId))}
+    }
+    override suspend fun deleteSession(sessionId:String)=deleteSessions(listOf(sessionId))
+    /**
+     * 删除会话。dsh 没有删除接口，也不改它的源码：
+     * 1) 立刻隐藏（墓碑）、停止、归档、取消订阅，清除插件侧（审批覆盖、会话提示词、策略选项、定时任务）与 Android 侧（交付记录、附件原件、缓存、元数据、等待消息）的数据；
+     * 2) dsh 的会话 JSONL 目录在内核不运行时删除（[SessionPurge]，下一次启动内核前；内核本来就没运行时当场删）。
+     */
+    override suspend fun deleteSessions(sessionIds:List<String>){
+        val targets=sessionIds.distinct().filter{it.matches(Regex("[A-Za-z0-9_-]{1,150}"))}
+        if(targets.isEmpty())return
+        purge.mark(targets);deletedIds.value=deletedIds.value+targets
+        for((approval,owner) in approvalOwners)if(owner in targets)approvals[approval]?.complete(ApprovalDecision.Deny)
+        if(runtime.state.value.phase=="已连接"){
+            val client=api()
+            for(id in targets){
+                if(sessionRows.value.firstOrNull{it.id==id}?.running==true)runCatching{client.rpc("session/cancel",JSONObject().put("sessionId",id))}
+                runCatching{client.cancelStream("session:$id")}
+                runCatching{client.rpc("workspace/archiveSession",JSONObject().put("sessionId",id).put("stopActivity",true))}
+            }
+        }
+        queueForget(targets);flushForgetQueue()
+        withContext(Dispatchers.IO){
+            for(p in outbox.list())if(p.sessionId in targets)outbox.remove(p.id)
+            m2.forgetSessions(targets.toSet())
+            for(id in targets)java.io.File(context.filesDir,"attachments/$id").deleteRecursively()
+        }
+        val edit=metadata.edit()
+        for(id in targets)for(prefix in listOf("workspace:","preset:","tier:","archived:","local:","pending:","session-provider:","pinned-at:"))edit.remove(prefix+id)
+        if(preferredSessionId in targets)edit.remove("last-active-session")
+        edit.apply()
+        for(id in targets){cachedRecords.remove(id);steerTrackers.remove(id);capacities.remove(id);restartAfter.remove(id);released.remove(id);currentTurn.remove(id);callTurn.keys.removeIf{it.startsWith("$id:")}}
+        // seen/live/calls/tokenTurns 只在事件协程里读写（M2.7 perf 约定），交给 housekeeping 清理。
+        housekeeping.add{for(id in targets)forgetSession(id)}
+        if(activeSession in targets)activeSession=""
+        terminalRows.update{rows->rows.filterNot{row->targets.any{row.id=="agent:$it"}}}
+        pinRows.value=readPins()
+        sessionRows.update{rows->rows.filterNot{it.id in targets}}
+        approvalStates.update{it-targets.toSet()}
+        persistCache()
+        // 内核没在运行（未连接/崩溃，且没有残留进程）时可以马上删除持久化文件。
+        if(runtime.state.value.phase in setOf("未连接","崩溃"))withContext(Dispatchers.IO){purgeDeleted()}
+    }
+    /** 插件侧清理在内核未连接时排队，连上后补做（审批覆盖、会话提示词、定时任务）。 */
+    private fun queueForget(ids:List<String>){metadata.edit().putStringSet("forget-queue",(metadata.getStringSet("forget-queue",emptySet()).orEmpty()+ids).toSet()).apply()}
+    private fun flushForgetQueue(){
+        val queued=metadata.getStringSet("forget-queue",emptySet()).orEmpty().toList();if(queued.isEmpty()||runtime.state.value.phase!="已连接")return
+        scope.launch{runCatching{m2Control("sessions-forget",JSONObject().put("ids",JSONArray(queued)))}.onSuccess{val left=metadata.getStringSet("forget-queue",emptySet()).orEmpty()-queued.toSet();metadata.edit().putStringSet("forget-queue",left).apply()}}
+    }
+    override suspend fun exportSession(sessionId:String):String=exportSessionFile(sessionId,SessionExportFormat.Markdown).displayPath
+    /** 导出：插件读 dsh 会话日志写成 Markdown/JSON，这里去掉已知密钥后存到「下载/Hoshino」，并留一份缓存副本供分享。 */
+    override suspend fun exportSessionFile(sessionId:String,format:SessionExportFormat):ExportedSession{
+        val result=m2Control("session-export",JSONObject().put("sessionId",sessionId).put("format",format.key))
+        val rel=result.getString("file");require(SessionExportPaths.safeRelative(rel)){"导出文件路径无效"}
+        val name=SessionExportPaths.safeName(result.optString("name"),"session-${sessionId.take(8)}.${if(format==SessionExportFormat.Json)"json" else "md"}")
+        return withContext(Dispatchers.IO){
+            val source=java.io.File(context.filesDir,"hoshino/$rel")
+            val dir=java.io.File(context.cacheDir,"share/exports").apply{mkdirs()}
+            dir.listFiles()?.sortedByDescending{it.lastModified()}?.drop(10)?.forEach{it.delete()}
+            val copy=java.io.File(dir,name)
+            try{source.bufferedReader().use{input->copy.bufferedWriter().use{out->input.lineSequence().forEach{line->out.write(vault.redact(line));out.write("\n")}}}}finally{source.delete()}
+            m2.save(copy,name)
+            ExportedSession(name,"下载/Hoshino/$name",copy,format)
+        }
+    }
+    override suspend fun approvalState(sessionId:String?):ApprovalState{
+        val state=parseApproval(m2Control("approval-state",JSONObject().put("sessionId",sessionId.orEmpty())))
+        if(sessionId!=null)approvalStates.update{it+(sessionId to state)}
+        return state
+    }
+    override suspend fun setApprovalMode(sessionId:String?,mode:ApprovalMode,scope:ApprovalScope):ApprovalState{
+        val request=JSONObject().put("sessionId",sessionId.orEmpty()).put("mode",mode.key).put("scope",scope.key)
+        val state=parseApproval(m2Control("approval-mode",request))
+        if(sessionId!=null){
+            approvalStates.update{it+(sessionId to state)}
+            // 切到无审批时，这个会话里还挂着的审批卡按「允许一次」放行，任务不用再等。
+            if(state.noApproval)for((approval,owner) in approvalOwners)if(owner==sessionId)approvals[approval]?.complete(ApprovalDecision.AllowOnce)
+        }
+        if(scope==ApprovalScope.Default)approvalStates.update{states->states.mapValues{(_,old)->if(old.sessionMode==null)old.copy(defaultMode=state.defaultMode,effective=state.defaultMode) else old.copy(defaultMode=state.defaultMode)}}
+        return state
+    }
+    private fun parseApproval(value:JSONObject):ApprovalState{
+        val default=ApprovalMode.of(value.optString("defaultMode"))?:ApprovalMode.Default
+        val session=if(value.isNull("sessionMode"))null else ApprovalMode.of(value.optString("sessionMode"))
+        return ApprovalState(default,session,ApprovalMode.of(value.optString("effective"))?:session?:default)
+    }
     private fun readProviders(): List<Provider> = vault.list().map { p ->
         val m=p.metadata;val configured=m.optJSONArray("models")?.rows()?.associateBy { it.getString("id") }.orEmpty()
         Provider(p.id,m.optString("name",p.id),m.optString("catalogId",p.id),if(p.type=="anthropic")ProviderProtocol.Anthropic else ProviderProtocol.OpenAICompatible,p.baseURL,if(vault.hasSecret(p.credentialRef)||p.type=="openai-codex"&&chatGptAuth.state.value.signedIn)"••••••••" else "",m.optJSONArray("headerRefs")?.rows()?.map { it.getString("name") to "••••••••" }.orEmpty(),m.optBoolean("enabled",true),p.models.map { id -> val d=configured[id];ModelInfo(id,d?.optString("displayName",id) ?: id,d?.optInt("contextLength",128000) ?: 128000,d?.optInt("maxOutput",4096) ?: 4096,d?.optBoolean("vision",false) ?: false,d?.optBoolean("reasoning",p.type=="anthropic") ?: (p.type=="anthropic"),runCatching { ReasoningEffort.valueOf(d?.optString("defaultEffort") ?: if(p.type=="anthropic")"Medium" else "Off") }.getOrDefault(ReasoningEffort.Off)) })
@@ -475,7 +650,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val row=Workspace(id,renamed.getString("title"),renamed.getString("path"));workspaceRows.update{it.filterNot{old->old.id==id}+row};return row
     }
     override suspend fun searchWorkspaceFiles(workspaceId:String,query:String)=files.search(query)
-    override suspend fun setArchived(sessionId:String,archived:Boolean) {api().rpc(if(archived)"workspace/archiveSession" else "workspace/unarchiveSession",JSONObject().put("sessionId",sessionId));metadata.edit().putBoolean("archived:$sessionId",archived).apply();sessionRows.update{list->list.map{if(it.id==sessionId)it.copy(archived=archived) else it}}}
+    override suspend fun setArchived(sessionId:String,archived:Boolean) {api().rpc(if(archived)"workspace/archiveSession" else "workspace/unarchiveSession",JSONObject().put("sessionId",sessionId));metadata.edit().putBoolean("archived:$sessionId",archived).apply();sessionRows.update{list->list.map{if(it.id==sessionId)it.copy(archived=archived) else it}};if(archived)savePin(sessionId,false)}
     override suspend fun openTerminal():String {
         val sid=activeSession.takeIf{sessionRows.value.any{row->row.id==it}} ?: createSession("ws-default","standard",PermissionTier.WorkspaceWrite).id
         check(sessionRows.value.first{it.id==sid}.tier!=PermissionTier.ReadOnly){"只读会话不允许启动 shell"}

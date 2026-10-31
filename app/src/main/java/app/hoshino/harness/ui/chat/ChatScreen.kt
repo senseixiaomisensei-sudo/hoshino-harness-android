@@ -130,7 +130,12 @@ fun ChatScreen(
     var showContext by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<SessionInfo?>(null) }
-    var deleteTarget by remember { mutableStateOf<SessionInfo?>(null) }
+    var deleteTargets by remember { mutableStateOf<List<SessionInfo>>(emptyList()) }
+    val approval by vm.approval.collectAsStateWithLifecycle()
+    val summarizingSessions by app.hoshino.harness.core.Steering.summarizing.collectAsStateWithLifecycle()
+    var showApproval by remember { mutableStateOf(false) }
+    var riskFor by remember { mutableStateOf<Pair<app.hoshino.harness.core.ApprovalMode, app.hoshino.harness.core.ApprovalScope>?>(null) }
+    LaunchedEffect(Unit) { vm.exports.collect { e -> runCatching { e.shareFile?.let { f -> app.hoshino.harness.core.AppMedia(ctx).shareFile(f, e.format.mime) } } } }
     var openTask by remember { mutableStateOf<SubTask?>(null) }
 
     LaunchedEffect(Unit) { vm.messages.collect { toast(ctx, it) } }
@@ -154,10 +159,13 @@ fun ChatScreen(
         when (a) {
             SessionAction.Rename -> renameTarget = s
             SessionAction.Fork -> vm.fork(s.id)
-            SessionAction.Export -> vm.export(s.id)
+            SessionAction.Export -> vm.export(s.id, app.hoshino.harness.core.SessionExportFormat.Markdown)
+            SessionAction.ExportJson -> vm.export(s.id, app.hoshino.harness.core.SessionExportFormat.Json)
+            SessionAction.Pin -> vm.setPinned(s.id, true)
+            SessionAction.Unpin -> vm.setPinned(s.id, false)
             SessionAction.Archive -> vm.setArchived(s.id, true)
             SessionAction.Unarchive -> vm.setArchived(s.id, false)
-            SessionAction.Delete -> deleteTarget = s
+            SessionAction.Delete -> deleteTargets = listOf(s)
         }
     }
 
@@ -210,6 +218,7 @@ fun ChatScreen(
                     onOpenSession = { vm.openSession(it); scope.launch { drawer.close() } },
                     onNavigate = { navigate(it) },
                     onSessionAction = { s, a -> sessionAction(s, a) },
+                    onDeleteSessions = { deleteTargets = it },
                     onAddWorkspace = { n, p -> vm.addWorkspace(n, p) },
                     onToggleTheme = onToggleTheme,
                 )
@@ -221,7 +230,6 @@ fun ChatScreen(
             // ---------------- 顶栏
             DiySlot("topbar",onNavigate={navigate(it)},onPrompt={input=TextFieldValue(it)}) { Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconBtn(HIcons.Menu, stringResource(R.string.cd_sidebar), { scope.launch { drawer.open() } })
-                ApprovalQuickSwitch()
                 app.hoshino.harness.ui.components.HButton("语音",{runCatching{voice.launch(android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))}.onFailure{vm.toast("系统没有可用的语音识别应用")}},compact=true)
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(current?.title ?: stringResource(R.string.new_session), style = HoshinoTheme.type.bodyMedium, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -257,7 +265,7 @@ fun ChatScreen(
                             MenuEntry(stringResource(R.string.menu_context), HIcons.Gauge) { showContext = true },
                             MenuEntry(stringResource(R.string.menu_stats), HIcons.Chart) { showStats = true },
                             MenuEntry(stringResource(R.string.menu_archive), HIcons.Archive) { s?.let { vm.setArchived(it.id, true) } },
-                            MenuEntry(stringResource(R.string.menu_delete), HIcons.Trash, danger = true) { s?.let { deleteTarget = it } },
+                            MenuEntry(stringResource(R.string.menu_delete), HIcons.Trash, danger = true) { s?.let { deleteTargets = listOf(it) } },
                         )
                         entries.forEachIndexed { i, e ->
                             if (i == 6) Hairline()
@@ -304,6 +312,9 @@ fun ChatScreen(
                     onOpenContext = { showContext = true },
                     onSlash = { runSlash(it) },
                     modifier = m,
+                    approval = approval,
+                    onOpenApproval = { showApproval = true },
+                    summarizing = currentId != null && currentId in summarizingSessions,
                 )
                 }
             }
@@ -398,16 +409,35 @@ fun ChatScreen(
             onConfirm = { vm.rename(s.id, it); renameTarget = null },
         )
     }
-    deleteTarget?.let { s ->
+    if (deleteTargets.isNotEmpty()) {
+        val targets = deleteTargets
         HDialog(
-            title = stringResource(R.string.delete_title),
-            onDismiss = { deleteTarget = null },
+            title = if (targets.size == 1) stringResource(R.string.delete_title) else "删除 ${targets.size} 个会话？",
+            onDismiss = { deleteTargets = emptyList() },
             confirmText = "删除",
             danger = true,
-            onConfirm = { vm.delete(s.id); deleteTarget = null },
+            onConfirm = { vm.delete(targets.map { it.id }); deleteTargets = emptyList() },
         ) {
-            Text(stringResource(R.string.delete_message, s.title), style = HoshinoTheme.type.body, color = c.text2)
+            Text(app.hoshino.harness.ui.drawer.deleteConfirmation(targets, currentId), style = HoshinoTheme.type.body, color = c.text2)
         }
+    }
+    if (showApproval) {
+        ApprovalSheet(
+            state = approval,
+            hasSession = currentId != null,
+            onPick = { mode, scope ->
+                showApproval = false
+                if (vm.needsRiskConfirmation(mode)) riskFor = mode to scope else vm.setApprovalMode(mode, scope)
+            },
+            onDismiss = { showApproval = false },
+        )
+    }
+    riskFor?.let { (mode, scope) ->
+        NoApprovalRiskDialog(
+            scope = scope,
+            onConfirm = { never -> vm.acknowledgeNoApproval(never); vm.setApprovalMode(mode, scope); riskFor = null },
+            onDismiss = { riskFor = null },
+        )
     }
 }
 
