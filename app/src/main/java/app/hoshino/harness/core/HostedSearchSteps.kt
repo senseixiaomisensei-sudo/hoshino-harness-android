@@ -13,13 +13,17 @@ object HostedSearchSteps {
 
     fun isStep(text: String) = text.startsWith(MARK)
 
-    /** Process events for one step: [id] must be stable for the same step so replays do not duplicate it. */
+    /**
+     * Process events for one step: [id] must be stable for the same step so replays do not duplicate it.
+     * Not marked autoApproved: the search runs inside the already-sent model request, it is not a tool call that skipped
+     * approval, so it must not show up in the no-approval audit line of the process group (M2.7 integration).
+     */
     fun events(sessionId: String, id: String, text: String): List<HarnessEvent> {
         val lines = text.removePrefix(MARK).trim().lines()
         val title = lines.firstOrNull().orEmpty().ifBlank { "模型自带搜索" }
         val sources = lines.drop(1).joinToString("\n").trim()
         return listOf(
-            HarnessEvent.ToolCallStarted(sessionId, id, NAME, title, JSONObject().put("step", title).toString(), ToolKind.Generic, autoApproved = true),
+            HarnessEvent.ToolCallStarted(sessionId, id, NAME, title, JSONObject().put("step", title).toString(), ToolKind.Generic),
             HarnessEvent.ToolCallOutput(sessionId, id, sources.ifBlank { "由模型提供商执行的联网搜索" }),
             HarnessEvent.ToolCallFinished(sessionId, id, ToolStatus.Success),
         )

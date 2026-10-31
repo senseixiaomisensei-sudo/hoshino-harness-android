@@ -95,6 +95,22 @@ class M27IntegrationTest {
         assertFalse(summary.title(0).contains("自动放行"))
     }
 
+    @Test fun hostedSearchStepsAreNotCountedAsNoApprovalAutoAllows() {
+        val s = store()
+        val sid = "search"
+        s.dispatch(HarnessEvent.TurnStarted(sid, "e:1"))
+        s.dispatch(HarnessEvent.UserMessage(sid, "u", "查一下新闻", emptyList()))
+        HostedSearchSteps.events(sid, "ws:a:0", HostedSearchSteps.MARK + "今日新闻\nhttps://example.com").forEach(s::dispatch)
+        s.dispatch(HarnessEvent.AssistantDelta(sid, "a", "结果"))
+        s.dispatch(HarnessEvent.AssistantDone(sid, "a"))
+        s.flushNow()
+        val turn = TurnPresenter().present(s.state(sid).value, true).single()
+        val process = turn.rows.first { it is ChatRow.ProcessRow } as ChatRow.ProcessRow
+        val step = process.items.filterIsInstance<ChatItem.Tool>().single()
+        assertEquals(HostedSearchSteps.NAME, step.name)
+        assertEquals(0, ProcessSummary.of(process.items, process.waiting).autoApproved)
+    }
+
     @Test fun rewritingDeliveriesAfterDeletingASessionKeepsTurnFieldsOfOthers() {
         val rows = listOf(
             DeliveredFile("a", "keep", "/root/workspace/a.md", "a.md", 1, turnId = "e:3", deliveredAt = 42, callId = "c"),
