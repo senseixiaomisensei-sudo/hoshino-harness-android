@@ -57,9 +57,13 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.9.5")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    // m2.8 phone OCR (PL1, open source, MIT): ONNX Runtime runs PaddleOCR PP-OCRv4 (Apache-2.0) models downloaded on demand.
+    // APK cost: ~6.6 MB compressed / 18.3 MB installed for arm64 (see docs/m2.8-phone-acceptance.md). Never ML Kit / GMS.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
     testImplementation("junit:junit:4.13.2")
     // 本地单测需要真实的 org.json（android.jar 里是桩）；仅测试依赖，公有领域许可。
     testImplementation("org.json:json:20250517")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.04.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test:runner:1.6.2")

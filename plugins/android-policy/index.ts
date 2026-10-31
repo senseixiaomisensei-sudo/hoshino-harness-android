@@ -74,7 +74,8 @@ export function apply(ctx: Context): void {
     }
     if(!reads.has(exec.name)) {
       const onceOnly=['clipboard_read','clipboard_write','app_screenshot','share_text','share_file'].includes(exec.name);
-      const key=`${sessionId}:${exec.name}`;
+      // phone_* tools share one "allow for this session" decision; irreversible phone steps still ask once per step (android-phone).
+      const key=`${sessionId}:${exec.name.startsWith('phone_') ? 'phone_*' : exec.name}`;
       if(onceOnly || !remembered.has(key)) {
         const guard=guards.get(exec.token);
         const approved=await ctx.androidBridge.call<{approved:boolean;remember?:boolean}>('approve',{
