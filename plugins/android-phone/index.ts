@@ -32,7 +32,7 @@ export function apply(ctx: Context): void {
   const text = (name: string, description: string, parameters: Data, run: (args: Data, exec: any) => Promise<string>) =>
     ctx.tools.register(defineTool({name, description, parameters: parameters as any, output: {schema: {type: 'string'}, render: (_, value) => [{type: 'text', text: value}]}, execute: run as any}));
 
-  text('phone_status', 'Phone control readiness and diagnosis (helper, accessibility, OCR, Android version, lock state). No screen content. Call it first when a phone_* tool reports that phone control is not ready.', {}, (_, exec) => phone('diagnose', {}, exec));
+  text('phone_status', 'Phone control readiness and diagnosis (helper, accessibility, OCR, Android version, lock state, P50/P90 timing of the last 50 steps). No screen content. Call it first when a phone_* tool reports that phone control is not ready.', {}, (_, exec) => phone('diagnose', {}, exec));
   text('phone_observe', 'Read the agent display (a background screen the user does not see): compressed elements with stable refs, or only what changed since your last read. Set full=true for the whole screen.', {full: {type: 'boolean'}}, (a, exec) => phone('observe', {full: a.full === true}, exec));
   text('phone_list_apps', 'List launcher apps (label and package).', {query: {type: 'string'}}, (a, exec) => phone('list_apps', {query: a.query ?? ''}, exec));
   text('phone_handoff', 'Hand the current app to the user (login, captcha, payment, password, anything you must not do). Waits until the user taps 处理好了 or 跳过; skipped means NOT done.', {reason: {type: 'string', required: true}}, (a, exec) => phone('handoff', {reason: String(a.reason ?? '')}, exec));
