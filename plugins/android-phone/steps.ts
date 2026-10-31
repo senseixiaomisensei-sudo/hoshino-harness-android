@@ -93,7 +93,26 @@ export function render(r: Data): string {
 /** System prompt for phone control. Exported so the wording the model sees is covered by tests. */
 export const PHONE_PROMPT = [
   'Phone control: to open or operate any other app (e.g. "打开抖音") use the phone_* tools: phone_launch_app to open it, phone_observe to read, phone_do_steps / phone_tap / phone_type_text to act. They run apps on a background agent display while the user keeps using the main screen, and they need no Shizuku, no system_shell and no full-access session.',
+  'Every app operation happens ONLY on that background virtual display, concurrently with the user\'s main screen, and keeps running while Hoshino itself is in the background. Never touch the user\'s main screen: do not use system_shell (monkey, am start, cmd activity start, input, cmd statusbar) to open or operate apps; such commands are refused.',
+  'The virtual display is created only while a phone task runs. Not seeing an extra display (dumpsys display, a display list) does NOT mean the feature is missing: just call phone_launch_app.',
   'Start with phone_status if unsure. If phone control is not set up (helper not running, accessibility off), call phone_status and tell the user to open 设置 → 设置手机操作 to pair the built-in wireless-debugging helper and enable the accessibility service. Never tell the user to install or configure Shizuku for this, and never ask for full-access to open an app.',
   'Refs from phone_observe stay valid across reads; prefer phone_do_steps with expect conditions for known sequences.',
   'Sending, deleting, ordering and submitting go through the user\'s approval policy for that exact step on that exact screen (by default the user is asked once per step; a declined step must not be retried). Payment, passwords, captchas and verification codes are always handed to the user with phone_handoff, in every approval mode including no-approval. Never operate Hoshino itself. Call phone_finish when done.',
 ].join('\n');
+
+/** Plain-language setup steps for each missing piece reported by the Android `diagnose` action. */
+export function phoneSetupSteps(r: Data): string[] {
+  const steps: string[] = [];
+  if (r.supported === false) return ['This phone runs Android ' + String(r.sdk ?? '?') + ' (API level); phone control needs Android 13 or newer. Tell the user it is not available on this device.'];
+  if (r.helper === false) steps.push('Phone helper not running: ask the user to open 设置 → 设置手机操作 and pair the built-in wireless-debugging helper (stay on Wi-Fi, wireless debugging on). Shizuku is NOT needed.');
+  if (r.accessibility === false) steps.push('Accessibility off: ask the user to enable the 「Hoshino 手机操作」 accessibility service in 设置 → 设置手机操作.');
+  if (r.locked === true) steps.push('The phone is locked: actions wait until the user unlocks it.');
+  return steps;
+}
+
+/** phone_status output: the Android report plus, when not ready, clear setup guidance and what to do next. */
+export function phoneStatusText(r: Data): string {
+  const steps = r.ready === false || r.locked === true ? phoneSetupSteps(r) : [];
+  if (!steps.length) return render({...r, next: r.ready === false ? 'Phone control is not ready; ask the user to open 设置 → 设置手机操作.' : 'Ready. Open apps with phone_launch_app (background virtual display, created on demand).'});
+  return render({...r, setup: '设置 → 设置手机操作', next: steps});
+}

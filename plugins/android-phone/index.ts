@@ -2,7 +2,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { Context } from '../../node-host/src/platform.js';
 import type {} from '../android-policy/index.js';
-import { checkSteps, phoneError, render, runSteps, stepFor, PHONE_PROMPT, type Data } from './steps.js';
+import { checkSteps, phoneError, phoneStatusText, render, runSteps, stepFor, PHONE_PROMPT, type Data } from './steps.js';
 
 /**
  * Phone control tools (m2.8). Every tool is a thin client of the Android single execution entry
@@ -18,7 +18,19 @@ export const name = 'android-phone';
 export const inject = ['tools', 'androidBridge', 'attachments', 'llm', 'systemPrompt', 'agents'];
 
 const target = {ref: {type: 'string', description: 'Element ref from the last phone_observe (e.g. e12)'}, target: {type: 'string', description: 'Visible text of the element'}, x: {type: 'number', description: '0..999 from left'}, y: {type: 'number', description: '0..999 from top'}};
-const expect = {expect: {type: 'object', description: 'Wait by code after the action: {text?, gone?, app?, quiet?, timeout_ms?}'}};
+/**
+ * dsh-tools rejects an object schema without an explicit additionalProperties (JsonSchemaError at defineTool). Before m2.9
+ * `expect` and the phone_do_steps items had none, so apply() threw, the optional android-phone entry "did not activate"
+ * and NO phone_* tool reached any session (only a startup warning on stderr). Keep these schemas strict and tested
+ * (node-host/test/m29-phone-tools.test.mjs boots the kernel and checks the tool list the model receives).
+ */
+export const EXPECT_SCHEMA = {type: 'object', additionalProperties: false, description: 'Wait by code after the action',
+  properties: {text: {type: 'string', description: 'Text that must appear'}, gone: {type: 'string', description: 'Text that must disappear'}, app: {type: 'string', description: 'Package that must be in front'}, quiet: {type: 'boolean', description: 'Wait until the screen stops changing'}, timeout_ms: {type: 'number'}}};
+export const STEP_SCHEMA = {type: 'object', additionalProperties: false, properties: {
+  action: {type: 'string', enum: ['tap', 'long_press', 'type', 'clear', 'scroll', 'swipe', 'back', 'key', 'open_app', 'wait']},
+  ref: {type: 'string'}, target: {type: 'string'}, x: {type: 'number'}, y: {type: 'number'}, x2: {type: 'number'}, y2: {type: 'number'}, duration_ms: {type: 'number'},
+  text: {type: 'string'}, enter: {type: 'boolean'}, direction: {type: 'string'}, key: {type: 'string'}, app: {type: 'string'}, expect: EXPECT_SCHEMA}};
+const expect = {expect: EXPECT_SCHEMA};
 
 export function apply(ctx: Context): void {
   const call = (method: string, body: Data, signal?: AbortSignal) => ctx.androidBridge.call<Data>(method, body, signal);
@@ -32,7 +44,11 @@ export function apply(ctx: Context): void {
   const text = (name: string, description: string, parameters: Data, run: (args: Data, exec: any) => Promise<string>) =>
     ctx.tools.register(defineTool({name, description, parameters: parameters as any, output: {schema: {type: 'string'}, render: (_, value) => [{type: 'text', text: value}]}, execute: run as any}));
 
-  text('phone_status', 'Phone control readiness and diagnosis (helper, accessibility, OCR, Android version, lock state). No screen content. Call it first when a phone_* tool reports that phone control is not ready.', {}, (_, exec) => phone('diagnose', {}, exec));
+  text('phone_status', 'Phone control readiness and diagnosis (helper, accessibility, OCR, Android version, lock state) with setup steps when something is missing. No screen content. Call it first when a phone_* tool reports that phone control is not ready.', {}, async (_, exec) => {
+    const r = await call('phone', {action: 'diagnose', sessionId: sid(exec)}, exec.signal);
+    if (r.ok === false && r.error) throw new Error(phoneError(r));
+    return phoneStatusText(r);
+  });
   text('phone_observe', 'Read the agent display (a background screen the user does not see): compressed elements with stable refs, or only what changed since your last read. Set full=true for the whole screen.', {full: {type: 'boolean'}}, (a, exec) => phone('observe', {full: a.full === true}, exec));
   text('phone_list_apps', 'List launcher apps (label and package).', {query: {type: 'string'}}, (a, exec) => phone('list_apps', {query: a.query ?? ''}, exec));
   text('phone_handoff', 'Hand the current app to the user (login, captcha, payment, password, anything you must not do). Waits until the user taps 处理好了 or 跳过; skipped means NOT done.', {reason: {type: 'string', required: true}}, (a, exec) => phone('handoff', {reason: String(a.reason ?? '')}, exec));
@@ -47,12 +63,12 @@ export function apply(ctx: Context): void {
     ['phone_swipe', 'swipe', 'Straight swipe from x,y to x2,y2 (0..999).', {x: {type: 'number', required: true}, y: {type: 'number', required: true}, x2: {type: 'number', required: true}, y2: {type: 'number', required: true}, duration_ms: {type: 'number'}, ...expect}],
     ['phone_back', 'back', 'Press Back on the agent display.', {...expect}],
     ['phone_press_key', 'key', 'Press a navigation key: enter, tab, del, search, up, down, left, right, page_up, page_down, escape, move_home, move_end, space, forward_del, center, back.', {key: {type: 'string', required: true}, ...expect}],
-    ['phone_launch_app', 'open_app', 'Open an app (e.g. 抖音, WeChat) on the agent display by package or label (never Hoshino itself). This is how to open apps; it needs no Shizuku and no full-access.', {app: {type: 'string', required: true}, ...expect}],
-    ['phone_wait', 'wait', 'Wait until text appears/disappears, an app is in front, or the screen is quiet.', {expect: {type: 'object', required: true}}],
+    ['phone_launch_app', 'open_app', 'Open an app (e.g. 抖音, WeChat) on the background agent display by package or label (never Hoshino itself), without disturbing the user\'s main screen. This is how to open apps; it needs no Shizuku and no full-access. The display is created on demand, so call it directly.', {app: {type: 'string', required: true}, ...expect}],
+    ['phone_wait', 'wait', 'Wait until text appears/disappears, an app is in front, or the screen is quiet.', {expect: {...EXPECT_SCHEMA, required: true}}],
   ];
   for (const [tool, action, description, parameters] of single) text(tool, description, parameters, async (a, exec) => render(await runSteps(call, approve, sid(exec), checkSteps([stepFor(action, a)]), undefined, exec.signal)));
   text('phone_do_steps', 'Run 1-20 known actions in a row without a round-trip per step; each step: {action: tap|long_press|type|clear|scroll|swipe|back|key|open_app|wait, ref?, target?, x?, y?, text?, enter?, direction?, key?, app?, expect?}. Stops early on choosers, screens that need the user, missing targets, or an irreversible step that needs approval.',
-    {steps: {type: 'array', required: true, items: {type: 'object'}}, app_label: {type: 'string'}},
+    {steps: {type: 'array', required: true, items: STEP_SCHEMA}, app_label: {type: 'string'}},
     async (a, exec) => render(await runSteps(call, approve, sid(exec), checkSteps(a.steps), a.app_label ? String(a.app_label) : undefined, exec.signal)));
 
   ctx.tools.register(defineTool({name: 'phone_screenshot', description: 'Picture of the agent display (requires an image-capable model). Secure screens cannot be captured.', parameters: {} as any,

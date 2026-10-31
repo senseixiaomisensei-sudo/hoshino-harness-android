@@ -23,5 +23,7 @@ const timeout=setTimeout(()=>child.kill(),90000).unref();
 child.stdin.end(JSON.stringify({callbackPort:server.address().port,callbackToken:'build-only-no-credentials',workspace:join(temp,'workspace'),home:join(temp,'home'),selfHome:join(dist,'generated-self-root'),safeMode:true})+'\n');
 try {const [code]=await once(child,'exit');if(code!==0)throw new Error('Self manual generation failed: '+log.slice(-4000));
   const manifest=JSON.parse(await read(join(dist,'generated-self-root/self/manifest.json')));if(!manifest.tools.length || !manifest.plugins.length)throw new Error('Empty manual registry');
+  // m2.9: an optional built-in plugin whose apply() throws only prints "did not activate"; fail the build instead (android-phone shipped without any phone_* tool in m2.8/m2.8.1).
+  const toolNames=new Set(manifest.tools.map(t=>t.name??t));const missing=['phone_launch_app','phone_status','phone_do_steps','system_shell','get_device_info','self_doctor'].filter(n=>!toolNames.has(n));if(missing.length)throw new Error('Built-in tools missing from the boot registry (a plugin did not activate): '+missing.join(', ')+'\n'+log.slice(-4000));
   console.log(`Generated manuals: ${manifest.plugins.length} actual boot plugins, ${manifest.tools.length} tools, ${routes.length} routes.`);
 } finally {clearTimeout(timeout);server.closeAllConnections();await new Promise(r=>server.close(r));await rm(temp,{recursive:true,force:true});}
