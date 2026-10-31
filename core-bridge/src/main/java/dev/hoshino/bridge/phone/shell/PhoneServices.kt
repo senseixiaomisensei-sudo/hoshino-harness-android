@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -116,8 +115,8 @@ class PhoneServices private constructor(context: Context) {
             override fun onChange(selfChange: Boolean) = push()
         })
         scope.launch { connected.collect { push() } }
-        scope.launch { _observation.conflate().collect { h.maybeRepair { _observation.value } } }
-        // A helper that comes back while the service is stuck: re-evaluate (conflated, so no double repair).
+        scope.launch { _observation.collect { h.maybeRepair { _observation.value } } }
+        // A helper that comes back while the service is stuck: re-evaluate (StateFlow collection is conflated, so no double repair).
         scope.launch { shell.collect { if (it != null) push() } }
     }
 
