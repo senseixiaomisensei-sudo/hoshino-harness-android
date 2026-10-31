@@ -31,6 +31,9 @@ android {
     }
     sourceSets {
         getByName("main").assets.setSrcDirs(emptyList<String>())
+        // 单测与仪器测试共用的测试工具（如升级种子用的 LegacyConstructors），JVM 单测里也能直接验证。
+        getByName("test").java.srcDir("src/sharedTest/java")
+        getByName("androidTest").java.srcDir("src/sharedTest/java")
         getByName("arm64").assets.srcDir(layout.buildDirectory.dir("generated/runtimeAssets/arm64-v8a").get().asFile)
         getByName("x86").assets.srcDir(layout.buildDirectory.dir("generated/runtimeAssets/x86_64").get().asFile)
         getByName("androidTestArm64").assets.srcDir(layout.buildDirectory.dir("generated/benchmarkAssets/arm64-v8a").get().asFile)
