@@ -208,11 +208,11 @@ class PhoneController private constructor(private val context: Context) {
                 consent.audit(t.auditLine(kind, x.ok))
             }
             val after = r.screen
-            val effect = ActionEffects.of(before, after)
+            val effect = ActionEffects.of(before, after, r.frameChanged)
             val prev = shown[sessionId]
             after?.let { shown[sessionId] = it }
             val out = JSONObject().put("ok", r.completed).put("completed", r.completed)
-                .put("results", JSONArray(r.results.map { x -> JSONObject().put("index", x.index).put("step", x.step).put("ok", x.ok).put("detail", x.detail ?: JSONObject.NULL).put("waited_ms", x.waitedMs).put("met", x.met ?: JSONObject.NULL).apply { x.timing?.let { put("ms", it.json()) } } }))
+                .put("results", JSONArray(r.results.map { x -> JSONObject().put("index", x.index).put("step", x.step).put("ok", x.ok).put("detail", x.detail ?: JSONObject.NULL).put("waited_ms", x.waitedMs).put("met", x.met ?: JSONObject.NULL).apply { x.timing?.let { put("ms", it.json()) }; x.change?.let { put("changed", it.changed); if (it.frameChanged && !it.treeChanged) put("frame_only", true) }; x.openedInMs?.let { put("opened_in_ms", it) } } }))
                 .put("effect", effect.effect.name).put("tree_blind", effect.treeBlind)
             effect.limitReached?.let { out.put("limit_reached", it) }
             r.stoppedAt?.let { out.put("stopped_at", it).put("reason", r.reason ?: "") }

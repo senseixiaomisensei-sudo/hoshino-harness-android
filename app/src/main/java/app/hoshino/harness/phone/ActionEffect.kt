@@ -11,13 +11,17 @@ enum class Effect { done, place_changed, no_effect }
 data class ActionEffect(val effect: Effect, val treeBlind: Boolean, val limitReached: String? = null)
 
 object ActionEffects {
-    fun of(before: ScreenSnapshot?, after: ScreenSnapshot?): ActionEffect {
+    /**
+     * [frameChanged] (A-1): the wait after an action saw the picture change while the tree stayed the same (self-drawn
+     * UI such as Flutter, games, mini programs). That is an effect, not `no_effect`.
+     */
+    fun of(before: ScreenSnapshot?, after: ScreenSnapshot?, frameChanged: Boolean = false): ActionEffect {
         after ?: return ActionEffect(Effect.no_effect, true)
         val blind = after.elements.count { it.name.isNotBlank() && !it.ocr } < 2
         val effect = when {
             before == null -> Effect.done
             before.packageName != after.packageName || before.overlayPackages != after.overlayPackages -> Effect.place_changed
-            before.hash == after.hash && before.texts == after.texts -> Effect.no_effect
+            before.hash == after.hash && before.texts == after.texts && !frameChanged -> Effect.no_effect
             else -> Effect.done
         }
         return ActionEffect(effect, blind, LimitNotice.find(before, after))

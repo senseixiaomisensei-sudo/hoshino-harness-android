@@ -109,6 +109,15 @@ Copyright 2026 wangzan101
 - 文件清单（Mika 源文件 → 本仓库文件）：
   - `core-bridge/src/main/java/dev/hoshino/bridge/phone/shell/SelfHeal.kt` ← Mika `core/.../shell/AccessibilityRepair.kt`（等待/去掉再加回/最多 2 次/逐次拉长间隔）、`core/.../shell/RecoveryPolicy.kt`（退避与停止条件）、`app/.../cap/phone/setup/BuiltinShellRecovery.kt`（App 有 WRITE_SECURE_SETTINGS 时直接写系统设置）
 
+### 动作后等待与打开 App（分支 feat/m2.9-wp1-wait，移植基线 0.1.13 / `688f59d`）
+- 许可：Apache-2.0，全文见 `licenses/mika-LICENSE`。被移植或改写的文件头保留 `Portions derived from Mika … Apache-2.0. Modified by Hoshino Harness contributors.`。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/src/main/java/app/hoshino/harness/phone/ChangeWait.kt` ← Mika `app/src/main/java/com/wangzan101/mika/cap/phone/a11y/ChangeWait.kt`（安静窗口 400→250 ms、轮询 150→100 ms，结果改为说明哪一路信号变了）
+  - `app/src/test/java/app/hoshino/harness/phone/ChangeWaitTest.kt` ← Mika `app/src/test/java/com/wangzan101/mika/cap/phone/a11y/ChangeWaitTest.kt`（全部用例保留，另加慢页面/静态页用例）
+  - `AndroidPhoneScreen.watch`（动作前订阅事件、取树哈希与帧签名）← Mika `AndroidScreen.kt` 的 `verified()` / `withEventClock` / `EventClock` / `awaitChange`
+  - `core-bridge/src/main/java/dev/hoshino/bridge/phone/shell/ColdStart.kt`、`core-bridge/src/test/java/dev/hoshino/bridge/phone/shell/ColdStartTest.kt` ← Mika `ColdStart.kt` / `ColdStartTest.kt`；`PhoneShellService.restartApp/topActivity` ← Mika `ShellService.restartApp/topActivity`
+  - `app/src/main/java/app/hoshino/harness/phone/LaunchReady.kt` 参照 Mika `AndroidScreen.awaitOpened` 的思路重新实现（多了“过了闪屏才算打开”的判定）
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy
