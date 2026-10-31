@@ -1,7 +1,7 @@
 // EV3 提示词金样：用 mock 模型起原版 dsh（node-host 的真实启动路径、真实插件），截取发给模型的第一个请求，
 // 把系统提示词、工具定义和附加的上下文消息与 test/prompt-surface/ 下的金样逐字比对，并检查大小门槛。
 // 四种配置对应 Mika 的「收着 / 只开手机 / 只开网页 / 全开」：Hoshino 用 Agent 模式（modes.json）收放工具——
-//   collapsed = 内置「聊天」模式（不带任何工具定义）；phone = 只留手机/设备类工具；web = 只留 web_* 工具；all = 内置「Agent」模式（全部工具）。
+//   collapsed = 内置「聊天」模式（不带任何工具定义）；phone = 只留手机/设备类工具；web = web_* 工具（外加 #11 规定始终放行的 phone_*）；all = 内置「Agent」模式（全部工具）。
 // phone/web 两个模式是本测试写进 modes.json 的（用户也能这样配），工具名单从构建时生成的真实注册表（self/manifest.json）按名字规则取，
 // 所以 m2.8 合进 phone_* 工具后金样会出现差异，PR 里一目了然。
 // 更新金样：UPDATE_PROMPT_GOLDEN=1 node --test test/prompt-surface.test.mjs（改了提示词或工具的 PR 要附上金样 diff 与大小变化）。
@@ -36,6 +36,9 @@ export const CONFIGS = [
 export function normalize(value, root) {
   let s = JSON.stringify(value);
   if (root) s = s.split(root).join('<ROOT>');
+  // time-context（WP9-B 装载的原版子包）每轮附一行本地时刻：星期、时刻、时区随运行机器变，整段替换。
+  s = s.replace(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{4}-\d{2}-\d{2} \d{1,2}:\d{2}(?::\d{2})? ?(?:[AP]M)? ?(?:\([^)]*\))?(?:\[[^\]]*\])?/g, '<LOCALTIME>');
+  s = s.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?[+-]\d{2}:\d{2}(?:\[[^\]]*\])?/g, '<LOCALTIME>');
   s = s.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, '<TIME>')
     .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '<DATE>')
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<UUID>');
@@ -93,7 +96,8 @@ test('EV3 prompt surface golden for four tool configurations (original dsh, mock
   });
   const callbackPort = await listen(callback);
   let logs = '';
-  const child = spawn(process.execPath, ['dist/node-host/src/main.js'], {cwd: resolve(here, '..'), stdio: ['pipe', 'pipe', 'pipe']});
+  // TZ 固定为 UTC：time-context 的时刻行长度随时区名变（大小也进金样），不同机器跑出来要一致。
+  const child = spawn(process.execPath, ['dist/node-host/src/main.js'], {cwd: resolve(here, '..'), stdio: ['pipe', 'pipe', 'pipe'], env: {...process.env, TZ: 'UTC'}});
   child.stdout.on('data', b => logs += b); child.stderr.on('data', b => logs += b);
   child.stdin.end(JSON.stringify({callbackPort, callbackToken: 'prompt-surface-secret', workspace, home}) + '\n');
   t.after(async () => {
@@ -145,7 +149,11 @@ test('EV3 prompt surface golden for four tool configurations (original dsh, mock
   const names = id => results[id].tools.map(x => x.name);
   assert.deepEqual(names('collapsed'), [], 'chat mode must not send tool definitions');
   assert.ok(names('phone').length > 0 && names('phone').every(n => PHONE_TOOL.test(n)), `phone config leaked: ${names('phone')}`);
-  assert.ok(names('web').length > 0 && names('web').every(n => WEB_TOOL.test(n)), `web config leaked: ${names('web')}`);
+  // #11（m2.8.2）起 phone_* 不受模式白名单限制（旧白名单不得藏掉手机工具，只有聊天模式不带工具），所以「只开网页」= web_* + phone_*。
+  const {ALWAYS_ALLOWED_PREFIXES} = await import('../dist/plugins/hoshino-m2/tool-mask.js');
+  const alwaysAllowed = n => ALWAYS_ALLOWED_PREFIXES.some(p => n.startsWith(p));
+  assert.ok(names('web').some(n => WEB_TOOL.test(n)) && names('web').every(n => WEB_TOOL.test(n) || alwaysAllowed(n)), `web config leaked: ${names('web')}`);
+  assert.deepEqual(names('web').filter(alwaysAllowed).sort(), registered.filter(alwaysAllowed).sort(), 'every phone_* tool must reach a non-chat mode (#11)');
   for (const n of [...names('phone'), ...names('web')]) assert.ok(names('all').includes(n), `all config misses ${n}`);
   assert.ok(results.all.size.estimatedTokens > results.web.size.estimatedTokens);
 

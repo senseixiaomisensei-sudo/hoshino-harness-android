@@ -1,7 +1,7 @@
 {
-  "_note": "EV3 大小门槛：每种配置发给模型的提示词全貌（系统提示 + 工具定义 + 附加上下文）粗估 token 上限（字符/4）。约为 2026-10-31 金样的 1.15 倍。金样更新不会自动放宽这里；超了要在 PR 里说明为什么值得，再由人改这个数。",
-  "collapsed": {"estimatedTokens": 450},
-  "phone": {"estimatedTokens": 900},
-  "web": {"estimatedTokens": 650},
-  "all": {"estimatedTokens": 7600}
+  "_note": "EV3 大小门槛：每种配置发给模型的提示词全貌（系统提示 + 工具定义 + 附加上下文）粗估 token 上限（字符/4）。金样更新不会自动放宽这里；超了要在 PR 里说明为什么值得，再由人改这个数。2026-10-31 integ/m2.9 调整为当日金样的约 1.15 倍：#11 修好 schema 后 17 个 phone_* 工具第一次真正装进提示词（约 11k 字符、2.6k token，且按 #11 规则在所有非聊天模式可见），WP9-B 加了不可信内容规则与 time-context 每轮时刻行（约 150 token）。",
+  "collapsed": {"estimatedTokens": 620},
+  "phone": {"estimatedTokens": 3950},
+  "web": {"estimatedTokens": 3800},
+  "all": {"estimatedTokens": 10900}
 }

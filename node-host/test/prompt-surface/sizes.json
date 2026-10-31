@@ -1,30 +1,30 @@
 {
   "collapsed": {
-    "systemChars": 1373,
+    "systemChars": 1672,
     "toolsChars": 2,
-    "contextChars": 181,
+    "contextChars": 463,
     "tools": 0,
-    "estimatedTokens": 389
+    "estimatedTokens": 535
   },
   "phone": {
-    "systemChars": 1385,
-    "toolsChars": 1129,
-    "contextChars": 181,
-    "tools": 6,
-    "estimatedTokens": 674
+    "systemChars": 1684,
+    "toolsChars": 11502,
+    "contextChars": 463,
+    "tools": 23,
+    "estimatedTokens": 3413
   },
   "web": {
-    "systemChars": 1385,
-    "toolsChars": 653,
-    "contextChars": 181,
-    "tools": 3,
-    "estimatedTokens": 555
+    "systemChars": 1684,
+    "toolsChars": 11026,
+    "contextChars": 463,
+    "tools": 20,
+    "estimatedTokens": 3294
   },
   "all": {
-    "systemChars": 2053,
-    "toolsChars": 23020,
-    "contextChars": 1016,
-    "tools": 49,
-    "estimatedTokens": 6523
+    "systemChars": 2352,
+    "toolsChars": 34165,
+    "contextChars": 1298,
+    "tools": 67,
+    "estimatedTokens": 9454
   }
 }
