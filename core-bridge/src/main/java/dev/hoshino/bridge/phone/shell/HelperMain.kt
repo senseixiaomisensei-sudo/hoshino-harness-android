@@ -61,6 +61,11 @@ object HelperMain {
         private var nonce: String? = null
         private var appToken: IBinder? = null
         private var retrying = false
+        /** Self-heal (WP-9): last answer of the app's token, repairs since the last handoff, recent repair times. */
+        private var healWanted = false
+        private var healedSinceHandoff = 0
+        private val healRecent = ArrayList<Long>()
+        private val healPoll = Runnable { pollHeal() }
 
         fun start(launchNonce: String) = worker.post {
             when (deliver(launchNonce)) {
@@ -99,6 +104,7 @@ object HelperMain {
                     putInt(HelperHandoff.KEY_UID, Process.myUid())
                     putInt(HelperHandoff.KEY_PID, Process.myPid())
                     putString(HelperHandoff.KEY_APK, System.getProperty("java.class.path"))
+                    putInt(HelperHeal.KEY_HEALED, healedSinceHandoff)
                 }
                 val call = provider.javaClass.methods.first { it.name == "call" && it.parameterTypes.size == 5 && it.parameterTypes[0] == AttributionSource::class.java }
                 val caller = AttributionSource.Builder(Process.myUid()).setPackageName(ShellContext.SHELL_PACKAGE).build()
@@ -110,6 +116,8 @@ object HelperMain {
                 val appBinder = result.getBinder(HelperHandoff.KEY_TOKEN) ?: return Outcome.Rejected
                 nonce = result.getString(HelperHandoff.KEY_NEXT)
                 appToken = appBinder
+                healedSinceHandoff = 0
+                worker.post { pollHeal() }
                 try {
                     appBinder.linkToDeath({ worker.post { onAppDied(appBinder) } }, 0)
                 } catch (t: Throwable) {
@@ -130,8 +138,33 @@ object HelperMain {
         private fun onAppDied(token: IBinder) {
             if (appToken !== token) return
             appToken = null
+            worker.removeCallbacks(healPoll)
             runCatching { service.releaseAll() }
             if (!installed()) exitProcess(0)
+            // Self-heal (opt-in, see SelfHeal): a force-stop drops our accessibility entry and nothing restarts us.
+            if (healWanted) worker.postDelayed({ heal(1) }, SelfHeal.GRACE_MS)
+        }
+
+        /** Asks the live app whether the user wants self-heal; repeats while the app is alive. */
+        private fun pollHeal() {
+            val token = appToken ?: return
+            healWanted = HelperHeal.wanted(token)
+            worker.removeCallbacks(healPoll)
+            worker.postDelayed(healPoll, HelperHeal.POLL_MS)
+        }
+
+        /** Puts Hoshino's accessibility service back; the system binding it starts the app, which takes the binder back. */
+        private fun heal(attempt: Int) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (!HelperHeal.shouldRepair(healWanted, appToken != null, attempt, healRecent, now)) return
+            if (attempt == 1) { healRecent += now; val keep = SelfHeal.prune(healRecent, now); healRecent.clear(); healRecent += keep }
+            val me = "$packageName/${PhoneServices.ACCESSIBILITY_CLASS}"
+            val current = runCatching { service.runCommand(PermissionCommands.READ_ACCESSIBILITY).getString("output") }.getOrNull()?.trim()
+            val script = SelfHeal.commands(current, me, readd = SelfHeal.contains(current, me), gapMs = SelfHeal.gapMs(attempt)).joinToString("; ")
+            val ok = runCatching { service.runCommand(script).getInt("exitCode") == 0 }.getOrDefault(false)
+            if (ok) healedSinceHandoff++
+            Log.i(TAG, "self-heal attempt $attempt ${if (ok) "written" else "failed"}")
+            if (attempt < SelfHeal.MAX_ATTEMPTS) worker.postDelayed({ if (appToken == null) heal(attempt + 1) }, SelfHeal.CONNECT_TIMEOUT_MS + SelfHeal.BACKOFF_MS)
         }
 
         private fun installed(): Boolean = runCatching {

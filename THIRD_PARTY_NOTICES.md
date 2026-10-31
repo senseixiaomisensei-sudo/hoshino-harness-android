@@ -103,6 +103,12 @@ Copyright 2026 wangzan101
   - `app/src/test/.../cap/phone/shell/ShellClipTest.kt` → `core-bridge/src/test/.../phone/shell/ShellClipTest.kt`（另加 `ClipSwapTest`）
   - `app/.../cap/phone/a11y/AndroidScreen.kt` 的 `typeText/typeAt/typeUnseen/inputText/inWebView`（思路）→ `app/.../phone/TypeFlow.kt`、`app/.../phone/AndroidPhoneScreen.kt`（逐字按键注入 `injectText` 为本仓库新增；不移植 `TypingPacing`）
 
+### 首配提速与自愈（分支 feat/m2.9-wp9-setup）
+
+- 使用方式：参照 Mika 的思路重新实现，不是逐行移植；自愈改为用户勾选后才生效，并在用户自己关闭无障碍时暂停。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `core-bridge/src/main/java/dev/hoshino/bridge/phone/shell/SelfHeal.kt` ← Mika `core/.../shell/AccessibilityRepair.kt`（等待/去掉再加回/最多 2 次/逐次拉长间隔）、`core/.../shell/RecoveryPolicy.kt`（退避与停止条件）、`app/.../cap/phone/setup/BuiltinShellRecovery.kt`（App 有 WRITE_SECURE_SETTINGS 时直接写系统设置）
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy
