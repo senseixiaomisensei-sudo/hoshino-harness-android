@@ -79,6 +79,7 @@ internal fun phoneStatusLabel(s: PhoneTaskState, manual: Boolean): String = when
     PhoneTaskState.Status.NeedsUser -> "需要你处理"
     PhoneTaskState.Status.Approval -> "等你同意"
     PhoneTaskState.Status.TakenOver -> if (manual) "你在操作 · AI 已暂停" else "交给你了"
+    PhoneTaskState.Status.WaitingUnlock -> "等待解锁"
     PhoneTaskState.Status.Idle -> "空闲"
 }
 

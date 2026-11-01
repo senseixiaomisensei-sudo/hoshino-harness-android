@@ -49,7 +49,7 @@ class PhoneTaskService : Service() {
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentTitle(PhoneTaskForeground.title(state))
-            .setContentText("在后台虚拟屏进行，不占用你的主屏")
+            .setContentText(PhoneTaskForeground.text(state))
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, "停止", stop).build())
             .build()
@@ -97,8 +97,13 @@ object PhoneTaskForeground {
         PhoneTaskState.Status.NeedsUser -> "Hoshino 手机操作暂停 · 需要你"
         PhoneTaskState.Status.Approval -> "Hoshino 手机操作 · 等待你确认"
         PhoneTaskState.Status.TakenOver -> "Hoshino 手机操作 · 你正在处理"
+        PhoneTaskState.Status.WaitingUnlock -> "Hoshino 手机操作 · 等待解锁"
         else -> "Hoshino 正在后台操作手机" + (state.app?.let { " · $it" } ?: "")
     }
+
+    /** Notification text: the lock-gate sentence while waiting for unlock (visible on the lock screen), else the usual line. */
+    fun text(state: PhoneTaskState): String =
+        if (state.status == PhoneTaskState.Status.WaitingUnlock) LockGate.WAITING_TEXT else "在后台虚拟屏进行，不占用你的主屏"
 
     /**
      * Android 12+ may refuse to start a foreground service from the background

@@ -110,6 +110,7 @@ fun PhonePip(modifier: Modifier = Modifier, onExpand: () -> Unit = {}) {
     val pulse by rememberInfiniteTransition(label = "pip").animateFloat(1f, if (needsYou) 0.35f else 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "pulse")
     val borderColor = when {
         needsYou -> Color(0xFFFB8C00).copy(alpha = pulse)
+        state.status == PhoneTaskState.Status.WaitingUnlock -> Color(0xFFFB8C00)
         state.status == PhoneTaskState.Status.Working -> Color(0xFF43A047)
         else -> Color(0x668E8E93)
     }

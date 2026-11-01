@@ -2,11 +2,7 @@
 package app.hoshino.harness.phone
 
 import android.annotation.SuppressLint
-import android.app.KeyguardManager
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -128,7 +124,8 @@ object PhoneCapsule {
         private val approvals = MutableStateFlow<List<Approval>>(emptyList())
         private val questions = MutableStateFlow<List<Question>>(emptyList())
         private val foreground = MutableStateFlow<String?>(null)
-        private val screenOn = MutableStateFlow(true)
+        /** m2.10: the same screen/keyguard state the task gate uses (re-reads after USER_PRESENT until the keyguard is gone). */
+        private val device = controller.device
         private val model = BallPanelModel()
         private var fadeJob: Job? = null
         private var breath: Job? = null
@@ -264,12 +261,7 @@ object PhoneCapsule {
         private var lastRate = 0L
         private var lastBitmap: Bitmap? = null
 
-        private val screenReceiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context, i: Intent) { screenOn.value = i.action != Intent.ACTION_SCREEN_OFF }
-        }
-
         fun start() {
-            ctx.registerReceiver(screenReceiver, IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_USER_PRESENT); addAction(Intent.ACTION_SCREEN_ON) })
             installDrag()
             installPanelDrag()
             installPreviewTouch()
@@ -317,7 +309,8 @@ object PhoneCapsule {
             scope.launch { controller.orientationMode.collect { m -> orientationButtons.forEach { (k, b) -> b.alpha = if (k == m) 1f else 0.55f } } }
             scope.launch { PhoneDisplayFps.of(ctx).fps.collect { fpsValue.text = "$it fps" } }
             scope.launch { runCatching { Hoshino.client.sessions.collect { refreshVisibility() } } }
-            scope.launch { screenOn.collect { refreshVisibility() } }
+            // Collecting keeps DeviceState re-reading while "screen on but keyguard still up", so the ball comes back after unlock.
+            scope.launch { device.locked.collect { refreshVisibility() } }
             scope.launch { PhoneConsent.of(ctx).state.collect { refreshVisibility() } }
             // m2.9.2: rebind (and resize the window to the new aspect) whenever the display turns portrait ⇄ landscape.
             scope.launch {
@@ -351,8 +344,7 @@ object PhoneCapsule {
 
         /** (want, hideImmediately). Screen off / locked hide at once; everything else goes through the debounce. */
         private fun wanted(): Pair<Boolean, Boolean> {
-            val keyguard = runCatching { ctx.getSystemService(KeyguardManager::class.java).isKeyguardLocked }.getOrDefault(false)
-            if (!screenOn.value || keyguard) return false to true
+            if (device.locked.value) return false to true
             val manual = controller.manual.active.value != null
             // m2.9.4: inside Hoshino (or while an in-app virtual screen is shown) the overlay never appears, even during a takeover.
             if (ownApp()) return false to true
@@ -390,7 +382,7 @@ object PhoneCapsule {
 
         private fun render(s: PhoneTaskState, count: Int, takeover: PhoneTakeover.Pending?, manual: Boolean) {
             val needsYou = count > 0 || s.status == PhoneTaskState.Status.NeedsUser || s.status == PhoneTaskState.Status.Approval || takeover != null
-            ring.setStroke(px(3), when { needsYou || manual -> ORANGE; s.status == PhoneTaskState.Status.Working -> GREEN; else -> GREY })
+            ring.setStroke(px(3), when { needsYou || manual || s.status == PhoneTaskState.Status.WaitingUnlock -> ORANGE; s.status == PhoneTaskState.Status.Working -> GREEN; else -> GREY })
             badge.text = if (count > 0) count.toString() else ""
             badge.background = if (count > 0) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(ORANGE) } else null
             breathe(needsYou)
@@ -403,6 +395,7 @@ object PhoneCapsule {
                 PhoneTaskState.Status.NeedsUser -> "需要你处理"
                 PhoneTaskState.Status.Approval -> "等你同意"
                 PhoneTaskState.Status.TakenOver -> if (manual) "你在操作 · AI 已暂停" else "交给你了"
+                PhoneTaskState.Status.WaitingUnlock -> "等待解锁"
                 PhoneTaskState.Status.Idle -> if (count > 0) "共 $count 件事" else if (turnRunning()) "思考中 " + (s.app ?: "") else "Hoshino"
             } + if (count > 1) " · 共 $count 件" else ""
             current.text = "当前：" + (s.recent.lastOrNull() ?: if (turnRunning()) "等待模型下一步" else "无")
@@ -1029,7 +1022,6 @@ object PhoneCapsule {
         fun dispose() {
             hideJob?.cancel()
             visibility.reset()
-            runCatching { ctx.unregisterReceiver(screenReceiver) }
             if (controller.manual.active.value != null) controller.endManualTakeover()
             model.takeoverChanged(false)
             closePanel()
