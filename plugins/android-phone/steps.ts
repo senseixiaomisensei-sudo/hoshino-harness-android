@@ -52,6 +52,34 @@ export async function runSteps(call: Call, approve: Approve, sessionId: string, 
   }
 }
 
+/** Actions that change the agent display and therefore wait at Android's lock gate (PhoneController.awaitUnlock). */
+export const LOCK_GATED: ReadonlySet<string> = new Set(['steps', 'find', 'collect']);
+/** Safety cap on transparent re-calls; Android itself fails with `locked` after 10 minutes in total. */
+export const MAX_UNLOCK_RECALLS = 12;
+
+/**
+ * m2.10: a phone action on a locked phone waits for unlock on the Android side, in slices (one callback must answer
+ * well before node fetch's 300 s limit). A slice that ends still locked answers `code: 'waiting_unlock', retry: true`
+ * with nothing done; this wrapper calls again by itself, so the model only sees the final result (done after unlock,
+ * or `locked` after the 10-minute cap). When the kernel aborts the tool call while Android waits, Android is told to
+ * stop so the stale action never runs after a later unlock.
+ */
+export function withUnlockWait(call: Call): Call {
+  return async (method, body, signal) => {
+    if (method !== 'phone' || !LOCK_GATED.has(String(body.action))) return call(method, body, signal);
+    const onAbort = () => { void call('phone', {action: 'stop', sessionId: body.sessionId}).catch(() => undefined); };
+    signal?.addEventListener('abort', onAbort, {once: true});
+    try {
+      for (let i = 0; ; i++) {
+        const r = await call(method, body, signal);
+        if (r.code !== 'waiting_unlock' || r.retry !== true || signal?.aborted || i >= MAX_UNLOCK_RECALLS) return r;
+      }
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+    }
+  };
+}
+
 /** Android `code` values that mean phone control itself is not set up (PhoneController.requireReady). */
 export const SETUP_CODES: ReadonlySet<string> = new Set(['helper', 'accessibility', 'unsupported']);
 

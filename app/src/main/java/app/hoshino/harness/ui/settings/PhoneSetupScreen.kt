@@ -274,6 +274,9 @@ fun PhoneSetupScreen(onBack: () -> Unit) {
                 Hint("无障碍：" + (if (observation.connected) "运行中" else if (observation.listed) "已开启但没在运行" else "未开启") + " · 助手：" + statusText(status))
                 lastHeal?.let { h -> Hint("上次自动恢复：" + (if (h.restored) "成功" else "失败") + (if (h.byHelper) "（助手在 Hoshino 被清理后完成）" else "（尝试 ${h.attempts} 次）")) }
                 Hint("任务进行中 Hoshino 保持前台服务；付款、密码、验证码仍然交给你。")
+                val keepAwake = remember { app.hoshino.harness.phone.PhoneKeepAwakeSetting.of(context) }
+                val keepAwakeOn by keepAwake.on.collectAsState()
+                ConsentRow("任务期间保持亮屏并调暗（推荐）", "手机任务进行中不让屏幕自动熄灭（熄屏后系统会丢掉操作并上锁），屏幕可以变暗以省电；不改系统设置和亮度，任务结束就释放。你按电源键照样能熄屏：锁屏或熄屏时任务暂停、显示「等待解锁」，解锁后自动继续，超过 10 分钟没解锁就如实失败。", keepAwakeOn) { keepAwake.set(it) }
             }
         }
 

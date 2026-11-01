@@ -154,3 +154,13 @@ Copyright 2026 wangzan101
 - ONNX 导出与托管：RapidOCR（https://github.com/RapidAI/RapidOCR ，Apache License 2.0），固定到 https://huggingface.co/SWHL/RapidOCR 的提交 `1cfba2e90fc938db55889873735088de210cc173`
 - 使用方式：**不随 APK 分发**；用户在「设置手机操作」里点下载时才获取，按 SHA-256 校验（det `d2a7720d…f49da9`，rec `48fc40f2…83683b`，完整值见 `app/src/main/java/app/hoshino/harness/phone/ocr/OcrModels.kt`）。字符表取自识别模型自带的 `character` 元数据。
 - 本仓库实现的前后处理（DB 后处理、CTC 解码、缩放归一化）按 PaddleOCR/RapidOCR 公开的参数独立编写：`app/src/main/java/app/hoshino/harness/phone/ocr/OcrPipeline.kt`。
+
+## Mika（续）：锁屏＝暂停、解锁自动继续、任务期间保持亮屏（分支 feat/m2.10-lock-gate）
+
+- 项目与许可同上「Mika」段：https://github.com/wangzan101/mika ，Apache License 2.0（全文 `licenses/mika-LICENSE`），NOTICE：`Mika` / `Copyright 2026 wangzan101`。参照版本 0.1.28（含提交 736b53d「亮屏解锁后任务不再一直等解锁」）。
+- 使用方式：移植并改写（包名 `app.hoshino.harness.phone`），文件头部保留出处说明。
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/src/main/java/com/wangzan101/mika/task/DeviceStateWatcher.kt`（`LockState`：广播只当重读信号、「亮着但锁着」且有订阅者时每 500 ms 重读、熄屏不读等 SCREEN_ON）→ `app/src/main/java/app/hoshino/harness/phone/DeviceState.kt`（只取锁屏部分；`taskMovedAway` 未移植）
+  - `app/src/main/java/com/wangzan101/mika/task/TaskGate.kt`（规则 3：熄屏或锁屏 → 等待解锁，解锁后自动继续）→ `app/src/main/java/app/hoshino/harness/phone/LockGate.kt`（改写：按回调分段等待、10 分钟总上限后如实失败、停止即结束等待；其它门禁规则未移植）
+  - `app/src/main/java/com/wangzan101/mika/task/KeepAwake.kt`（`KeepAwake`、`WakeLockPort`、`ScreenWakeLock`）→ `app/src/main/java/app/hoshino/harness/phone/KeepAwake.kt`（改为 SCREEN_DIM_WAKE_LOCK「保持亮屏并调暗」，按本项目任务状态决定持有/宽限/释放；`SharedWakeLock` 未移植）
+  - `app/src/test/java/com/wangzan101/mika/task/LockStateTest.kt`、`TaskGateTest.kt`（锁屏用例）、`KeepAwakeTest.kt` → `app/src/test/java/app/hoshino/harness/phone/LockGateTest.kt`

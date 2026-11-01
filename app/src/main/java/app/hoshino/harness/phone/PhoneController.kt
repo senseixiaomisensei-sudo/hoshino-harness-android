@@ -1,6 +1,5 @@
 package app.hoshino.harness.phone
 
-import android.app.KeyguardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
@@ -43,7 +42,9 @@ data class PhoneTaskState(
     /** Why the user is needed / why it stopped. */
     val reason: String? = null,
 ) {
-    enum class Status { Idle, Working, NeedsUser, Approval, TakenOver }
+    enum class Status { Idle, Working, NeedsUser, Approval, TakenOver,
+        /** m2.10: the phone is locked or dark; the action waits and continues by itself after unlock ([LockGate]). */
+        WaitingUnlock }
 }
 
 /**
@@ -89,6 +90,11 @@ class PhoneController private constructor(private val context: Context) {
     private val _taskSince = MutableStateFlow<Long?>(null)
     /** m2.9.3: when the current phone task became active (elapsed time in the in-app page), null while idle. */
     val taskSince: StateFlow<Long?> = _taskSince.asStateFlow()
+    /** m2.10: screen on/off + keyguard, shared with the capsule. */
+    val device: DeviceState = DeviceState.of(context)
+    private val stopTicks = MutableStateFlow(0L)
+    private val unlockGate = LockGate(device.locked, { SystemClock.elapsedRealtime() })
+    private val awake = KeepAwake(ScreenDimWakeLock(context), scope)
 
     init {
         scope.launch {
@@ -101,6 +107,14 @@ class PhoneController private constructor(private val context: Context) {
             _display.map { it != null }.distinctUntilChanged().collect { exists ->
                 PhoneTaskForeground.sync(context, exists)?.let { consent.audit("phone task foreground service not started: ${it.javaClass.simpleName}") }
             }
+        }
+        // m2.10 「任务期间保持亮屏并调暗」: hold a dim screen lock while the task works, release when it ends.
+        scope.launch {
+            val sessions = runCatching { app.hoshino.harness.core.Hoshino.client.sessions }.getOrNull()
+                ?: MutableStateFlow(emptyList<app.hoshino.harness.core.SessionInfo>())
+            combine(PhoneKeepAwakeSetting.of(context).on, _display, _state, sessions) { on, d, s, list ->
+                KeepAwake.demand(on, d != null, s.status, s.sessionId != null && list.any { it.id == s.sessionId && it.running })
+            }.distinctUntilChanged().collect { awake.on(it) }
         }
         // User frame-rate setting (5–60 fps) follows the display as it is created and recreated.
         scope.launch { combine(_display, PhoneDisplayFps.of(context).fps) { d, fps -> d to fps }.collect { (d, fps) -> d?.userFps = fps } }
@@ -215,7 +229,45 @@ class PhoneController private constructor(private val context: Context) {
         }
     }
 
-    private fun locked(): Boolean = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
+    private fun locked(): Boolean = device.locked.value
+
+    /**
+     * m2.10 lock gate for actions that change the agent display. Waits (outside the action mutex) while the phone is
+     * locked or dark, showing 「等待解锁」; continues by itself after unlock. Returns null to go on, or the answer to give
+     * the kernel instead: `waiting_unlock` + retry (this call's budget ran out; the plugin calls again), or throws
+     * `locked` after [LockGate.TIMEOUT_MS] in total.
+     */
+    private suspend fun awaitUnlock(sessionId: String, callStart: Long): JSONObject? {
+        val before = _state.value
+        val outcome = unlockGate.await(sessionId, callStart, { stops[sessionId] }, stopTicks, onWaiting = { waiting ->
+            if (waiting) {
+                consent.audit("phone locked: task waits for unlock")
+                _state.update { it.copy(sessionId = sessionId, status = PhoneTaskState.Status.WaitingUnlock, reason = LockGate.WAITING_TEXT) }
+            }
+        })
+        return when (outcome) {
+            is LockGate.Outcome.Clear -> {
+                if (outcome.waitedMs > 0) {
+                    consent.audit("phone unlocked after ${outcome.waitedMs} ms: task continues")
+                    _state.update { if (it.status == PhoneTaskState.Status.WaitingUnlock) it.copy(status = before.status.takeIf { s -> s != PhoneTaskState.Status.WaitingUnlock } ?: PhoneTaskState.Status.Idle, reason = null) else it }
+                }
+                null
+            }
+            is LockGate.Outcome.StillWaiting -> JSONObject().put("ok", false).put("code", "waiting_unlock").put("retry", true)
+                .put("waited_ms", outcome.waitedMs).put("left_ms", outcome.leftMs)
+                .put("error", "waiting_unlock: the phone is locked; nothing was done yet, still waiting for the user to unlock")
+            is LockGate.Outcome.TimedOut -> {
+                consent.audit("phone stayed locked ${outcome.waitedMs} ms: task fails with locked")
+                _state.update { if (it.status == PhoneTaskState.Status.WaitingUnlock) it.copy(status = PhoneTaskState.Status.Idle, reason = LockGate.TIMED_OUT_TEXT) else it }
+                throw PhoneUnavailable("locked", "locked: the phone stayed locked or dark for ${outcome.waitedMs / 60_000} min; nothing was done. ${LockGate.TIMED_OUT_TEXT}")
+            }
+            is LockGate.Outcome.Stopped -> {
+                _state.update { if (it.status == PhoneTaskState.Status.WaitingUnlock) it.copy(status = PhoneTaskState.Status.Idle, reason = outcome.why) else it }
+                JSONObject().put("ok", false).put("code", "stopped").put("completed", false).put("results", JSONArray()).put("stopped_at", 0)
+                    .put("reason", "stopped").put("error", "stopped: ${outcome.why}; nothing was done")
+            }
+        }
+    }
 
     private suspend fun claim(sessionId: String) {
         val current = owner
@@ -235,11 +287,25 @@ class PhoneController private constructor(private val context: Context) {
     }
 
     /** Port wrapper: AP7 and lock checks before every single action, and the audit line after it. */
-    private inner class GuardedPort(private val inner: AndroidPhoneScreen, private val sessionId: String) : PhonePort by inner {
+    private inner class GuardedPort(private val inner: AndroidPhoneScreen, private val sessionId: String, private val callStart: Long = SystemClock.elapsedRealtime()) : PhonePort by inner {
         override suspend fun perform(step: PhoneStep, target: UiElement?): ActionOutcome {
             // The user took over mid-batch: this step is not done; the runner stops and re-reads (the note rides on the result).
             val w = manual.awaitAiAllowed(ManualTakeover.GATE_TIMEOUT_MS)
             if (w.waited || !w.allowed) return ActionOutcome(false, "user_takeover: the user operated the screen by hand before this step; it was NOT done. Read the new screen and decide again")
+            // m2.10: locked mid-batch → wait for unlock within this call's budget, then do the step; otherwise stop the batch honestly.
+            if (locked()) {
+                val o = unlockGate.await(sessionId, callStart, { stops[sessionId] }, stopTicks, onWaiting = { waiting ->
+                    if (waiting) _state.update { it.copy(status = PhoneTaskState.Status.WaitingUnlock, reason = LockGate.WAITING_TEXT) }
+                })
+                when (o) {
+                    is LockGate.Outcome.Clear -> _state.update { if (it.status == PhoneTaskState.Status.WaitingUnlock) it.copy(status = PhoneTaskState.Status.Working, reason = null) else it }
+                    is LockGate.Outcome.Stopped -> return ActionOutcome(false, "stopped: ${o.why}; this step was NOT done")
+                    else -> {
+                        _state.update { if (it.status == PhoneTaskState.Status.WaitingUnlock) it.copy(status = PhoneTaskState.Status.Working) else it }
+                        return ActionOutcome(false, "locked: the phone got locked during the batch and is still locked; this step was NOT done. Call again: actions wait for the user to unlock (up to ${LockGate.TIMEOUT_MS / 60_000} min)")
+                    }
+                }
+            }
             PhoneGuards.refuse(inner.last?.packageName, context.packageName, consent.allowSelf, locked(), step)?.let { return ActionOutcome(false, it) }
             val out = inner.perform(step, target)
             _state.update { it.copy(recent = (it.recent + step.describe()).takeLast(3), app = inner.last?.packageName ?: it.app) }
@@ -288,22 +354,29 @@ class PhoneController private constructor(private val context: Context) {
         } finally { frame.recycle() }
     }
 
-    private suspend fun steps(sessionId: String, body: JSONObject): JSONObject = lock.withLock {
-        val shell = requireReady()
-        if (locked()) throw PhoneUnavailable("locked", "手机锁屏中，解锁后再继续")
+    private suspend fun steps(sessionId: String, body: JSONObject): JSONObject {
+        val callStart = SystemClock.elapsedRealtime()
         val steps = PhoneStep.parseAll(body.getJSONArray("steps"))
+        requireReady()
+        // A new call is a new intent: an earlier stop does not apply to it; a stop during the wait below does.
+        stops.remove(sessionId)
+        awaitUnlock(sessionId, callStart)?.let { return it }
+        return lock.withLock { runSteps(sessionId, body, steps, callStart) }
+    }
+
+    private suspend fun runSteps(sessionId: String, body: JSONObject, steps: List<PhoneStep>, callStart: Long): JSONObject {
+        val shell = requireReady()
         val s = screenFor(shell)
         claim(sessionId)
         touchIdle()
-        stops.remove(sessionId)
         val wake = context.getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "hoshino:phone-task")
         wake.acquire(WAKE_MS)
         _state.update { it.copy(sessionId = sessionId, status = PhoneTaskState.Status.Working, reason = null) }
-        try {
+        return try {
             val before = s.last
             // m2.9.2: the kernel marks sessions under the user-enabled no-approval mode; nothing then stops for the user.
             val bypass = if (body.optBoolean("no_approval", false)) NoApprovalBypass { why, pkg -> consent.audit("no-approval pass reason=$why pkg=${pkg ?: "?"}") } else null
-            val runner = StepRunner(GuardedPort(s, sessionId), { fp -> consumeGrant(sessionId, fp) }, noApproval = bypass, stopRequested = { stops[sessionId] })
+            val runner = StepRunner(GuardedPort(s, sessionId, callStart), { fp -> consumeGrant(sessionId, fp) }, noApproval = bypass, stopRequested = { stops[sessionId] })
             val r = runner.run(steps, body.optString("app_label").takeIf { it.isNotBlank() })
             for (x in r.results) x.timing?.let { t ->
                 val kind = steps[x.index].kind.name
@@ -351,18 +424,23 @@ class PhoneController private constructor(private val context: Context) {
         val extract = if (action == "extract") ExtractParams.parse(body) else null
         val find = if (action == "find") FindParams.parse(body) else null
         val collect = if (action == "collect") CollectParams.parse(body) else null
+        val scrolling = find != null || collect != null
+        val callStart = SystemClock.elapsedRealtime()
+        if (scrolling) {
+            requireReady()
+            stops.remove(sessionId)
+            awaitUnlock(sessionId, callStart)?.let { return it }
+        }
         return lock.withLock {
             val shell = requireReady()
-            val scrolling = find != null || collect != null
-            if (scrolling && locked()) throw PhoneUnavailable("locked", "手机锁屏中，解锁后再继续")
             val s = screenFor(shell)
             claim(sessionId)
             touchIdle()
-            stops.remove(sessionId)
+            if (!scrolling) stops.remove(sessionId)
             val wake = if (scrolling) context.getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "hoshino:phone-read").also { it.acquire(WAKE_MS) } else null
             if (scrolling) _state.update { it.copy(sessionId = sessionId, status = PhoneTaskState.Status.Working, reason = null) }
             try {
-                val reader = ScreenReader(GuardedPort(s, sessionId)) { stops[sessionId] }
+                val reader = ScreenReader(GuardedPort(s, sessionId, callStart)) { stops[sessionId] }
                 val out = JSONObject().put("ok", true)
                 val last: ScreenSnapshot = when {
                     query != null -> s.read().also { snap ->
@@ -420,12 +498,14 @@ class PhoneController private constructor(private val context: Context) {
     fun stop(sessionId: String?, why: String) {
         val sid = sessionId ?: owner ?: return
         stops[sid] = why
+        stopTicks.update { it + 1 }
         _state.update { if (it.sessionId == sid) it.copy(status = PhoneTaskState.Status.Idle, reason = why) else it }
     }
 
     fun release(sessionId: String?) {
         if (sessionId != null && owner != null && owner != sessionId) return
         owner = null
+        sessionId?.let(unlockGate::forget)
         shown.clear()
         grants.clear()
         screen = null
@@ -564,7 +644,7 @@ class PhoneController private constructor(private val context: Context) {
     /** PH26: one report with helper, accessibility, display, focus and lock state. Package names only, no content. */
     private fun diagnose(): JSONObject {
         val c = consent.state.value
-        return status().put("locked", locked()).put("display", agentDisplayId() ?: JSONObject.NULL)
+        return status().put("locked", device.refresh()).put("display", agentDisplayId() ?: JSONObject.NULL)
             .put("main_screen_app", PhoneAccessibilityService.instance.value?.foreground?.value ?: JSONObject.NULL)
             .put("muted", JSONArray(PhoneLedger.mutedPackages(context)))
             .put("setup_issues", JSONArray(services.setupIssues.value))
