@@ -1,6 +1,7 @@
 // Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.
 package dev.hoshino.bridge.chatgpt
 
+import dev.hoshino.bridge.oauth.LoopbackCallback
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking

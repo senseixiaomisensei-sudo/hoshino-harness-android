@@ -1,6 +1,7 @@
 // Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.
 package dev.hoshino.bridge.chatgpt
 
+import dev.hoshino.bridge.oauth.LoopbackCallback
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
@@ -143,7 +144,7 @@ suspend fun signInWithChatGpt(
         val attempt = auth.newAttempt(cb.redirectUri)
         val hint = previous?.takeIf { it.signedIn && it.clientId == clientId }
         openBrowser(auth.authorizeUrl(attempt, clientId, hostId, hint?.idToken, previous?.email?.takeIf { clientId != null }))
-        (cb.await(timeoutMs, { it["state"] == attempt.state }, page) ?: throw SignInException(SignInFailure.TimedOut)) to attempt
+        (cb.await(timeoutMs, { it["state"] == attempt.state }) { page(it) } ?: throw SignInException(SignInFailure.TimedOut)) to attempt
     }
     val (code, issued) = auth.readCallback(params, attempt, clientId)
     if (issued != clientId) onRegistered(issued)

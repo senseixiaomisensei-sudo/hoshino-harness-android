@@ -26,7 +26,7 @@ import kotlin.coroutines.resumeWithException
 /** One sign-in attempt: fresh random values checked on the callback and on the code exchange. */
 data class SignInAttempt(val state: String, val nonce: String, val verifier: String, val redirectUri: String) {
     /** PKCE S256: SHA-256 of the verifier, base64url without padding. */
-    val challenge: String get() = ChatGptOAuth.b64url(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)))
+    val challenge: String get() = dev.hoshino.bridge.oauth.Pkce.challenge(verifier)
     override fun toString() = "SignInAttempt(redirectUri=$redirectUri)"
 }
 

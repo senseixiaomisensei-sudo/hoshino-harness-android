@@ -1,6 +1,7 @@
 // Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.
-package dev.hoshino.bridge.chatgpt
+package dev.hoshino.bridge.oauth
 
+import dev.hoshino.bridge.phone.adb.OwnListeningPorts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -12,13 +13,20 @@ import java.net.SocketTimeoutException
 import java.net.URLDecoder
 
 /**
- * The sign-in callback listener: bound to 127.0.0.1 only (other devices cannot connect), on a free port chosen by the
- * system. After sign-in the browser returns to `http://127.0.0.1:<port>/auth/callback?…`; this reads the parameters and
- * answers with a "you can go back" page. Any other path (a favicon request) gets 404. Accepts one callback; [close] after use.
+ * The sign-in callback listener shared by "Sign in with ChatGPT" and "Sign in with OpenRouter": bound to 127.0.0.1 only
+ * (other devices cannot connect), on a free port chosen by the system. After sign-in the browser returns to
+ * `http://127.0.0.1:<port>/auth/callback?…` (or `localhost`); this reads the parameters, lets [await]'s page callback finish
+ * the sign-in (it may suspend, e.g. to exchange a code), and answers with the resulting page. Any other path (a favicon
+ * request) gets 404. Accepts one callback; [close] after use. The port is registered in [OwnListeningPorts] so the wireless
+ * debugging port scan never probes our own listener.
  */
 class LoopbackCallback private constructor(private val server: ServerSocket) : Closeable {
     val port: Int get() = server.localPort
-    val redirectUri: String get() = "http://$HOST:$port$PATH"
+    init { OwnListeningPorts.add(server.localPort) }
+    val redirectUri: String get() = redirectUri(HOST)
+
+    /** Callback URL written with [host] (`127.0.0.1` or `localhost`, both this device): some services accept only one form. */
+    fun redirectUri(host: String): String = "http://$host:$port$PATH"
 
     /**
      * Wait at most [timeoutMs] for the callback; null on timeout. [page] renders the HTML for the received parameters.
@@ -28,7 +36,7 @@ class LoopbackCallback private constructor(private val server: ServerSocket) : C
     suspend fun await(
         timeoutMs: Long,
         accept: (Map<String, String>) -> Boolean = { true },
-        page: (Map<String, String>) -> String,
+        page: suspend (Map<String, String>) -> String,
     ): Map<String, String>? = withContext(Dispatchers.IO) {
         val deadline = System.currentTimeMillis() + timeoutMs
         server.soTimeout = POLL_MS
@@ -51,8 +59,9 @@ class LoopbackCallback private constructor(private val server: ServerSocket) : C
                     respond(s.getOutputStream(), 404, "Not Found", "text/plain", "Not Found")
                     return@use
                 }
-                val params = parseQuery(target.substringAfter('?', ""))
-                if (!accept(params)) {
+                // A malformed escape (a lone %) is not this attempt's callback.
+                val params = runCatching { parseQuery(target.substringAfter('?', "")) }.getOrNull()
+                if (params == null || !accept(params)) {
                     respond(s.getOutputStream(), 400, "Bad Request", "text/plain", "Bad Request")
                     return@use
                 }
@@ -63,7 +72,10 @@ class LoopbackCallback private constructor(private val server: ServerSocket) : C
         null
     }
 
-    override fun close() { runCatching { server.close() } }
+    override fun close() {
+        OwnListeningPorts.remove(server.localPort)
+        runCatching { server.close() }
+    }
 
     private fun respond(out: java.io.OutputStream, code: Int, reason: String, type: String, body: String) {
         val bytes = body.toByteArray(Charsets.UTF_8)
