@@ -125,6 +125,17 @@ Copyright 2026 wangzan101
   - `app/src/main/java/com/wangzan101/mika/cap/phone/a11y/OverlayHost.kt`（`OverlayFrame.track`：越过系统触摸阈值才算拖动、按屏幕坐标计算位移）→ `app/src/main/java/app/hoshino/harness/phone/PhoneCapsule.kt`（面板标题栏拖动，文件头已有出处说明）
 - 新文件 `PreviewRelay.kt`、`PreviewGeometry.kt`、`ManualTakeover.kt`、`BallPanelModel.kt`、`FpsMath.kt`、`DisplayFps.kt` 为本项目原创，未移植 Mika 代码。
 
+### 手机稳定性修复（分支 fix/m2.10-phone-mika-bugs，移植自 Mika v0.1.27）
+
+- 使用方式：直接移植并改写（包名改为 `dev.hoshino.bridge.*` / `app.hoshino.harness.*`），文件头部保留上面的出处说明。
+- 文件清单（Mika 提交 · 源文件 → 本仓库文件）：
+  - `f28e8be8846e5b6aa00be5e57a2e70aa9150e748` · `core/.../adb/Ed25519.kt`（`BigInteger.TWO` → `BigInteger.valueOf(2)`）→ `core-bridge/src/main/java/dev/hoshino/bridge/phone/adb/Ed25519.kt`
+  - `f28e8be8846e5b6aa00be5e57a2e70aa9150e748` · `app/.../cap/phone/a11y/ScreenAccessibility.kt`（防截屏错误码按 API 34 判断）→ `app/src/main/java/app/hoshino/harness/phone/ScreenshotErrors.kt`、`PhoneAccessibilityService.kt`
+  - `e35865fa04a6498d5482af4e36b69f4406dbc21d` + `7d2c48bebcc8ceadadb3423eb0e85f12146f8ee2` · `app/.../cap/phone/shell/ShellClipboard.kt`、`ShellService.kt` 的剪贴板字段 → `core-bridge/src/main/java/dev/hoshino/bridge/phone/shell/ShellClipboard.kt`（签名查找与配参拆成纯逻辑 `ShellClipboardCalls`；直接调用抛错时也退回 ClipboardManager）、`PhoneShellService.kt`
+  - `dc7965bf8b95ae6a1f1763154f1bba8c9b9e55e9` · `app/.../cap/phone/setup/SlidingDeadline.kt`、`PairingCoordinator.kt`、`ui/PhoneSetupScreen.kt`、`core/.../shell/BuiltinShellEngine.kt`，测试 `SlidingDeadlineTest.kt`、`BuiltinShellEngineTest.kt` 一例 → `app/src/main/java/app/hoshino/harness/phone/setup/{SlidingDeadline,Pairing}.kt`、`app/src/main/java/app/hoshino/harness/ui/settings/PhoneSetupScreen.kt`、`core-bridge/src/main/java/dev/hoshino/bridge/phone/shell/BuiltinShellEngine.kt`，测试 `app/src/test/java/app/hoshino/harness/phone/setup/SlidingDeadlineTest.kt`、`core-bridge/src/test/java/dev/hoshino/bridge/phone/shell/BuiltinShellTest.kt`
+  - `a8c3aa61fc8e0f2f5180b7ca1504f226094ff6c1` · `app/.../cap/phone/a11y/ScreenAccessibility.kt`（事件流跨实例保留、只收当前实例；操作找当前实例）→ `app/src/main/java/app/hoshino/harness/phone/{A11yEventBus,PhoneAccessibilityService,AndroidPhoneScreen}.kt`
+- 本项目新增（未移植 Mika 代码，思路来自 f28e8be）：`core-bridge/src/test/java/dev/hoshino/bridge/arch/MinSdkApiGuardTest.kt`、`core-bridge/src/test/java/dev/hoshino/bridge/phone/shell/ShellClipboardCallsTest.kt`、`app/src/test/java/app/hoshino/harness/phone/{A11yEventBusTest,ScreenshotErrorsTest}.kt`。
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy
