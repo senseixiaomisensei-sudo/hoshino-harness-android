@@ -10,6 +10,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Display
 import app.hoshino.harness.phone.AccessibilityReader
@@ -37,7 +38,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** What the pairing notification shows now. */
 sealed interface PairingNotice {
@@ -94,24 +94,49 @@ class PairingCoordinator(context: Context, private val control: BuiltinShellCont
     private val app = context.applicationContext
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var watch: Job? = null
+    private val deadline = SlidingDeadline(WINDOW_MS) { SystemClock.elapsedRealtime() }
+    /** begin() was called and end() was not: coming back to the wizard's pairing step picks the run up again. */
+    @Volatile private var engaged = false
     @Volatile private var shown: PairingNotice? = null
 
     suspend fun pair(code: String, port: Int?) = coroutineScope {
         launch(start = CoroutineStart.UNDISPATCHED) { control.startPairing(code, port) }.join()
     }
 
+    /**
+     * Starts watching the pairing. Already watching: the window is counted again from now ([WINDOW_MS]) and the
+     * search for the pairing service restarts, without starting over (the notification does not pop up again from the
+     * beginning). Mika dc7965b: a wizard left open for more than 10 minutes, then "开始配对" tapped again, used to
+     * read no code and post no notification.
+     */
     @Synchronized
     fun begin() {
+        engaged = true
+        deadline.extend()
         control.startDiscovery()
+        ensureWatching()
+    }
+
+    /** The user came back to the wizard's pairing step: count again from now, but only if pairing was started before. */
+    fun resume() {
+        if (engaged) begin()
+    }
+
+    @Synchronized
+    private fun ensureWatching() {
         if (watch?.isActive == true) return
         watch = scope.launch {
             val reader = launch { PairingCodeReader.run(app, control, this@PairingCoordinator) }
-            withTimeoutOrNull(WINDOW_MS) {
+            val notices = launch {
                 combine(control.status, control.pairingDiscovery) { s, d -> PairingNotice.of(s, d) to (s == BuiltinShellStatus.Running) }
                     .distinctUntilChanged()
                     .transformWhile { emit(it.first); !it.second }
                     .collectLatest { n -> n?.let { post(it) } }
-            } ?: cancelNotice()
+            }
+            if (!deadline.await(notices)) {
+                notices.cancel()
+                cancelNotice()
+            }
             reader.cancel()
             control.stopDiscovery()
         }
@@ -134,6 +159,7 @@ class PairingCoordinator(context: Context, private val control: BuiltinShellCont
 
     @Synchronized
     fun end() {
+        engaged = false
         watch?.cancel(); watch = null
         control.stopDiscovery()
         cancelNotice()
@@ -142,13 +168,20 @@ class PairingCoordinator(context: Context, private val control: BuiltinShellCont
     /** Code typed in the notification or in the wizard. Not six digits: ask again without trying. */
     fun submit(raw: String, port: Int?): Boolean {
         val code = PairingCode.normalize(raw) ?: run { show(PairingNotice.EnterCode(port, "要填 6 位数字配对码")); return false }
-        begin()
+        // Keep watching for the result, but do not restart the search: that would drop the pairing service just found.
+        synchronized(this) {
+            engaged = true
+            deadline.extend()
+            if (watch?.isActive != true) control.startDiscovery()
+            ensureWatching()
+        }
         show(PairingNotice.Working)
         scope.launch { pair(code, port) }
         return true
     }
 
     companion object {
+        /** How long a pairing run is watched, counted from the last [begin]. */
         const val WINDOW_MS = 10 * 60_000L
         @Volatile private var instance: PairingCoordinator? = null
         fun of(context: Context): PairingCoordinator = instance ?: synchronized(this) {

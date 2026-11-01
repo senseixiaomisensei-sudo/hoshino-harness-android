@@ -26,6 +26,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import app.hoshino.harness.phone.PhoneAccessibilityService
 import app.hoshino.harness.phone.FpsMath
 import app.hoshino.harness.phone.PhoneConsent
@@ -120,6 +122,10 @@ fun PhoneSetupScreen(onBack: () -> Unit) {
     }
     val marks = PhoneSetupFlow.marks(input)
     val current = PhoneSetupFlow.current(input)
+    // 停在配对一步时离开引导页，多半是自己切去系统设置打开配对窗口（不一定点「开始配对」）：从这时起再看 10 分钟；
+    // 回到停在配对一步的引导页时，已经开始过的配对也从这时重新计时（Mika dc7965b）。
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { if (current == PhoneSetupFlow.Step.Pairing) pairing.begin() }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { if (current == PhoneSetupFlow.Step.Pairing) pairing.resume() }
     val primary = PhoneSetupFlow.primary(input)
 
     fun go(p: PhoneSetupFlow.Primary) {
