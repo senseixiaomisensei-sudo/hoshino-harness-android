@@ -139,7 +139,7 @@ class PhoneAccessibilityService : AccessibilityService() {
                 if (cont.isActive) cont.resume(shot?.let(Shot::Ok) ?: Shot.Failed(ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR))
             }
             override fun onFailure(errorCode: Int) {
-                val secure = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && errorCode == ERROR_TAKE_SCREENSHOT_SECURE_WINDOW
+                val secure = ScreenshotErrors.isSecureWindow(Build.VERSION.SDK_INT, errorCode)
                 if (cont.isActive) cont.resume(if (secure) Shot.Secure else Shot.Failed(errorCode))
             }
         })
