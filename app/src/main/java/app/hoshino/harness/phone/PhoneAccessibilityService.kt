@@ -88,7 +88,7 @@ class PhoneAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     /** Windows on [displayId], read from the currently connected instance (empty when none is connected). */
-    fun windowsOn(displayId: Int): List<AccessibilityWindowInfo> = (_instance.value ?: return emptyList()).ownWindowsOn(displayId)
+    fun windowsOn(displayId: Int): List<AccessibilityWindowInfo> = _instance.value?.ownWindowsOn(displayId).orEmpty()
 
     private fun ownWindowsOn(displayId: Int): List<AccessibilityWindowInfo> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) windowsOnAllDisplays.get(displayId).orEmpty()
