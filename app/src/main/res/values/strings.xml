@@ -6,7 +6,7 @@
 -->
 <resources>
     <string name="app_name">Hoshino Harness</string>
-    <string name="github_url">https://github.com/</string>
+    <string name="github_url">https://github.com/senseixiaomisensei-sudo/hoshino-harness-android</string>
 
     <!-- 顶栏 / 会话 -->
     <string name="new_session">新会话</string>

@@ -2,6 +2,11 @@ package app.hoshino.harness.ui.settings
 
 import app.hoshino.harness.ui.chat.ChatDisplayPrefs
 import app.hoshino.harness.R
+import app.hoshino.harness.about.AppUpdates
+import app.hoshino.harness.about.HoshinoRepo
+import app.hoshino.harness.about.InstalledVersion
+import app.hoshino.harness.about.ReleaseInfo
+import app.hoshino.harness.about.UpdateUi
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -10,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -125,7 +131,7 @@ fun SettingsHomeScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (Str
         GroupCard {
             ListRow(stringResource(R.string.settings_feedback), icon = HIcons.Message, value = "/feedback", showChevron = true, onClick = { onNavigate(Routes.FEEDBACK) })
             Hairline()
-            ListRow(stringResource(R.string.settings_about), icon = HIcons.Info, value = "v0.1.0", showChevron = true, onClick = { onNavigate(Routes.ABOUT) })
+            ListRow(stringResource(R.string.settings_about), icon = HIcons.Info, value = "v${remember { InstalledVersion.of(startupContext).name }}", showChevron = true, onClick = { onNavigate(Routes.ABOUT) })
         }
     }
 }
@@ -441,22 +447,72 @@ fun AboutScreen(onBack: () -> Unit) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
     val uri = LocalUriHandler.current
-    val githubUrl = stringResource(R.string.github_url)
+    val context = LocalContext.current
+    val updates = remember { AppUpdates.get(context) }
+    val version = remember { updates.installed }
+    val update by updates.state.collectAsStateWithLifecycle()
     PageScaffold("关于", onBack) {
         Column(Modifier.fillMaxWidth().padding(vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             HoshinoMark(64.dp)
             Spacer(Modifier.height(16.dp))
             Text("Hoshino Harness", style = t.headline, color = c.text)
-            Text("版本 0.1.0 (1)", style = t.caption, color = c.text3)
+            Text("版本 ${version.label}", style = t.caption, color = c.text3)
         }
+        GroupCard {
+            UpdateRows(update, onCheck = updates::check, onInstall = updates::downloadAndInstall, onOpen = { uri.openUri(it) })
+        }
+        Spacer(Modifier.height(12.dp))
         GroupCard {
             ListRow("开源许可", value = "MIT")
             Hairline()
-            ListRow("GitHub", icon = HIcons.Link, showChevron = true, onClick = { uri.openUri(githubUrl) })
+            ListRow("GitHub", icon = HIcons.Link, showChevron = true, onClick = { uri.openUri(HoshinoRepo.PAGE) })
             Hairline()
-            ListRow("第三方许可", subtitle = "Jetpack Compose、Kotlin Coroutines、Shizuku API 等", showChevron = false)
+            ListRow("第三方许可", subtitle = "Jetpack Compose、Kotlin Coroutines、Shizuku API、Mika（Apache-2.0）等", showChevron = false)
         }
         RunStatsEntry()
         Spacer(Modifier.heightIn(min = 24.dp))
+    }
+}
+
+/** 关于页的检查更新区：检查 → 发现新版本（按 versionCode）→ 下载 → 核对 → 交给系统安装器。 */
+@Composable
+private fun UpdateRows(state: UpdateUi, onCheck: () -> Unit, onInstall: (ReleaseInfo) -> Unit, onOpen: (String) -> Unit) {
+    val busy = state is UpdateUi.Checking || state is UpdateUi.Downloading || state is UpdateUi.Verifying
+    val status = when (state) {
+        UpdateUi.Idle -> null
+        UpdateUi.Checking -> "正在读取 GitHub Releases…"
+        is UpdateUi.UpToDate -> "已是最新版本"
+        is UpdateUi.Available -> "发现新版本"
+        is UpdateUi.Downloading -> "下载中 ${state.percent}%"
+        is UpdateUi.Verifying -> "正在核对安装包…"
+        is UpdateUi.HandedToInstaller -> "已核对通过，请在系统安装界面确认"
+        is UpdateUi.Failed -> "未完成"
+    }
+    ListRow("检查更新", subtitle = "读取本仓库 GitHub Releases（含预发布）", value = status, onClick = if (busy) null else onCheck)
+    val release = when (state) {
+        is UpdateUi.Available -> state.release
+        is UpdateUi.Downloading -> state.release
+        is UpdateUi.Verifying -> state.release
+        is UpdateUi.HandedToInstaller -> state.release
+        is UpdateUi.Failed -> state.release
+        else -> null
+    }
+    if (release != null) {
+        Hairline()
+        val size = "%.1f MB".format(release.apkSize / 1_000_000.0)
+        val retry = state is UpdateUi.Failed
+        val action: (@Composable RowScope.() -> Unit)? = if (state is UpdateUi.Available || retry) {
+            { HButton(if (retry) "重试" else "下载并安装", { onInstall(release) }, style = BtnStyle.Primary, compact = true) }
+        } else null
+        ListRow(
+            release.name,
+            subtitle = "versionCode ${release.versionCode}${if (release.prerelease) " · 预发布" else ""} · ${release.apkName} · $size",
+            onClick = { onOpen(release.pageUrl) },
+            trailing = action,
+        )
+    }
+    if (state is UpdateUi.Failed) {
+        Hairline()
+        Text(state.message, style = HoshinoTheme.type.caption, color = HoshinoTheme.colors.danger, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
     }
 }
