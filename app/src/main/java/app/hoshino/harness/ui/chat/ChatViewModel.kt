@@ -1,3 +1,5 @@
+// Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.
+// (m2.10 T1 steer withdraw/edit: 0.1.27 · 9bd29de ChatViewModel.withdrawSteer/editSteer, MessageMenu; re-implemented over dsh session/updateQueue.)
 package app.hoshino.harness.ui.chat
 
 import androidx.lifecycle.ViewModel
@@ -302,6 +304,23 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch(errors) { client.steer(id, q.text, q.attachments) }
     }
 
+    /**
+     * 撤回一句已发出、模型还没取走的插话（m2.10 T1）。与模型取走的竞态由内核裁决：取走在先就提示撤不回。
+     * [onDone] 收到 true 表示已撤回（编辑会在这时把原话放回输入框）。
+     */
+    fun withdrawSteer(itemId: String, onDone: (Boolean) -> Unit = {}) {
+        val id = _currentId.value ?: return onDone(false)
+        viewModelScope.launch(errors) {
+            val result = client.withdrawSteer(id, itemId)
+            steerWithdrawalMessage(result)?.let { _messages.tryEmit(it) }
+            onDone(result == app.hoshino.harness.core.SteerWithdrawal.Withdrawn)
+        }
+    }
+
+    /** 编辑插话只在输入框空着（没有草稿、没有待发附件）且原话不带附件时提供：编辑 = 撤回 + 原话放回输入框。 */
+    fun canEditSteer(draft: String, item: app.hoshino.harness.core.ChatItem.User): Boolean =
+        steerEditable(draft, _composer.value.attachments.isNotEmpty(), item)
+
     fun removeQueued(queuedId: String) {
         val id = _currentId.value ?: return
         (client as? app.hoshino.harness.core.DshHarnessClient)?.cancelWaiting(queuedId)
@@ -373,3 +392,15 @@ class ChatViewModel : ViewModel() {
         _messages.tryEmit(msg)
     }
 }
+
+/** 撤回结果给用户的一句话；撤回成功不打扰（气泡消失本身就是反馈）。 */
+fun steerWithdrawalMessage(result: app.hoshino.harness.core.SteerWithdrawal): String? = when (result) {
+    app.hoshino.harness.core.SteerWithdrawal.Withdrawn -> null
+    app.hoshino.harness.core.SteerWithdrawal.AlreadyTaken -> "这句已经交给模型了，撤回不了"
+    app.hoshino.harness.core.SteerWithdrawal.NotWithdrawable -> "这句插话现在不能撤回"
+    is app.hoshino.harness.core.SteerWithdrawal.Failed -> "撤回没有成功：" + result.reason
+}
+
+/** 「编辑」是否可用：输入框没有草稿和待发附件，且这句插话只有文字。 */
+fun steerEditable(draft: String, composerHasAttachments: Boolean, item: app.hoshino.harness.core.ChatItem.User): Boolean =
+    item.steer && draft.isBlank() && !composerHasAttachments && item.attachments.isEmpty() && item.text.isNotBlank()

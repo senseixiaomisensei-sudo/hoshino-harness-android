@@ -64,6 +64,8 @@ interface HarnessClient {
     suspend fun steer(sessionId: String, text: String)
     /** 带附件的插话；不支持附件的实现只接受纯文字。 */
     suspend fun steer(sessionId: String, text: String, attachments: List<Attachment>) { require(attachments.isEmpty()) { "插话暂不支持附件" }; steer(sessionId, text) }
+    /** 撤回一句已发出、模型还没取走的插话（[itemId] 是聊天条目 id）。与模型取走的竞态由内核裁决，只有一个成功。 */
+    suspend fun withdrawSteer(sessionId: String, itemId: String): SteerWithdrawal = SteerWithdrawal.NotWithdrawable
 
     // ---------- 会话管理与审批档（M2.7） ----------
     /** 批量删除（确认后调用）；默认逐个删除。 */
@@ -247,6 +249,11 @@ sealed interface HarnessEvent {
     data class TurnFinished(override val sessionId: String, val turnId: String, val cancelled: Boolean) : HarnessEvent
     /** deliver_file 交付的文件；归入 [DeliveredFile.turnId] 对应的轮次（旧记录按 deliveredAt 归到最近轮次）。 */
     data class FileDelivered(override val sessionId: String, val file: DeliveredFile) : HarnessEvent
+    /**
+     * 去掉一条已画出的条目：模型请求中途断开、重试前已流出的半句（及其思考），或用户撤回的插话气泡。
+     * 被去掉的若是开启一组的插话气泡，组内其余条目并回上一组（仍是同一轮）。
+     */
+    data class ItemDiscarded(override val sessionId: String, val id: String) : HarnessEvent
 }
 
 private val NO_SYSTEM_ACCESS: StateFlow<SystemAccessRoute> = kotlinx.coroutines.flow.MutableStateFlow(SystemAccessRoute.None)

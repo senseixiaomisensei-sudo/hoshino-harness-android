@@ -69,6 +69,11 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     /** 每个会话最近一次读到的审批档（用于把无审批下的工具调用标成自动放行）。 */
     val approvalStates=MutableStateFlow<Map<String,ApprovalState>>(emptyMap())
     private val steerTrackers=java.util.concurrent.ConcurrentHashMap<String,SteerTracker>()
+    /** 每个会话的插话跟踪；带上此前已撤回的 id（持久化），重放事件后撤回的那句仍是「已撤回」而不是「已停止」。 */
+    private fun trackerOf(sid:String)=steerTrackers.getOrPut(sid){SteerTracker(metadata.getStringSet("withdrawn:$sid",null).orEmpty())}
+    private fun rememberWithdrawn(sid:String,messageId:String,keep:Boolean){
+        synchronized(metadata){val now=metadata.getStringSet("withdrawn:$sid",null).orEmpty().toMutableSet();if(keep)now+=messageId else now-=messageId;metadata.edit().putStringSet("withdrawn:$sid",now.toSet()).apply()}
+    }
     private val questions=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<String>>()
     private val seen=mutableMapOf<String,MutableSet<Int>>()
     // 流式累积用 StringBuilder：旧实现 text+=delta 每个 token 复制整段，O(n²)。steps 为托管联网搜索步骤计数（M2.7 chatgpt-search）。
@@ -216,6 +221,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         for(effect in effects)when(effect){
             is InboxEffect.SteerAdded -> {val item=SteerTracker.steerItemId(effect.message.id);Steering.set(item,tracker?.states?.get(effect.message.id)?:SteerState.Received);publish(HarnessEvent.UserMessage(sid,item,effect.message.text,effect.message.attachments,steer=true))}
             is InboxEffect.SteerCancelled -> Steering.set(SteerTracker.steerItemId(effect.messageId),SteerState.Cancelled)
+            // 撤回成功：气泡从对话里去掉（胶囊等其他读 SessionStore 的地方同样看不到）。
+            is InboxEffect.SteerWithdrawn -> {val item=SteerTracker.steerItemId(effect.messageId);Steering.set(item,SteerState.Withdrawn);publish(HarnessEvent.ItemDiscarded(sid,item))}
             is InboxEffect.StopNoteAdded -> effect.message.display?.takeIf{it.isNotBlank()}?.let{text->val item=SteerTracker.stopNoteItemId(effect.message.id);publish(HarnessEvent.AssistantDelta(sid,item,"**已停止 · 停止前的交代**\n\n"+vault.redact(text)));publish(HarnessEvent.AssistantDone(sid,item))}
         }
     }
@@ -224,7 +231,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val inbox=projections?.optJSONObject("values")?.optJSONObject("inbox") ?: return
         val turn=inbox.optJSONArray("next-turn")?.rows().orEmpty().map(::inboxMessage)
         val step=inbox.optJSONArray("next-step")?.rows().orEmpty().map(::inboxMessage)
-        applyInboxEffects(sid,steerTrackers.getOrPut(sid){SteerTracker()}.seed(turn,step))
+        applyInboxEffects(sid,trackerOf(sid).seed(turn,step))
     }
     private suspend fun accept(sid: String,frame: JSONObject) {
         if(sid in deletedIds.value)return
@@ -242,7 +249,8 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             "assistant-stream" -> {
                 val f=frame.getJSONObject("frame")
                 when(f.optString("type")) {
-                    "start" -> live[sid]=Live("a:${f.getString("attemptId")}")
+                    // 上一次尝试没有落成 assistant/message 就开始了新的尝试 = 那次请求失败、正在重试：清掉它已流出的半句。
+                    "start" -> {discardLive(sid);live[sid]=Live("a:${f.getString("attemptId")}")}
                     "chunk" -> {
                         val l=live.getOrPut(sid) { Live("a:${f.getString("attemptId")}") };val chunk=f.getJSONObject("chunk");val delta=chunk.optString("text")
                         when(chunk.optString("type")) {
@@ -254,6 +262,11 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                 }
             }
         }
+    }
+    /** 断流重试（m2.10 T4，对照 Mika 0.1.24）：失败的那次尝试已流出的正文/思考不留在界面上，重试的回答不会重复半句。 */
+    private suspend fun discardLive(sid:String){
+        val l=live.remove(sid)?:return
+        for(item in StreamRetry.discardedItems(l.id,l.text.isNotEmpty(),l.thinking.isNotEmpty(),l.steps))publish(HarnessEvent.ItemDiscarded(sid,item))
     }
     private suspend fun durable(sid: String,event: JSONObject,replay:Boolean=false) {
         val seq=event.getInt("seq");if(!seen.getOrPut(sid) { mutableSetOf() }.add(seq))return
@@ -289,11 +302,13 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
                     else publish(HarnessEvent.UserMessage(sid,id,content(data.optJSONArray("content"),"text"),attachmentsOf(data.optJSONArray("content"))))
                 }
                 // 停止交代被下一轮认领；它进 inbox 的事件不在已加载的这一页里时在这里补画。
-                SteerTracker.STOP_NOTE_SOURCE -> steerTrackers.getOrPut(sid){SteerTracker()}.onNoteMessage(inboxMessage(data))?.let{applyInboxEffects(sid,listOf(it))}
+                SteerTracker.STOP_NOTE_SOURCE -> trackerOf(sid).onNoteMessage(inboxMessage(data))?.let{applyInboxEffects(sid,listOf(it))}
             }
+            // dsh 把失败的那次流式尝试落成 assistant/attempt（不进上下文）；重放时没有 live 缓冲，无事可做。
+            "assistant/attempt" -> if(!replay)discardLive(sid)
             "agent/inbox/spliced" -> {
                 val inserted=data.optJSONArray("inserted")?.rows().orEmpty().map(::inboxMessage)
-                applyInboxEffects(sid,steerTrackers.getOrPut(sid){SteerTracker()}.onSplice(data.optString("target"),data.optInt("start"),data.optInt("removedCount",0),inserted,data.optString("outcome").ifEmpty{null}))
+                applyInboxEffects(sid,trackerOf(sid).onSplice(data.optString("target"),data.optInt("start"),data.optInt("removedCount",0),inserted,data.optString("outcome").ifEmpty{null}))
             }
             "session/title" -> sessionRows.update { list -> list.map { if(it.id==sid)it.copy(title=data.optString("title",it.title)) else it } }
             "assistant/message" -> {
@@ -498,6 +513,27 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         val client=api();activeSession=sessionId
         client.rpc("session/prompt",JSONObject().put("sessionId",sessionId).put("requestId",UUID.randomUUID().toString()).put("mode","steer").put("content",promptContent(client,sessionId,text,attachments)))
     }
+    /**
+     * 撤回插话（m2.10 T1，对照 Mika 0.1.27 9bd29de）：dsh 原生 `session/updateQueue {action:{kind:"remove"}}`。
+     * 内核串行处理 inbox：模型先取走则返回 `session/queue-item-not-found`，撤回与取走只有一个成功。
+     * 先记下意图再发请求，移除事件即使先于响应到达也记为「已撤回」。
+     */
+    override suspend fun withdrawSteer(sessionId: String,itemId: String):SteerWithdrawal {
+        val messageId=SteerTracker.messageIdOf(itemId)?:return SteerWithdrawal.NotWithdrawable
+        val tracker=steerTrackers[sessionId]?:return SteerWithdrawal.NotWithdrawable
+        if(!tracker.beginWithdraw(messageId))return if(tracker.states[messageId]==SteerState.Joined)SteerWithdrawal.AlreadyTaken else SteerWithdrawal.NotWithdrawable
+        rememberWithdrawn(sessionId,messageId,true)
+        return try {
+            api().rpc("session/updateQueue",JSONObject().put("sessionId",sessionId).put("itemId",messageId).put("action",JSONObject().put("kind","remove")))
+            SteerWithdrawal.Withdrawn
+        } catch(cancelled:kotlinx.coroutines.CancellationException){tracker.withdrawFailed(messageId);if(tracker.states[messageId]!=SteerState.Withdrawn)rememberWithdrawn(sessionId,messageId,false);throw cancelled}
+        catch(failure:Exception){
+            tracker.withdrawFailed(messageId)
+            if(tracker.states[messageId]==SteerState.Withdrawn)return SteerWithdrawal.Withdrawn
+            rememberWithdrawn(sessionId,messageId,false)
+            if((failure as? dev.hoshino.bridge.KernelRpcException)?.code=="session/queue-item-not-found")SteerWithdrawal.AlreadyTaken else SteerWithdrawal.Failed(describeFailure(failure))
+        }
+    }
     private suspend fun resumeInterrupted(){if(M2SafeMode.enabled(context))return;val live=api().rpc("session/list",JSONObject()).getJSONArray("items").rows().associateBy{it.getString("sessionId")};for(row in sessions.value){if(metadata.getBoolean("pending:${row.id}",false)&&live[row.id]?.optBoolean("running")!=true){api().rpc("session/prompt",JSONObject().put("sessionId",row.id).put("requestId",UUID.randomUUID().toString()).put("mode","queue").put("content",JSONArray().put(JSONObject().put("type","text").put("text","Resume the interrupted user task from the persisted session log and last completed step. Inspect actual files before repeating any side effect. Do not duplicate completed actions."))))}}}
     override suspend fun compact(sessionId: String) { publish(compactSession(sessionId)) }
     /**
@@ -555,7 +591,7 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
             for(id in targets)java.io.File(context.filesDir,"attachments/$id").deleteRecursively()
         }
         val edit=metadata.edit()
-        for(id in targets)for(prefix in listOf("workspace:","preset:","tier:","archived:","local:","pending:","session-provider:","pinned-at:"))edit.remove(prefix+id)
+        for(id in targets)for(prefix in listOf("workspace:","preset:","tier:","archived:","local:","pending:","session-provider:","pinned-at:","withdrawn:"))edit.remove(prefix+id)
         if(preferredSessionId in targets)edit.remove("last-active-session")
         edit.apply()
         for(id in targets){cachedRecords.remove(id);steerTrackers.remove(id);capacities.remove(id);restartAfter.remove(id);released.remove(id);currentTurn.remove(id);callTurn.keys.removeIf{it.startsWith("$id:")}}

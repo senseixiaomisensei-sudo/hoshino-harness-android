@@ -307,6 +307,29 @@ class SessionStore(
         return copy(turns = nextTurns, turnMarks = if (mark == null) turnMarks else turnMarks + mark, pendingTurn = null)
     }
 
+    /**
+     * 去掉一条条目（断流重试前的半句、撤回的插话）。去掉的是开启一组的用户气泡且前面还有组时，
+     * 组内其余条目并回上一组、指向这一组的轮次标记改指上一组；组空了就整组去掉。
+     */
+    private fun SessionState.discard(id: String): SessionState {
+        val (t, i) = find(id) ?: return this
+        val group = turns[t]
+        val rest = group.items.filterIndexed { index, _ -> index != i }
+        val heads = i == 0 && group.items[0] is ChatItem.User
+        return when {
+            heads && t > 0 -> {
+                val prev = turns[t - 1]
+                val merged = TurnItems(prev.key, prev.items + rest)
+                copy(
+                    turns = turns.toMutableList().also { it[t - 1] = merged; it.removeAt(t) },
+                    turnMarks = turnMarks.map { if (it.groupKey == group.key) it.copy(groupKey = prev.key) else it },
+                )
+            }
+            rest.isEmpty() -> copy(turns = turns.toMutableList().also { it.removeAt(t) }, turnMarks = turnMarks.filterNot { it.groupKey == group.key })
+            else -> copy(turns = turns.toMutableList().also { it[t] = TurnItems(group.key, rest) })
+        }
+    }
+
     /** 在最近的分组里查找条目（流式条目总在最后一组；找不到再向前找）。 */
     private fun SessionState.find(id: String): Pair<Int, Int>? {
         for (t in turns.indices.reversed()) {
@@ -439,6 +462,7 @@ class SessionStore(
             val i = s.deliveries.indexOfFirst { it.id == e.file.id }
             s.copy(deliveries = if (i < 0) s.deliveries + e.file else s.deliveries.toMutableList().also { it[i] = e.file })
         }
+        is HarnessEvent.ItemDiscarded -> s.discard(e.id)
         is HarnessEvent.TurnFinished -> {
             // 运行中被中断：把仍在运行的条目收尾（只改动含运行条目的分组，其余分组保持同一实例）。
             val turns = if (!e.cancelled) s.turns else s.turns.map { group ->
