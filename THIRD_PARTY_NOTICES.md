@@ -143,3 +143,23 @@ Copyright 2026 wangzan101
 - ONNX 导出与托管：RapidOCR（https://github.com/RapidAI/RapidOCR ，Apache License 2.0），固定到 https://huggingface.co/SWHL/RapidOCR 的提交 `1cfba2e90fc938db55889873735088de210cc173`
 - 使用方式：**不随 APK 分发**；用户在「设置手机操作」里点下载时才获取，按 SHA-256 校验（det `d2a7720d…f49da9`，rec `48fc40f2…83683b`，完整值见 `app/src/main/java/app/hoshino/harness/phone/ocr/OcrModels.kt`）。字符表取自识别模型自带的 `character` 元数据。
 - 本仓库实现的前后处理（DB 后处理、CTC 解码、缩放归一化）按 PaddleOCR/RapidOCR 公开的参数独立编写：`app/src/main/java/app/hoshino/harness/phone/ocr/OcrPipeline.kt`。
+
+### 语音输入（分支 feat/m2.10-voice-input，移植基线 Mika 0.1.28（`v0.1.27..ec40477`））
+
+- 使用方式：直接移植并改写（包名改为 `dev.hoshino.bridge.voice` / `app.hoshino.harness.voice`，kotlinx.serialization 换成 org.json，服务商换成本仓库 `ProviderStore` 的形态），被移植或改写的文件头部保留上面的出处说明。许可与 NOTICE 同本节开头（`licenses/mika-LICENSE`）。
+- 移植文件清单（Mika 源文件 → 本仓库文件；Mika 路径相对 `app/src/main/java/com/wangzan101/mika/`）：
+  - `voice/SpeechChoice.kt`、`voice/SpeechResolver.kt`、`voice/SpeechSession.kt` → `core-bridge/src/main/java/dev/hoshino/bridge/voice/SpeechModels.kt`
+  - `voice/HoldToTalk.kt` → `core-bridge/.../voice/HoldToTalk.kt`（另加改一改落点、提示、慢转写、插话/停止去向 `VoiceRouting`、麦克风单占用 `MicGate`、胶囊落点 `CapsuleAim`）
+  - `voice/Segments.kt`、`voice/Restarts.kt` → `core-bridge/.../voice/{Segments,Restarts}.kt`（原样）
+  - `voice/Wav.kt` → `core-bridge/.../voice/Wav.kt`（另加内置试转样本 `Wav.probe`）
+  - `voice/Transcriber.kt`、`core/model/ModelHttp.kt`（错误映射）→ `core-bridge/.../voice/Transcriber.kt`
+  - `voice/ProviderSpeech.kt` → `core-bridge/.../voice/ProviderSpeech.kt`（改为按停顿分段边说边转）
+  - `voice/SystemSpeech.kt`（错误码规则、语言标签）→ `core-bridge/.../voice/{SystemSpeechRules,SpeechLang}.kt`；（识别会话）→ `app/src/main/java/app/hoshino/harness/voice/SystemSpeech.kt`
+  - `voice/PcmRecorder.kt` → `app/.../voice/PcmRecorder.kt`
+  - `voice/VoiceInput.kt`、`SpeechChoice.kt` 的 `SpeechSettings` → `app/.../voice/VoiceInput.kt`
+  - `res/values-zh/strings_voice.xml` 的说法 → `app/.../voice/VoiceCopy.kt`
+  - `ui/VoiceHold.kt` → `app/src/main/java/app/hoshino/harness/ui/chat/VoiceHold.kt`
+  - `ui/SpeechModelScreen.kt`、`voice/SpeechOptions.kt` → `app/.../ui/settings/SpeechScreens.kt`
+  - `capsule/CapsuleVoice.kt` → `app/.../phone/CapsuleVoice.kt`（普通 View 绘制）
+  - 测试：`app/src/test/java/com/wangzan101/mika/voice/{HoldToTalkTest,SegmentsTest,RestartsTest}.kt` → `core-bridge/src/test/java/dev/hoshino/bridge/voice/` 同名文件
+- 离线转写只预留接口（`SpeechChoice.Offline`），本批不引入任何模型或引擎；将来若实现只用开源模型（如 sherpa-onnx + SenseVoice）。
