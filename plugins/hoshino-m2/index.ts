@@ -10,6 +10,9 @@ import {safePublicPath,checkpoint,restoreCheckpoint,installPlugin,installPluginZ
 import {marketInvoke} from './market.js';
 import {deliverRequest} from './deliver.js';
 import {UI_SCHEMA,validateOverrides} from '../hoshino-self/overrides.js';
+import {createHash} from 'node:crypto';
+// 与 hoshino-self/skill-check.ts skillVersion 同口径（跨插件不做值导入，见 architecture.test）：整份 SKILL.md 的 SHA-256 前 12 位。
+const SKILL_FILE=/^skills\/[^/]+\/SKILL\.md$/i;const skillVersion=(markdown:string)=>createHash('sha256').update(markdown,'utf8').digest('hex').slice(0,12);
 import {workspacePath} from '../android-policy/paths.js';
 import type {} from '@deepseek-ai/dsh-goal';
 import type {} from '@deepseek-ai/dsh-schedule';
@@ -76,7 +79,7 @@ export async function apply(ctx:Context){
   const variables={date:new Date().toISOString().slice(0,10),time:new Date().toISOString(),workspace,mode:mode.id,model:String((ctx.mobilePolicy.options.get(sid) as Data)?.model??''),device:'Android',language:'zh-CN',memory:'',...p.variables};
   const layers=[{source:'base-custom',...(p.base??{})},{source:'global',...(p.global??{})},...Array.from(workspacePrompts,([source,text])=>({source,operation:'append',text})),{source:'mode:'+mode.id,operation:mode.promptOperation??'append',text:mode.systemPrompt??''},{source:'session',...(p.sessions?.[sid]??{})}];
   for(const layer of layers){if(layer.operation==='replace')assembly.sections=[];if(layer.text)assembly.sections.push({name:'hoshino-'+layer.source,text:interpolate(String(layer.text),variables),interpolate:false});}
-  if(p.injectTools!==false)assembly.sections.push({name:'hoshino-tool-protocol',text:'Call available tools using the model provider native tool-call protocol and declared JSON schemas. Never invent tool results.',interpolate:false});
+  if(p.injectTools!==false)assembly.sections.push({name:'hoshino-tool-protocol',text:'Call available tools using the model provider native tool-call protocol and declared JSON schemas. Never invent tool results or claim a create, save or change that no result confirmed.',interpolate:false});
   assembly.variables={cwd:workspace,home:workspace,os:'Android',platform:'android',...assembly.variables,...Object.fromEntries(Object.entries(variables).map(([k,v])=>[k,String(v)]))};
   // A persona/agent text carrying a {{name}} this Android kernel never registers (e.g. {{cwd}} from a desktop preset) must not fail the whole turn: keep it literal.
   const tolerate=(target:Data)=>{if(!target||typeof target!=='object')return;const vars=(target.variables??={}) as Record<string,string>;for(const item of [...(target.sections??[]),...(target.contexts??[])] as Data[]){if(item?.interpolate===false||typeof item?.text!=='string')continue;for(const m of item.text.matchAll(/\{\{([a-z][a-z0-9_]*)\}\}/g))if(!Object.hasOwn(vars,m[1]))vars[m[1]]='{{'+m[1]+'}}';}};
@@ -110,8 +113,12 @@ export async function apply(ctx:Context){
  const invoke=async(action:string,args:Data):Promise<any>=>{
   switch(action){
    case 'state':return {version:'0.2.0-m2',modes:config.get('modes.json').modes,configuration:Object.fromEntries(config.values),errors:Object.fromEntries(config.errors),schema:UI_SCHEMA,safeMode:ctx.androidBridge.bootstrap.safeMode??false};
-   case 'read':{const path=await safePublicPath(root,String(args.path));const s=await lstat(path);if(s.size>2*1024*1024)throw Error('Read in smaller pages');return {path:args.path,content:await readFile(path,'utf8')};}
+   case 'read':{const path=await safePublicPath(root,String(args.path));const s=await lstat(path);if(s.size>2*1024*1024)throw Error('Read in smaller pages');const content=await readFile(path,'utf8');
+    // 技能文件附带版本指纹：self_create_skill 改已有技能时要带上它（hoshino-self/skill-check.ts）。
+    return SKILL_FILE.test(String(args.path))?{path:args.path,content,version:skillVersion(content)}:{path:args.path,content};}
    case 'write':case 'apply':{
+    // 技能只能经 self_create_skill 写（结构校验、版本指纹、读回核对），不能用通用写入绕过。
+    if(SKILL_FILE.test(String(args.path)))throw Error('Skills are saved with self_create_skill (validated, versioned, read back); self_write cannot write SKILL.md');
     const path=await safePublicPath(root,String(args.path));const content=String(args.content??'');if(Buffer.byteLength(content)>2*1024*1024)throw Error('Public text edit exceeds 2 MiB');
     if(/(?:api[_-]?key|authorization|access[_-]?token|password)\s*["']?\s*:/i.test(content))throw Error('Store credentials in Android Keystore');
     if(String(args.path).endsWith('.json')){const parsed=JSON.parse(content);if(args.path==='ui/overrides.json')validateOverrides(parsed);}

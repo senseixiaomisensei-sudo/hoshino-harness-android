@@ -182,3 +182,16 @@ Copyright 2026 wangzan101
   - `app/src/main/java/com/wangzan101/mika/settings/ModelOptions.kt` 的 `ModelVersion`（按模型名版本排序）与 `candidates` 思路、`core/.../model/ModelAccessErrors.kt` 的报错词表（没开通/已下线/零额度/找不到模型）、`app/.../ui/ModelSetupViewModel.kt` 的 `probe` 规则（5xx 换下一个、全 5xx 才判整家不可用，19c92ac）→ `core-bridge/src/main/java/dev/hoshino/bridge/ProviderLiveTest.kt`（按 dsh 的供应商配置重写：OpenAI 兼容 `chat/completions` / Anthropic `messages` 极小请求，不做工具调用探测；家族间轮流取候选）
   - `core/src/test/kotlin/com/wangzan101/mika/core/oauth/OpenRouterAuthTest.kt` → `core-bridge/src/test/java/dev/hoshino/bridge/oauth/OpenRouterAuthTest.kt`；`app/src/test/.../ModelSetupViewModelTest.kt` 中 19c92ac 的三个场景 → `core-bridge/src/test/java/dev/hoshino/bridge/ProviderLiveTestTest.kt`
 - 本项目原创（未移植）：`core-bridge/.../OpenRouterAccount.kt`、`app/.../ui/settings/AccountSignIn.kt`、`DshHarnessClient` 中的保存/退出逻辑。
+
+## Mika（续）：关于页检查更新与 skill_save 加固（分支 feat/m2.10-about-update-skillsave，参照 Mika v0.1.27 / `279a5ca`）
+
+- 项目与许可同上文「Mika」段：Apache License 2.0，全文见 `licenses/mika-LICENSE`；NOTICE：`Mika` / `Copyright 2026 wangzan101`。
+- 被移植或改写的文件头部保留：
+  `// Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.`
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/src/main/java/com/wangzan101/mika/about/Releases.kt`（GitHub Releases 解析）→ `app/src/main/java/app/hoshino/harness/about/Releases.kt`（改为读 `releases` 列表、含预发布、按 Release 说明里的 versionCode 比较、只选 `*-arm64-v8a.apk`；kotlinx.serialization 换成 org.json）
+  - `app/src/main/java/com/wangzan101/mika/about/ApkIntegrity.kt`（地址、大小、SHA-256、签名证书核对）→ `app/src/main/java/app/hoshino/harness/about/ApkIntegrity.kt`（加包名与 versionCode 核对，改为纯函数）
+  - `app/src/main/java/com/wangzan101/mika/about/UpdateChecker.kt`、`ApkUpdater.kt`（检查、下载、安装前核对、交系统安装器）→ `app/src/main/java/app/hoshino/harness/about/AppUpdates.kt`（DownloadManager 换成进程内 HttpURLConnection 下载，安装走 PackageInstaller 会话 + 现有 `M2InstallReceiver`）
+  - `app/src/test/.../about/*Test.kt` 的测试思路 → `app/src/test/java/app/hoshino/harness/about/AppUpdateTest.kt`
+  - `core/src/main/kotlin/com/wangzan101/mika/core/skills/SkillDrafter.kt`（`validate`：名字/描述/五个小节/长度/工具名）、`core/memory/SensitiveFilter.kt`、`core/record/Redactor.kt`（敏感内容规则）、`core/skills/PersonalSkills.kt`（`version` = 原文 SHA-256 前 12 位）、`core/general/SkillSave.kt`（内置名保护、改已有须带 version、写后读回核对才回 ok）→ `plugins/hoshino-self/skill-check.ts` 与 `plugins/hoshino-self/index.ts` 的 `create-skill`（TypeScript 改写）
+  - `core/src/main/resources/prompts/system/principles.md` 新增的一条「没有结果确认就不说已经建好/存好/改好」→ `plugins/hoshino-m2/index.ts` 的 `hoshino-tool-protocol` 段（措辞压缩以守住 EV3 预算门）

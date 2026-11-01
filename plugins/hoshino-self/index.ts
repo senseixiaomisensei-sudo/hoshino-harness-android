@@ -1,13 +1,14 @@
 import type { Context } from '../../node-host/src/platform.js';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { mkdir, readFile, writeFile, readdir, cp, rm, rename, lstat, realpath } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type {} from '@deepseek-ai/dsh-skill';
 import type {} from '../android-skills/index.js';
 import { validateOverrides,validateSchema,UI_SCHEMA } from './overrides.js';
+import { validateSkill,PROBLEM_TEXT,renderSkill,skillVersion,MAX_SKILL_CHARS } from './skill-check.js';
 import { workspacePath } from '../android-policy/paths.js';
 import type {} from '../hoshino-m2/index.js';
 type Json=string|number|boolean|null|Json[]|{[key:string]:Json};
@@ -109,9 +110,30 @@ export async function apply(ctx: Context): Promise<void> {
         await ctx.androidBridge.call('self-changed',{});return {id,path:join(dir,'index.js'),snapshot:snapshotId,next:'Call self_reload with this plugin id'};
       });
       case 'create-skill': return serial(async()=> {
-        const id=identifier(request.name);const content=String(request.content ?? '');assertNoSecrets(content);const snap=await snapshot();
-        const dir=join(root,'skills',id);await mkdir(dir,{recursive:true});await writeFile(join(dir,'SKILL.md'),`---\nname: ${id}\ndescription: ${JSON.stringify(String(request.description ?? id))}\n---\n${content}\n`);
-        await reloadSkills();await ctx.androidBridge.call('self-changed',{});return {id,snapshot:snap};
+        // skill_save 加固（Mika 5b97ea4）：结构校验 → 内置名保护 → 版本指纹防覆盖 → 写入 → 读回核对一致才回 ok。
+        const toolNames=new Set(ctx.tools.schemas().map(t=>t.name));
+        const problem=validateSkill({name:request.name,description:request.description,content:request.content,toolNames});
+        if(problem)throw new Error(PROBLEM_TEXT[problem]+' ['+problem+']');
+        const id=String(request.name);const skillsRoot=resolve(root,'skills');
+        const builtin=(await ctx.skills.list()).find(s=>s.name===id && !(s.path && resolve(s.path).startsWith(skillsRoot+sep)));
+        if(builtin)throw new Error(`Skill not saved: "${id}" is a built-in skill name; save under a new name. [builtin_name]`);
+        const dir=join(skillsRoot,id);const file=join(dir,'SKILL.md');
+        let existing:string|null=null;
+        try{if(!(await lstat(file)).isFile())throw new Error('Skill not saved: SKILL.md is not a regular file. [save_failed]');existing=await readFile(file,'utf8');}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
+        const version=typeof request.version==='string' ? request.version.trim() : '';
+        if(existing!==null) {
+          if(!version)throw new Error(`Skill not saved: "${id}" already exists. To change it, read skills/${id}/SKILL.md with self_read first and pass the version it returns. [exists]`);
+          if(version!==skillVersion(existing))throw new Error(`Skill not saved: "${id}" changed since it was read. Read it again with self_read and pass the new version. [changed_since_read]`);
+        }
+        const md=renderSkill(id,String(request.description),String(request.content));
+        const snap=await snapshot();
+        await mkdir(dir,{recursive:true});const temp=join(dir,'.SKILL.md.'+randomUUID()+'.tmp');
+        try{await writeFile(temp,md);await rename(temp,file);}catch{await rm(temp,{force:true});throw new Error('Skill not saved: writing SKILL.md failed. [save_failed]');}
+        // 读回核对：写进去的就是这一份，才说存下了。
+        const saved=await readFile(file,'utf8').catch(()=>null);
+        if(saved!==md)throw new Error('Skill not saved: read-back did not match what was written. Tell the user it was not saved. [save_failed]');
+        await reloadSkills();await ctx.androidBridge.call('self-changed',{});
+        return {ok:true,id,action:existing===null?'created':'updated',version:skillVersion(saved),path:`skills/${id}/SKILL.md`,snapshot:snap,note:'Saved and read back. Only now may you tell the user it was saved.'};
       });
       case 'reload': return serial<Json>(async()=> {
         if(!request.plugin || request.plugin==='all' || request.plugin==='config'){await ctx.mobileM2.invoke('reload',{});await reloadSkills();return {reloaded:true};}
@@ -152,7 +174,7 @@ export async function apply(ctx: Context): Promise<void> {
     ['self_inspect','Inspect the actual running Hoshino shell, plugins, tool schemas, skills and model, without credentials.',{},'inspect'],
     ['self_reload','Reload a user plugin or skills. plugin=kernel schedules a restart after this turn.',{plugin:{type:'string',required:true}},'reload'],
     ['self_scaffold_plugin','Create a minimal working Cordis plugin and tool. Load it with self_reload.',{name:{type:'string',required:true},description:{type:'string'}},'scaffold-plugin'],
-    ['self_create_skill','Create a skill using the original dsh skill filesystem provider.',{name:{type:'string',required:true},description:{type:'string',required:true},content:{type:'string',required:true}},'create-skill'],
+    ['self_create_skill',`Save a personal skill (skills/<name>/SKILL.md) when the user asks to create or change one. name: lowercase-hyphen. description: one line, when to use it. content: markdown with sections ## 入口, ## 步骤, ## 容易出错的地方, ## 怎样算办成, ## 什么时候停下交给用户; backticks only for real tool names; no secrets; whole file <= ${MAX_SKILL_CHARS} chars. To change an existing skill, self_read skills/<name>/SKILL.md first and pass its version. Only an ok result means it was saved.`,{name:{type:'string',required:true},description:{type:'string',required:true},content:{type:'string',required:true},version:{type:'string'}},'create-skill'],
     ['self_config_read','Read public configuration only, e.g. config/presets.json. Never credentials.',{path:{type:'string',required:true}},'config-read'],
     ['self_config_write','Validate and write public JSON configuration, taking a rollback snapshot first.',{path:{type:'string',required:true},content:{type:'string',required:true}},'config-write'],
     ['self_ui_override','Validate and apply declarative ZIP UI token, capsule, command or sidebar overrides. content is JSON.',{content:{type:'string',required:true}},'ui-override'],

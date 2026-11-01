@@ -1,0 +1,142 @@
+[
+ {
+  "tag_name": "v9.9.9",
+  "name": "draft",
+  "draft": true,
+  "prerelease": true,
+  "html_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.9.5",
+  "body": "versionCode 999",
+  "assets": [
+   {
+    "name": "dsh-upgrade-acceptance.json",
+    "size": 384,
+    "digest": "sha256:a35715997caed47522a636f5cf4aca111f8cbe5ef20c2df6d134fa704c16a5b0",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/dsh-upgrade-acceptance.json"
+   },
+   {
+    "name": "dsh-upgrade-apk-sizes.json",
+    "size": 391,
+    "digest": "sha256:66be5ef48b37ad049dc41ecbd0536a1576311cb5b3a2a4ddc49236448293ce4d",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/dsh-upgrade-apk-sizes.json"
+   },
+   {
+    "name": "Hoshino-Harness-0.2.1-m2.9.5-arm64-v8a.apk",
+    "size": 77434865,
+    "digest": "sha256:de28dc1dc1f21dc7eb83954907d0cb75feedb77c6958b220c1d7146847440fcc",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/Hoshino-Harness-0.2.1-m2.9.5-arm64-v8a.apk"
+   },
+   {
+    "name": "Hoshino-Harness-0.2.1-m2.9.5-x86_64-debug.apk",
+    "size": 90493076,
+    "digest": "sha256:46a2c9cd574198c3b558d668fdfdfbcc08c0c0b64b65320b5d163c3dbc154b2e",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/Hoshino-Harness-0.2.1-m2.9.5-x86_64-debug.apk"
+   },
+   {
+    "name": "SHA256SUMS-0.2.1-m2.9.5.txt",
+    "size": 221,
+    "digest": "sha256:7e7c542b3d5672a71e6e17442ed6bdb3041601ab5aed0dae61ca86311e299b2c",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/SHA256SUMS-0.2.1-m2.9.5.txt"
+   }
+  ],
+  "published_at": "2026-10-31T11:09:00Z"
+ },
+ {
+  "tag_name": "v0.2.1-m2.9.5",
+  "name": "Hoshino 0.2.1-m2.9.5 · 局域网 Ollama 可连接、拉取模型不再闪退",
+  "draft": false,
+  "prerelease": true,
+  "html_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.9.5",
+  "body": "## Hoshino 0.2.1-m2.9.5\n\n包名 `dev.hoshino.app`，versionCode 218（高于 m2.9.4 的 217），沿用原证书（SHA-256 `e20b0b97…8fd1`），**直接覆盖安装，配置与会话保留，不要卸载**。手机请装 `Hoshino-Harness-0.2.1-m2.9.5-arm64-v8a.apk`。\n\n本版 arm64 APK 实",
+  "assets": [
+   {
+    "name": "dsh-upgrade-acceptance.json",
+    "size": 384,
+    "digest": "sha256:a35715997caed47522a636f5cf4aca111f8cbe5ef20c2df6d134fa704c16a5b0",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/dsh-upgrade-acceptance.json"
+   },
+   {
+    "name": "dsh-upgrade-apk-sizes.json",
+    "size": 391,
+    "digest": "sha256:66be5ef48b37ad049dc41ecbd0536a1576311cb5b3a2a4ddc49236448293ce4d",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/dsh-upgrade-apk-sizes.json"
+   },
+   {
+    "name": "Hoshino-Harness-0.2.1-m2.9.5-arm64-v8a.apk",
+    "size": 77434865,
+    "digest": "sha256:de28dc1dc1f21dc7eb83954907d0cb75feedb77c6958b220c1d7146847440fcc",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/Hoshino-Harness-0.2.1-m2.9.5-arm64-v8a.apk"
+   },
+   {
+    "name": "Hoshino-Harness-0.2.1-m2.9.5-x86_64-debug.apk",
+    "size": 90493076,
+    "digest": "sha256:46a2c9cd574198c3b558d668fdfdfbcc08c0c0b64b65320b5d163c3dbc154b2e",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/Hoshino-Harness-0.2.1-m2.9.5-x86_64-debug.apk"
+   },
+   {
+    "name": "SHA256SUMS-0.2.1-m2.9.5.txt",
+    "size": 221,
+    "digest": "sha256:7e7c542b3d5672a71e6e17442ed6bdb3041601ab5aed0dae61ca86311e299b2c",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.5/SHA256SUMS-0.2.1-m2.9.5.txt"
+   }
+  ],
+  "published_at": "2026-10-31T11:09:00Z"
+ },
+ {
+  "tag_name": "v0.2.1-m2.9.4",
+  "name": "Hoshino 0.2.1-m2.9.4 · 只有按「接管」才接管、应用内虚拟屏与悬浮球分开",
+  "draft": false,
+  "prerelease": true,
+  "html_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.2.1-m2.9.4",
+  "body": "## Hoshino 0.2.1-m2.9.4\n\n包名 `dev.hoshino.app`，versionCode 217（高于 m2.9.3 的 216），沿用原证书（SHA-256 `e20b0b97…8fd1`），**直接覆盖安装，配置与会话保留，不要卸载**。手机请装 `Hoshino-Harness-0.2.1-m2.9.4-arm64-v8a.apk`；`x86_64-debug` 仅",
+  "assets": [
+   {
+    "name": "dsh-upgrade-acceptance.json",
+    "size": 384,
+    "digest": "sha256:86b2c3f9053c4f6d47446863cc32e2cb2d044b57c79d35c934f1dfac75c1331d",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.4/dsh-upgrade-acceptance.json"
+   },
+   {
+    "name": "dsh-upgrade-apk-sizes.json",
+    "size": 391,
+    "digest": "sha256:1a87707e8c9bbb00426233a5deba2b183d2ef197bc12ea3f79a53c96c9302fe9",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.4/dsh-upgrade-apk-sizes.json"
+   },
+   {
+    "name": "Hoshino-Harness-0.2.1-m2.9.4-arm64-v8a.apk",
+    "size": 77425609,
+    "digest": "sha256:9dcb229378bc9ea658877dfcaf7302c11f060aa3757a779b445b2a0995de3b61",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.4/Hoshino-Harness-0.2.1-m2.9.4-arm64-v8a.apk"
+   },
+   {
+    "name": "Hoshino-Harness-0.2.1-m2.9.4-x86_64-debug.apk",
+    "size": 90480224,
+    "digest": "sha256:1ad04bda952fdad5a5e10c8585cd52e859ca5aa26c2702899627666280b78dcc",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.4/Hoshino-Harness-0.2.1-m2.9.4-x86_64-debug.apk"
+   },
+   {
+    "name": "SHA256SUMS-0.2.1-m2.9.4.txt",
+    "size": 221,
+    "digest": "sha256:56a7eb722d374a4ce88293a9de864979398d8bc591eb07c44ef50e32bfca55e5",
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.2.1-m2.9.4/SHA256SUMS-0.2.1-m2.9.4.txt"
+   }
+  ],
+  "published_at": "2026-10-31T11:09:00Z"
+ },
+ {
+  "tag_name": "v0.0.3-m0",
+  "name": "M0",
+  "draft": false,
+  "prerelease": false,
+  "html_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/tag/v0.0.3-m0",
+  "body": "no code here",
+  "published_at": "2026-06-01T00:00:00Z",
+  "assets": [
+   {
+    "name": "app-arm64-v8a.apk",
+    "size": 10,
+    "digest": null,
+    "browser_download_url": "https://github.com/senseixiaomisensei-sudo/hoshino-harness-android/releases/download/v0.0.3-m0/app-arm64-v8a.apk"
+   }
+  ]
+ }
+]
