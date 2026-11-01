@@ -125,6 +125,13 @@ Copyright 2026 wangzan101
   - `app/src/main/java/com/wangzan101/mika/cap/phone/a11y/OverlayHost.kt`（`OverlayFrame.track`：越过系统触摸阈值才算拖动、按屏幕坐标计算位移）→ `app/src/main/java/app/hoshino/harness/phone/PhoneCapsule.kt`（面板标题栏拖动，文件头已有出处说明）
 - 新文件 `PreviewRelay.kt`、`PreviewGeometry.kt`、`ManualTakeover.kt`、`BallPanelModel.kt`、`FpsMath.kt`、`DisplayFps.kt` 为本项目原创，未移植 Mika 代码。
 
+### 插话撤回/编辑与断流重试（分支 feat/m2.10-steer-withdraw-retry）
+
+- 使用方式：参照 Mika 0.1.27（9bd29de）与 0.1.24（2d5ca72）的行为在 dsh 之上重新实现，不是逐行移植；撤回与取走的竞态改由 dsh `session/updateQueue` 裁决（未移植 `RunInbox`）。
+- 文件清单（Mika 源 → 本仓库文件，文件头已有出处说明）：
+  - `app/task/TaskCenterState.kt`（`SteerState.Withdrawn`）、`app/ui/ChatViewModel.kt`（`withdrawSteer`/`editSteer`）、`app/ui/MessageMenu.kt`（撤回/编辑菜单项）→ `app/src/main/java/app/hoshino/harness/core/Steering.kt`、`ui/chat/ChatViewModel.kt`、`ui/chat/Messages.kt`
+  - `core/agent/RetryPolicy.kt`、`core/model/HttpSupport.kt`、`core/model/ModelError.kt`（重试前清掉半句、收到结束原因即算完整、断流文案）→ `app/src/main/java/app/hoshino/harness/core/StreamRetry.kt`、`plugins/android-api/stream-guard.ts`、`plugins/hoshino-turn-policy/rules.ts`（network 文案）
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy
