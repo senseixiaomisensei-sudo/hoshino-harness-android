@@ -3,7 +3,7 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { Context } from '../../node-host/src/platform.js';
 import type {} from '../android-policy/index.js';
 import { READ_TOOLS, readArgs } from './read.js';
-import { checkSteps, phoneError, phoneStatusText, render, runSteps, stepFor, PHONE_PROMPT, NO_APPROVAL_PHONE_PROMPT, type Data } from './steps.js';
+import { checkSteps, phoneError, phoneStatusText, render, runSteps, stepFor, withUnlockWait, PHONE_PROMPT, NO_APPROVAL_PHONE_PROMPT, type Data } from './steps.js';
 
 /**
  * Phone control tools (m2.8). Every tool is a thin client of the Android single execution entry
@@ -34,7 +34,8 @@ export const STEP_SCHEMA = {type: 'object', additionalProperties: false, propert
 const expect = {expect: EXPECT_SCHEMA};
 
 export function apply(ctx: Context): void {
-  const call = (method: string, body: Data, signal?: AbortSignal) => ctx.androidBridge.call<Data>(method, body, signal);
+  // m2.10: steps / find / collect wait for unlock on Android; re-call transparently while it answers waiting_unlock.
+  const call = withUnlockWait((method: string, body: Data, signal?: AbortSignal) => ctx.androidBridge.call<Data>(method, body, signal));
   const approve = (action: Data, signal?: AbortSignal) => ctx.androidBridge.call<{approved: boolean; remember?: boolean}>('approve', action, signal);
   const sid = (exec: {agent?: {id: string}}) => exec.agent?.id ?? '';
   // m2.9.2: hoshino-m2 owns the approval policy; optional so this plugin still loads without it (then: never no-approval).
