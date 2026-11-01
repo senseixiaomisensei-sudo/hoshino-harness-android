@@ -81,11 +81,11 @@ internal object ShellClipboardCalls {
     /** 按能力找，先认原版签名、再认已知的扩展签名；顺序即优先级。 */
     val SIGNATURES: List<Array<Class<*>>> = listOf(
         // Android 14+:包名、attributionTag、userId、deviceId
-        arrayOf(S, S, I, I),
+        arrayOf<Class<*>>(S, S, I, I),
         // Android 12–13:包名、attributionTag、userId
-        arrayOf(S, S, I),
+        arrayOf<Class<*>>(S, S, I),
         // 有的系统把读取扩成:包名、应用名、隐私栈、attributionTag、userId、deviceId、是否用户操作
-        arrayOf(S, S, S, S, I, I, Z),
+        arrayOf<Class<*>>(S, S, S, S, I, I, Z),
     )
 
     /** 都认不出（例如 Android 10/11 的「包名、userId」两参签名）返回 null，由调用方退回 ClipboardManager。 */
