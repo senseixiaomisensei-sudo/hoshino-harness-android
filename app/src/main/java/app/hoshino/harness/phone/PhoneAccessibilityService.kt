@@ -12,9 +12,7 @@ import android.os.Build
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,12 +25,13 @@ import kotlin.coroutines.resume
  * Hoshino's accessibility service: reads windows per display, performs gestures on a given display,
  * reports change signals per display, takes main-screen screenshots and hosts the floating capsule
  * (accessibility overlay windows need no "draw over other apps" permission).
+ * The event channel is process-wide ([A11yEventBus], Mika a8c3aa6): after the system disconnects and reconnects the
+ * service, waits that subscribed earlier keep receiving events from the new instance; operations (windows, gestures,
+ * screenshots) go to the currently connected instance even when a caller still holds an old one.
  * Enabled by the user (system settings), or by the helper only after the user ticked that item in the setup wizard (PhoneConsent).
  */
 @SuppressLint("NewApi")
 class PhoneAccessibilityService : AccessibilityService() {
-    private class DisplayEvent(val displayId: Int, val type: Int, val packageName: String?)
-    private val events = MutableSharedFlow<DisplayEvent>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private val _foreground = MutableStateFlow<String?>(null)
     /** Package of the app the user is looking at on the main screen. */
     val foreground: StateFlow<String?> = _foreground.asStateFlow()
@@ -65,6 +64,8 @@ class PhoneAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        // A disconnected instance may still get a late callback: only the connected one reports.
+        if (_instance.value !== this) return
         val displayId = displayOf(event)
         if (displayId == Display.DEFAULT_DISPLAY && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val pkg = event.packageName?.toString()
@@ -73,8 +74,8 @@ class PhoneAccessibilityService : AccessibilityService() {
                 PhoneCapsule.foregroundChanged(pkg!!)
             }
         }
-        if (displayId == Display.INVALID_DISPLAY || events.subscriptionCount.value == 0) return
-        events.tryEmit(DisplayEvent(displayId, event.eventType, event.packageName?.toString()))
+        if (displayId == Display.INVALID_DISPLAY || !events.hasSubscribers) return
+        events.publish(this, DisplayEvent(displayId, event.eventType, event.packageName?.toString()))
     }
 
     /** Type of the event's window on the main screen: true = app window, false = overlay/IME/system, null = unknown. */
@@ -86,15 +87,18 @@ class PhoneAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() = Unit
 
-    fun windowsOn(displayId: Int): List<AccessibilityWindowInfo> =
+    /** Windows on [displayId], read from the currently connected instance (empty when none is connected). */
+    fun windowsOn(displayId: Int): List<AccessibilityWindowInfo> = _instance.value?.ownWindowsOn(displayId).orEmpty()
+
+    private fun ownWindowsOn(displayId: Int): List<AccessibilityWindowInfo> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) windowsOnAllDisplays.get(displayId).orEmpty()
         else if (displayId == Display.DEFAULT_DISPLAY) windows.orEmpty() else emptyList()
 
-    /** Any UI change on [displayId] (window/content changes), as a signal. */
-    fun changesOn(displayId: Int): Flow<Int> = events.filter { it.displayId == displayId }.map { it.type }
+    /** Any UI change on [displayId] (window/content changes), as a signal. Process-wide: survives reconnects. */
+    fun changesOn(displayId: Int): Flow<Int> = Companion.changesOn(displayId)
 
-    /** All events on [displayId] with the package (pairing-code reader). */
-    fun packagesOn(displayId: Int): Flow<String?> = events.filter { it.displayId == displayId }.map { it.packageName }
+    /** All events on [displayId] with the package (pairing-code reader). Process-wide: survives reconnects. */
+    fun packagesOn(displayId: Int): Flow<String?> = Companion.packagesOn(displayId)
 
     suspend fun gesture(displayId: Int, strokes: List<GestureDescription.StrokeDescription>): Boolean {
         val builder = GestureDescription.Builder()
@@ -106,7 +110,8 @@ class PhoneAccessibilityService : AccessibilityService() {
                 override fun onCompleted(gestureDescription: GestureDescription) { if (cont.isActive) cont.resume(true) }
                 override fun onCancelled(gestureDescription: GestureDescription) { if (cont.isActive) cont.resume(false) }
             }
-            if (!dispatchGesture(gesture, callback, null) && cont.isActive) cont.resume(false)
+            val service = _instance.value
+            if ((service == null || !service.dispatchGesture(gesture, callback, null)) && cont.isActive) cont.resume(false)
         }
     }
 
@@ -128,7 +133,12 @@ class PhoneAccessibilityService : AccessibilityService() {
     }
 
     private suspend fun shotOnce(displayId: Int): Shot = suspendCancellableCoroutine { cont ->
-        takeScreenshot(displayId, mainExecutor, object : TakeScreenshotCallback {
+        val service = _instance.value
+        if (service == null) {
+            cont.resume(Shot.Failed(ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS))
+            return@suspendCancellableCoroutine
+        }
+        service.takeScreenshot(displayId, service.mainExecutor, object : TakeScreenshotCallback {
             override fun onSuccess(result: ScreenshotResult) {
                 val shot = runCatching {
                     result.hardwareBuffer.use { buffer ->
@@ -139,7 +149,7 @@ class PhoneAccessibilityService : AccessibilityService() {
                 if (cont.isActive) cont.resume(shot?.let(Shot::Ok) ?: Shot.Failed(ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR))
             }
             override fun onFailure(errorCode: Int) {
-                val secure = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && errorCode == ERROR_TAKE_SCREENSHOT_SECURE_WINDOW
+                val secure = ScreenshotErrors.isSecureWindow(Build.VERSION.SDK_INT, errorCode)
                 if (cont.isActive) cont.resume(if (secure) Shot.Secure else Shot.Failed(errorCode))
             }
         })
@@ -154,8 +164,17 @@ class PhoneAccessibilityService : AccessibilityService() {
         return Display.INVALID_DISPLAY
     }
 
+    private class DisplayEvent(val displayId: Int, val type: Int, val packageName: String?)
+
     companion object {
         private val _instance = MutableStateFlow<PhoneAccessibilityService?>(null)
         val instance: StateFlow<PhoneAccessibilityService?> = _instance.asStateFlow()
+        private val events = A11yEventBus<PhoneAccessibilityService, DisplayEvent>({ _instance.value })
+
+        /** Any UI change on [displayId] from whichever instance is connected now or later. */
+        fun changesOn(displayId: Int): Flow<Int> = events.events.filter { it.displayId == displayId }.map { it.type }
+
+        /** All events on [displayId] with the package, from whichever instance is connected now or later. */
+        fun packagesOn(displayId: Int): Flow<String?> = events.events.filter { it.displayId == displayId }.map { it.packageName }
     }
 }

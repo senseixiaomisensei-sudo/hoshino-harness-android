@@ -113,8 +113,10 @@ class AndroidPhoneScreen(
         }
     }
 
-    override suspend fun awaitChange(timeoutMs: Long): Boolean =
-        withTimeoutOrNull(timeoutMs.coerceAtLeast(1)) { service().changesOn(displayId).first(); true } ?: false
+    override suspend fun awaitChange(timeoutMs: Long): Boolean {
+        service() // fails fast when accessibility is off; the event channel itself is process-wide (survives reconnects)
+        return withTimeoutOrNull(timeoutMs.coerceAtLeast(1)) { PhoneAccessibilityService.changesOn(displayId).first(); true } ?: false
+    }
 
     /**
      * A-1 (WP-1): tree hash and frame signature are taken and the event subscription is live before [block] acts; the
@@ -122,12 +124,12 @@ class AndroidPhoneScreen(
      * recomputed when events arrived (or every [TREE_RECHECK_MS]) so polling stays cheap.
      */
     override suspend fun <T> watch(block: suspend (ChangeProbe) -> T): T = coroutineScope {
-        val svc = service()
+        service() // fails fast when accessibility is off; the event channel itself is process-wide (survives reconnects)
         val beforeTree = treeHash()
         val beforeFrame = frameSignature()
         val clock = EventClock(now())
         // UNDISPATCHED: the collector is registered on the shared flow before this line returns, i.e. before the action.
-        val job = launch(start = CoroutineStart.UNDISPATCHED) { svc.changesOn(displayId).collect { clock.mark(now()) } }
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { PhoneAccessibilityService.changesOn(displayId).collect { clock.mark(now()) } }
         var hashAt = Long.MIN_VALUE
         var hashEvents = -1L
         var hash = beforeTree

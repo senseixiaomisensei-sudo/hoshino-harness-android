@@ -35,6 +35,7 @@ interface BuiltinShellControl {
     val status: StateFlow<BuiltinShellStatus>
     val pairingDiscovery: StateFlow<PairingDiscovery>
     val paired: Boolean
+    /** Starts looking for the pairing service (the user is on their way to the pairing dialog). Calling it again restarts the search window from now. */
     fun startDiscovery()
     fun stopDiscovery()
     suspend fun startPairing(code: String, port: Int? = null)

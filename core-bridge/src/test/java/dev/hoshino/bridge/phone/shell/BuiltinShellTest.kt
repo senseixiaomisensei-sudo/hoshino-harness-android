@@ -3,6 +3,7 @@ package dev.hoshino.bridge.phone.shell
 import dev.hoshino.bridge.phone.adb.AdbConnectionException
 import dev.hoshino.bridge.phone.adb.AdbPairingException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -133,7 +134,9 @@ class BuiltinShellEngineTest {
         override fun wirelessDebugging() = wireless
         override fun wifiConnected() = wifi
         override fun turnOnWirelessDebugging(): Boolean { if (!canWrite) return false; wireless = !flipsBack; return true }
-        override suspend fun findPairingPort(timeoutMs: Long): Int? = 37000
+        var pairingPort: Int? = 37000
+        /** Pairing dialog not open ([pairingPort] null): searches for the whole window, then gives up. */
+        override suspend fun findPairingPort(timeoutMs: Long): Int? = pairingPort ?: run { delay(timeoutMs); null }
         override fun pair(port: Int, code: String) { pairFailure?.let { throw it } }
         override suspend fun launchHelper() { launches++; launchFailure?.let { throw it }; if (startsHelper) helper.value = Any() }
         override fun stopHelper() { helper.value = null }
@@ -142,6 +145,27 @@ class BuiltinShellEngineTest {
 
     private fun TestScope.engine(p: FakePlatform, h: MutableStateFlow<Any?>) =
         BuiltinShellEngine(p, h, backgroundScope, StandardTestDispatcher(testScheduler), graceMs = 100, handoffTimeoutMs = 1_000, autoOnSettleMs = 100)
+
+    /** Mika dc7965b: starting again while still searching (the user came back to pairing) counts the window from then. */
+    @Test fun startingDiscoveryAgainRestartsTheSearchWindow() = runTest {
+        val h = MutableStateFlow<Any?>(null)
+        val p = FakePlatform(h).apply { pairingPort = null }
+        val e = engine(p, h)
+        e.startDiscovery()
+        advanceTimeBy(9 * 60_000L); runCurrent()
+        e.startDiscovery()
+        advanceTimeBy(9 * 60_000L); runCurrent()
+        assertEquals(PairingDiscovery.Searching, e.pairingDiscovery.value)
+        advanceTimeBy(2 * 60_000L); runCurrent()
+        assertEquals(PairingDiscovery.Idle, e.pairingDiscovery.value)
+    }
+
+    @Test fun discoveryFindsThePairingService() = runTest {
+        val h = MutableStateFlow<Any?>(null)
+        val e = engine(FakePlatform(h), h)
+        e.startDiscovery(); runCurrent()
+        assertEquals(PairingDiscovery.Found(37000), e.pairingDiscovery.value)
+    }
 
     @Test fun pairingThenStartsHelper() = runTest {
         val h = MutableStateFlow<Any?>(null)

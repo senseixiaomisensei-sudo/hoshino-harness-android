@@ -216,7 +216,9 @@ class BuiltinShellEngine(
 
     override fun startDiscovery() {
         synchronized(this) {
-            if (discoveryJob?.isActive == true) return
+            // Already searching: start again so the search window counts from now (the user came back to pairing,
+            // Mika dc7965b). A found service is searched for again too: reopening the dialog gives a new port.
+            discoveryJob?.cancel()
             _discovery.value = PairingDiscovery.Searching
             discoveryJob = scope.launch {
                 val port = withContext(io) { platform.findPairingPort(discoveryTimeoutMs) }

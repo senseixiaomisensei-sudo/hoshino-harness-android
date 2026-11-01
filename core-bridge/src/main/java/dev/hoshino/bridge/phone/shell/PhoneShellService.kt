@@ -6,7 +6,6 @@ import android.app.ActivityOptions
 import android.app.AppOpsManager
 import android.content.ClipData
 import android.content.ClipDescription
-import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -16,8 +15,6 @@ import android.hardware.display.VirtualDisplay
 import android.os.Binder
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.Parcel
 import android.os.PersistableBundle
 import android.os.Process
@@ -60,10 +57,9 @@ class PhoneShellService(private val allowedUid: Int, private val hostName: Strin
 
     // Same reason: the clipboard must be used as com.android.shell. The system honours the "no copied overlay"
     // extra only for clips set by the shell, and reads/writes in the background are allowed for the shell uid.
-    private val clipboard: ClipboardManager by lazy {
-        ClipboardManager::class.java.getDeclaredConstructor(Context::class.java, Handler::class.java)
-            .apply { isAccessible = true }.newInstance(context, Handler(Looper.getMainLooper() ?: Looper.myLooper()!!))
-    }
+    // Reads go straight to IClipboard: on some ROMs ClipboardManager first queries Settings, which this process
+    // cannot do ("calling package android does not match caller's uid 2000", Mika e35865f/7d2c48b).
+    private val clipboard by lazy { ShellClipboard(context) }
     private val clipLock = Any()
     private val clip = ClipSwap(AndroidClipStore())
     private val clipWatchdog = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "hoshino-clip-watchdog").apply { isDaemon = true } }
