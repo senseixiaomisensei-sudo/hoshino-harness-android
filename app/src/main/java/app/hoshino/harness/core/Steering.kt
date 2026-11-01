@@ -1,5 +1,6 @@
 // Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.
 // (SteerState / steerLabel: app/task/TaskCenterState.kt, app/ui/ChatViewModel.kt; re-implemented over the dsh inbox events.)
+// (Withdrawn / withdraw-or-take race: 0.1.27 · 9bd29de; here the race is arbitrated by dsh `session/updateQueue`, not a local lock.)
 package app.hoshino.harness.core
 
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,23 @@ enum class SteerState(val label: String) {
     Cancelled("已停止，这句没有处理"),
     /** 内核没收下（当前轮已结束等），改为排在下一条发送。 */
     Deferred("当前任务已结束，排在下一条发送"),
+    /** 用户在模型取走前撤回了（`session/updateQueue remove`）；对话页和胶囊都不再显示这句。 */
+    Withdrawn("已撤回");
+
+    /** 还能撤回 / 编辑：内核收下了、模型还没取走。 */
+    val withdrawable: Boolean get() = this == Received
+}
+
+/** 撤回一句插话的结果。 */
+sealed interface SteerWithdrawal {
+    /** 内核移除了它，模型不会看到。 */
+    data object Withdrawn : SteerWithdrawal
+    /** 模型已经取走（或它已不在待处理队列里），撤回不了。 */
+    data object AlreadyTaken : SteerWithdrawal
+    /** 这句不是本机发出的、仍在等待的插话（或当前内核不支持撤回）。 */
+    data object NotWithdrawable : SteerWithdrawal
+    /** 请求没送到内核等其他失败；插话保持原状。 */
+    data class Failed(val reason: String) : SteerWithdrawal
 }
 
 /** inbox 里的一条消息（从 `agent/inbox/spliced` 的 inserted 里取出的必要字段）。 */
@@ -68,27 +86,36 @@ sealed interface InboxEffect {
     data class SteerAdded(val message: InboxMessage) : InboxEffect
     /** 停止后交代进了 inbox：画成这一轮结尾的回答。 */
     data class StopNoteAdded(val message: InboxMessage) : InboxEffect
-    /** 插话被取消（停止时作废，或用户移除）。 */
+    /** 插话被取消（停止时作废）。 */
     data class SteerCancelled(val messageId: String) : InboxEffect
+    /** 用户撤回的插话被内核移除：界面去掉这条气泡。 */
+    data class SteerWithdrawn(val messageId: String) : InboxEffect
 }
 
 /**
  * 每个会话一份：根据持久化事件推出插话气泡与状态。
  * - next-step 插入、来源是用户 → 插话气泡（状态「已收到」）。
  * - 之后同 id 的 user/message 出现 → 不再重复画气泡，状态改为「已加入当前任务」。
- * - 被带 outcome=canceled 的 splice 移出 → 「已停止，这句没有处理」。
+ * - 被带 outcome=canceled 的 splice 移出 → 「已停止，这句没有处理」；若是用户要撤回的那句 → 「已撤回」。
+ *
+ * 撤回与模型取走的竞态由 dsh 裁决：两者都是对 inbox 的一次 splice，内核串行执行，取走在先则 `updateQueue`
+ * 返回 `session/queue-item-not-found`。[withdrawn] 是此前已撤回的消息 id（持久化，重放事件后状态一致）。
  */
-class SteerTracker {
+class SteerTracker(withdrawn: Set<String> = emptySet()) {
     private val mirror = InboxMirror()
+    /** 用户要求撤回（或已撤回）的消息 id：它们被 canceled splice 移出时记为「已撤回」而不是「已停止」。 */
+    private val withdrawing = HashSet<String>(withdrawn)
     private val steerIds = LinkedHashSet<String>()
     private val noteIds = HashSet<String>()
     val states = LinkedHashMap<String, SteerState>()
 
+    @Synchronized
     fun onSplice(target: String, start: Int, removedCount: Int, inserted: List<InboxMessage>, outcome: String?): List<InboxEffect> {
         val removed = mirror.splice(target, start, removedCount, inserted)
         val effects = mutableListOf<InboxEffect>()
         if (outcome == "canceled") for (m in removed) if (m.id in steerIds && states[m.id] != SteerState.Joined) {
-            states[m.id] = SteerState.Cancelled; effects += InboxEffect.SteerCancelled(m.id)
+            if (m.id in withdrawing) { states[m.id] = SteerState.Withdrawn; effects += InboxEffect.SteerWithdrawn(m.id) }
+            else { states[m.id] = SteerState.Cancelled; effects += InboxEffect.SteerCancelled(m.id) }
         }
         for (m in inserted) when {
             m.sourceKind == STOP_NOTE_SOURCE -> if (noteIds.add(m.id)) effects += InboxEffect.StopNoteAdded(m)
@@ -103,6 +130,7 @@ class SteerTracker {
      * 用会话快照的 `inbox` 投影校正镜像。快照里的事件只是最近一页，更早的 splice 看不到，
      * 投影才是这一刻 inbox 的真实内容。返回窗口里没见过、但仍在等待的插话/停止交代，界面要补画。
      */
+    @Synchronized
     fun seed(nextTurn: List<InboxMessage>, nextStep: List<InboxMessage>): List<InboxEffect> {
         mirror.reset(nextTurn, nextStep)
         val effects = mutableListOf<InboxEffect>()
@@ -114,11 +142,39 @@ class SteerTracker {
     }
 
     /** 收到一条 user/message。返回 true 表示它是已画过的插话：不要再画，只把状态改为已加入。 */
+    @Synchronized
     fun onUserMessage(messageId: String): Boolean {
         if (messageId !in steerIds) return false
         states[messageId] = SteerState.Joined
+        withdrawing.remove(messageId)
         return true
     }
+
+    /** 这句插话现在能否撤回：本机看到它进了 next-step、还在待处理列表里、没被取走/作废。 */
+    @Synchronized
+    fun canWithdraw(messageId: String): Boolean =
+        messageId in steerIds && states[messageId]?.withdrawable == true && mirror.pending("next-step").any { it.id == messageId }
+
+    /**
+     * 准备撤回：记下意图（之后的 canceled splice 记为「已撤回」），再由调用方发 `session/updateQueue remove`。
+     * 返回 false 表示这句已不可撤回（已加入/已作废/已撤回），不要发请求。
+     */
+    @Synchronized
+    fun beginWithdraw(messageId: String): Boolean {
+        if (!canWithdraw(messageId)) return false
+        withdrawing += messageId
+        return true
+    }
+
+    /** 内核拒绝了撤回（多半已被模型取走）：撤销意图。已经看到移除事件的不受影响。 */
+    @Synchronized
+    fun withdrawFailed(messageId: String) {
+        if (states[messageId] != SteerState.Withdrawn) withdrawing.remove(messageId)
+    }
+
+    /** 已撤回的消息 id（持久化用）。 */
+    @Synchronized
+    fun withdrawnIds(): Set<String> = states.filterValues { it == SteerState.Withdrawn }.keys.toSet()
 
     /**
      * 停止交代被下一轮认领后成了 user/message（来源仍是 [STOP_NOTE_SOURCE]）。
@@ -128,6 +184,7 @@ class SteerTracker {
         if (message.sourceKind == STOP_NOTE_SOURCE && noteIds.add(message.id)) InboxEffect.StopNoteAdded(message) else null
 
     /** 还没被认领的插话（停止时要作废的那些）。 */
+    @Synchronized
     fun unconsumed(): List<String> = mirror.pending("next-step").filter { it.id in steerIds }.map { it.id }
 
     companion object {

@@ -101,4 +101,18 @@ class KernelNetworkTest {
         assertTrue(transportFailureHint(TransportFailure.Tls, false).contains("TLS"))
         assertTrue(transportFailureHint(TransportFailure.Unknown, proxyActive = true).contains("代理地址"))
     }
+
+    /** m2.10 T4: undici's mid-reply drop ("terminated") is a reset by the upstream, worded honestly — no Base URL, no proxy blame. */
+    @Test fun midReplyDropIsAnUpstreamDisconnect() {
+        assertEquals(TransportFailure.Reset, classifyTransportFailure("terminated"))
+        assertEquals(TransportFailure.Reset, classifyTransportFailure("Stream ended without finish_reason"))
+        assertEquals(TransportFailure.Reset, classifyTransportFailure("socket hang up"))
+        assertTrue(isTransportFailure(null, "terminated"))
+        assertFalse(isTransportFailure(null, "The model was determinated to answer"))
+        for (proxy in listOf(false, true)) {
+            val hint = transportFailureHint(TransportFailure.Reset, proxy)
+            assertTrue(hint, hint.contains("上游") && hint.contains("断开"))
+            assertFalse(hint, hint.contains("Base URL")); assertFalse(hint, hint.contains("代理"))
+        }
+    }
 }

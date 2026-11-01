@@ -1,3 +1,5 @@
+// Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.
+// (m2.10 T1 steer withdraw/edit: 0.1.27 · 9bd29de ChatViewModel.withdrawSteer/editSteer, MessageMenu; re-implemented over dsh session/updateQueue.)
 package app.hoshino.harness.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
@@ -103,6 +105,11 @@ data class MessageActions(
     val onOpenGoals: () -> Unit = {},
     val onOpenSchedules: () -> Unit = {},
     val onScreenshot: ((ChatItem) -> Unit)? = null,
+    /** 撤回一句模型还没取走的插话（m2.10 T1）；null = 不提供。 */
+    val onWithdrawSteer: ((ChatItem.User) -> Unit)? = null,
+    /** 编辑插话 = 撤回后把原话放回输入框；[canEditSteer] 为 false（输入框已有草稿等）时不提供。 */
+    val onEditSteer: ((ChatItem.User) -> Unit)? = null,
+    val canEditSteer: (ChatItem.User) -> Boolean = { false },
 )
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -137,6 +144,12 @@ fun ChatItemView(item: ChatItem, actions: MessageActions, modifier: Modifier = M
             } else app.hoshino.harness.ui.diy.DiySlot(when(item){is ChatItem.Tool->"tool";is ChatItem.Terminal->"terminal";is ChatItem.Thinking->"thinking";else->"message"}){MessageContent()}
         }
         DropdownMenu(expanded=menu,onDismissRequest={menu=false}) {
+            // 已发出、模型还没取走的插话：撤回 / 编辑（打开菜单时读一次状态；真正能否撤回由内核裁决）。
+            val steer=(item as? ChatItem.User)?.takeIf { menu && it.steer && app.hoshino.harness.core.Steering.states.value[it.id]?.withdrawable==true }
+            if(steer!=null) {
+                actions.onWithdrawSteer?.let { withdraw -> DropdownMenuItem(text={Text("撤回")},onClick={menu=false;withdraw(steer)}) }
+                actions.onEditSteer?.takeIf { actions.canEditSteer(steer) }?.let { edit -> DropdownMenuItem(text={Text("编辑")},onClick={menu=false;edit(steer)}) }
+            }
             DropdownMenuItem(text={Text("复制全文")},onClick={menu=false;copyToClipboard(context,item.plainText())})
             DropdownMenuItem(text={Text("复制为 Markdown")},onClick={menu=false;copyToClipboard(context,item.markdownText())})
             DropdownMenuItem(text={Text("选择文本")},onClick={menu=false;frozen=item})

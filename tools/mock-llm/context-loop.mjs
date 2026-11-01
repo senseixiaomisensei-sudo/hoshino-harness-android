@@ -6,6 +6,15 @@
 import { createServer } from 'node:http';
 import { setTimeout as pause } from 'node:timers/promises';
 
+export const CUT_HALF = '这是一段被上游掐断的半句回';
+/** Start an SSE reply, stream part of the text, then drop the TCP connection without finish_reason or [DONE]. */
+async function cutStream(res, body, text) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  const write = delta => res.write(`data: ${JSON.stringify({ id: 'ctx', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+  write({ role: 'assistant', content: '' });
+  for (const part of [text.slice(0, 6), text.slice(6)]) { write({ content: part }); await pause(20); }
+  res.socket.destroy();
+}
 const textOf = c => typeof c === 'string' ? c : Array.isArray(c) ? c.filter(p => p.type === 'text').map(p => p.text).join('') : '';
 export function createContextLoopMock() {
   const requests = [];
@@ -65,6 +74,23 @@ export function createContextLoopMock() {
         reply = '压缩后继续完成。';
       } else if (human.includes('notdone-fixture')) {
         if (!hasResult) { tool = 'end_not_done'; args = { message: '设置里没有这个开关 notpossible-verdict', subtype: 'route_failed' }; } else reply = '没办成。';
+      } else if (human.includes('slow-fixture')) {
+        // m2.10 T1: two slow tool steps, so steers land in next-step while the turn runs (withdraw / claim race).
+        const n = bump('slow');
+        if (n <= 2) { tool = 'bash'; args = { command: `sleep 3; echo slow-step-${n}`, description: 'slow fixture' }; } else reply = '慢任务完成。';
+      } else if (human.includes('cutalways-fixture') || human.includes('cut-fixture')) {
+        // m2.10 T4: the upstream drops the connection mid-reply (no finish_reason, no [DONE]). cut-fixture recovers on
+        // the third attempt; cutalways-fixture never does.
+        const always = human.includes('cutalways-fixture');
+        const n = bump(always ? 'cutalways' : 'cut');
+        if (always || n <= 2) { record.cut = true; record.reply = CUT_HALF; await cutStream(res, body, CUT_HALF); return; }
+        reply = '断流重试后的完整回答。';
+      } else if (human.includes('nodone-fixture')) {
+        // m2.10 T4: finish_reason arrives but the server closes without `data: [DONE]` — still a complete reply.
+        bump('nodone'); record.noDone = true; reply = '结束原因到了但没有 DONE 的完整回答。';
+      } else if (human.includes('finishreset-fixture')) {
+        // m2.10 T4: finish_reason arrives, then the socket is reset before [DONE].
+        bump('finishreset'); record.finishReset = true; reply = '结束原因到了之后连接被重置的完整回答。';
       } else reply = '好的。';
       // prefix-cache accounting for main requests. Providers render tool definitions before the conversation (OpenAI /
       // DeepSeek chat templates), so the cacheable prefix is tools → messages, not the JSON key order of the request
@@ -80,7 +106,9 @@ export function createContextLoopMock() {
     await chunk({ role: 'assistant', content: '' });
     if (tool) { await chunk({ tool_calls: [{ index: 0, id: `call_${requests.length}`, type: 'function', function: { name: tool, arguments: JSON.stringify(args) } }] }); await chunk({}, 'tool_calls'); }
     else { if (reply) await chunk({ content: reply }); await chunk({}, 'stop'); }
-    res.write('data: [DONE]\n\n'); res.end();
+    if (record.finishReset) { await pause(20); res.socket.destroy(); return; }
+    if (!record.noDone) res.write('data: [DONE]\n\n');
+    res.end();
   });
   return { server, requests, counters };
 }

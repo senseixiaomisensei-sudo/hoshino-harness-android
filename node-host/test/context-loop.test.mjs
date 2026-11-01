@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractPins, renderPins, priorPins, ruleSummary, wrapUntrusted, isUntrustedTool, isOverflowFailure, newSessionCache, recordRequest, hitRate, PINS_HEADER, MAX_PROGRESS } from '../dist/plugins/hoshino-context/core.js';
-import { ruleIntent, parseIntent, classify, isTransient, userReason, detail, climb, signature, needsReadback } from '../dist/plugins/hoshino-turn-policy/rules.js';
+import { ruleIntent, parseIntent, classify, isTransient, userReason, detail, climb, signature, needsReadback, isDisconnect } from '../dist/plugins/hoshino-turn-policy/rules.js';
 import { mismatch, stripQuoted } from '../dist/plugins/hoshino-turn-policy/language.js';
 import { ground, claims } from '../dist/plugins/hoshino-outcome/grounding.js';
 
@@ -139,4 +139,20 @@ test('RT17 light grounding flags values that were never read', () => {
   assert.deepEqual(claims('共有 3 条结果，第 2 条最好'), [], 'small counts and ordinals are not facts to check');
   const started = performance.now(); for (let i = 0; i < 50; i++) ground(bad.claims.map(c => c.text).join(' ').repeat(20), evidence);
   assert.ok((performance.now() - started) / 50 < 50, 'rule check ≤ 50 ms');
+});
+
+test('m2.10 T4 network failures are worded honestly: upstream drop vs. no connection, never "check the Base URL"', () => {
+  for (const message of ['terminated', 'read ECONNRESET', 'socket hang up', 'Stream ended without finish_reason', 'other side closed']) {
+    assert.ok(isDisconnect(message), message);
+    const kind = classify({ code: 'TRANSPORT', message });
+    assert.equal(kind, 'network', message); assert.ok(isTransient(kind));
+    const text = userReason(kind, 'm', detail(message));
+    assert.ok(text.includes('上游') && text.includes('断开'), text);
+    assert.ok(!text.includes('Base URL'), text);
+  }
+  for (const message of ['getaddrinfo ENOTFOUND api.example.com', 'connect ECONNREFUSED 127.0.0.1:11434', 'fetch failed']) {
+    assert.ok(!isDisconnect(message), message);
+    const text = userReason(classify({ message }), 'm', detail(message));
+    assert.ok(text.includes('网络') && !text.includes('上游') && !text.includes('Base URL'), text);
+  }
 });

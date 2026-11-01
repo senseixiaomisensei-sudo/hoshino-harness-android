@@ -136,6 +136,13 @@ Copyright 2026 wangzan101
   - `a8c3aa61fc8e0f2f5180b7ca1504f226094ff6c1` · `app/.../cap/phone/a11y/ScreenAccessibility.kt`（事件流跨实例保留、只收当前实例；操作找当前实例）→ `app/src/main/java/app/hoshino/harness/phone/{A11yEventBus,PhoneAccessibilityService,AndroidPhoneScreen}.kt`
 - 本项目新增（未移植 Mika 代码，思路来自 f28e8be）：`core-bridge/src/test/java/dev/hoshino/bridge/arch/MinSdkApiGuardTest.kt`、`core-bridge/src/test/java/dev/hoshino/bridge/phone/shell/ShellClipboardCallsTest.kt`、`app/src/test/java/app/hoshino/harness/phone/{A11yEventBusTest,ScreenshotErrorsTest}.kt`。
 
+### 插话撤回/编辑与断流重试（分支 feat/m2.10-steer-withdraw-retry）
+
+- 使用方式：参照 Mika 0.1.27（9bd29de）与 0.1.24（2d5ca72）的行为在 dsh 之上重新实现，不是逐行移植；撤回与取走的竞态改由 dsh `session/updateQueue` 裁决（未移植 `RunInbox`）。
+- 文件清单（Mika 源 → 本仓库文件，文件头已有出处说明）：
+  - `app/task/TaskCenterState.kt`（`SteerState.Withdrawn`）、`app/ui/ChatViewModel.kt`（`withdrawSteer`/`editSteer`）、`app/ui/MessageMenu.kt`（撤回/编辑菜单项）→ `app/src/main/java/app/hoshino/harness/core/Steering.kt`、`ui/chat/ChatViewModel.kt`、`ui/chat/Messages.kt`
+  - `core/agent/RetryPolicy.kt`、`core/model/HttpSupport.kt`、`core/model/ModelError.kt`（重试前清掉半句、收到结束原因即算完整、断流文案）→ `app/src/main/java/app/hoshino/harness/core/StreamRetry.kt`、`plugins/android-api/stream-guard.ts`、`plugins/hoshino-turn-policy/rules.ts`（network 文案）
+
 ## scrcpy（经由 Mika 的 ShellContext）
 
 - 项目：https://github.com/Genymobile/scrcpy

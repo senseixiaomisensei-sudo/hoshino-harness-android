@@ -144,7 +144,7 @@ fun classifyTransportFailure(message: String?): TransportFailure {
         Regex("certificate|CERT_|SSL|TLS|self[- ]signed|handshake", RegexOption.IGNORE_CASE).containsMatchIn(m) -> TransportFailure.Tls
         Regex("ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|Connect Timeout|ENETUNREACH|EHOSTUNREACH|timed? ?out", RegexOption.IGNORE_CASE).containsMatchIn(m) -> TransportFailure.ConnectTimeout
         Regex("ECONNREFUSED", RegexOption.IGNORE_CASE).containsMatchIn(m) -> TransportFailure.Refused
-        Regex("ECONNRESET|socket hang up|other side closed|UND_ERR_SOCKET", RegexOption.IGNORE_CASE).containsMatchIn(m) -> TransportFailure.Reset
+        Regex("ECONNRESET|socket hang up|other side closed|UND_ERR_SOCKET|\\bterminated\\b|premature close|stream ended", RegexOption.IGNORE_CASE).containsMatchIn(m) -> TransportFailure.Reset
         else -> TransportFailure.Unknown
     }
 }
@@ -152,10 +152,12 @@ fun classifyTransportFailure(message: String?): TransportFailure {
 /** Is this kernel failure a network/transport failure (as opposed to an HTTP/API error)? */
 fun isTransportFailure(code: String?, message: String?): Boolean =
     code.equals("TRANSPORT", true) || code.equals("TIMEOUT", true) ||
-        Regex("Connection error|fetch failed|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET|UND_ERR_", RegexOption.IGNORE_CASE).containsMatchIn(message.orEmpty())
+        Regex("Connection error|fetch failed|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET|UND_ERR_|\\bterminated\\b|socket hang up|premature close", RegexOption.IGNORE_CASE).containsMatchIn(message.orEmpty())
 
 /** User-facing Chinese hint appended to transport failures. */
 fun transportFailureHint(kind: TransportFailure, proxyActive: Boolean): String {
+    // m2.10 T4 (Mika 0.1.24): a mid-reply drop already reached the service — it is the upstream's doing, not the proxy/Base URL.
+    if (kind == TransportFailure.Reset) return "连接在上游被断开（回复还没发完就被对方断了），已自动重试仍然如此。多半是服务商或中转站一时故障，稍后再发一次即可。"
     val what = when (kind) {
         TransportFailure.Dns -> "域名解析失败（DNS）"
         TransportFailure.ConnectTimeout -> "连接超时，服务器不可达"

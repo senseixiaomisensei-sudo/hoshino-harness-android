@@ -367,6 +367,10 @@ fun ChatScreen(
                                 onOpenGoals = { navigate(Routes.GOALS) },
                                 onOpenSchedules = { navigate(Routes.SCHEDULES) },
                                 onScreenshot = {app.hoshino.harness.ui.tools.CaptureRequests.selection.value=app.hoshino.harness.ui.tools.CaptureSelection(items=listOf(it));navigate(Routes.SCREENSHOT)},
+                                // m2.10 T1：撤回 / 编辑模型还没取走的插话；编辑 = 撤回成功后把原话放回（仍空着的）输入框。
+                                onWithdrawSteer = { steer -> vm.withdrawSteer(steer.id) },
+                                onEditSteer = { steer -> vm.withdrawSteer(steer.id) { ok -> if (ok && input.text.isBlank()) input = TextFieldValue(steer.text, TextRange(steer.text.length)) } },
+                                canEditSteer = { steer -> vm.canEditSteer(input.text, steer) },
                             )
                         }
                         app.hoshino.harness.ui.phone.PhoneScreenBar(onOpen = { navigate(Routes.VIRTUAL_SCREEN) })
