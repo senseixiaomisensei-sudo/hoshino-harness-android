@@ -85,7 +85,7 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
         http.newCall(Request.Builder().url("$base/api/$method").header("Cookie",cookie).post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use {
             check(it.isSuccessful) { "内核请求失败 (${it.code})" }
             val result=JSONObject(it.body!!.string()).getJSONObject("result")
-            check(result.optBoolean("ok")) { val error=result.optJSONObject("error");"内核拒绝请求：" + (error?.optString("message")?.takeIf { message->message.isNotBlank() } ?: error?.optString("code","unknown")) }
+            if(!result.optBoolean("ok")){val error=result.optJSONObject("error");throw KernelRpcException(error?.optString("code").orEmpty(),"内核拒绝请求：" + (error?.optString("message")?.takeIf { message->message.isNotBlank() } ?: error?.optString("code","unknown")))}
             result.opt("value").takeUnless { value -> value==JSONObject.NULL }
         }
     }
@@ -130,3 +130,6 @@ class SessionClient(private val onFrame: (JSONObject) -> Unit, private val onFai
     }
     override fun close() { closed=true;scope.cancel();streamRequests.clear();followed.clear();socket?.close(1000,"shutdown"); http.dispatcher.executorService.shutdown();http.connectionPool.evictAll() }
 }
+
+/** dsh 拒绝了一次 RPC（`result.ok=false`）。[code] 是 dsh 的 RemoteError code（如 `session/queue-item-not-found`），消息与旧的 check() 一致。 */
+class KernelRpcException(val code: String, message: String) : IllegalStateException(message)
