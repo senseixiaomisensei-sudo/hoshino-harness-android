@@ -700,7 +700,9 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
     }
     override suspend fun deleteProvider(providerId: String) {
         if(providerId=="openai-codex"){runCatching{chatGptAuth.signOut()};chatGptAuth.forget()}
-        vault.delete(providerId);providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)api().reloadProviders()
+        vault.delete(providerId);providerRows.value=readProviders()
+        if(providerId==dev.hoshino.bridge.OpenRouterAccount.PROVIDER_ID)openRouterAccount.publish()
+        if(connection.value==ConnectionState.Connected)api().reloadProviders()
     }
     /** People-facing reason for a failed turn. ChatGPT plan errors arrive already explained by plugins/android-api. */
     private fun failureDetail(sid:String,failure:JSONObject?):String {
@@ -909,18 +911,59 @@ class DshHarnessClient(private val context: Context) : UnavailableHarnessClient(
         dir.listFiles{f->f.name.startsWith("full-output-")}?.sortedByDescending{it.lastModified()}?.drop(4)?.forEach{it.delete()}
         java.io.File(dir,"full-output-${callId.filter{it.isLetterOrDigit()}.take(40)}.txt").also{it.writeText(value)}
     }
-    override suspend fun fetchModels(provider: Provider): List<ModelInfo> {
-        require(provider.protocol!=ProviderProtocol.OpenAIResponses) { "OpenAI Responses 即将支持" }
+    /** The draft's key and headers, with masked values ("••••••••") resolved from the Keystore. */
+    private fun credentials(provider: Provider): Pair<String,Map<String,String>> {
         val stored=vault.list().firstOrNull { it.id==provider.id }
         val key=if(provider.apiKey=="••••••••")stored?.let { vault.resolve(it.credentialRef) }.orEmpty() else provider.apiKey
         val existing=stored?.metadata?.optJSONArray("headerRefs")?.rows()?.associate { it.getString("name") to vault.resolve(it.getString("ref")).orEmpty() }.orEmpty()
-        val headers=provider.headers.associate { it.first to if(it.second=="••••••••")existing[it.first].orEmpty() else it.second }
+        return key to provider.headers.associate { it.first to if(it.second=="••••••••")existing[it.first].orEmpty() else it.second }
+    }
+    override suspend fun fetchModels(provider: Provider): List<ModelInfo> {
+        require(provider.protocol!=ProviderProtocol.OpenAIResponses) { "OpenAI Responses 即将支持" }
+        val (key,headers)=credentials(provider)
         val result=try { dev.hoshino.bridge.ProviderProbe().models(StoredProvider(provider.id,if(provider.protocol==ProviderProtocol.Anthropic)"anthropic" else "openai-compatible",provider.baseUrl,emptyList()),key,headers) }
             catch(cancelled: CancellationException) { throw cancelled } catch(e: Exception) { throw IllegalStateException("拉取模型失败：" + (e.message?.takeIf { it.isNotBlank() } ?: "请检查协议、地址与凭据"), e) }
         return result.rows().map { row -> provider.models.firstOrNull { it.id==row.getString("id") } ?: ModelInfo(row.getString("id"),row.getString("name"),128000,4096,false,provider.protocol==ProviderProtocol.Anthropic,if(provider.protocol==ProviderProtocol.Anthropic)ReasoningEffort.Medium else ReasoningEffort.Off) }
     }
+    /**
+     * m2.10：真调一次模型（见 dev.hoshino.bridge.ProviderLiveTest）。候选是草稿里配置的模型，没有就先拉列表；
+     * 5xx、零额度换下一个候选，全是 5xx 才判整家不可用。返回的说明已脱敏。
+     */
     override suspend fun testProvider(provider: Provider): Result<String> = try {
-        Result.success("连接成功，可获取 ${fetchModels(provider).size} 个模型")
+        if(provider.id=="openai-codex") {
+            if(chatGptAuth.state.value.signedIn)Result.success("ChatGPT 已登录：套餐模型由登录本身核对") else Result.failure(IllegalStateException("连接失败：ChatGPT 未登录，请先用 ChatGPT 登录"))
+        } else {
+            require(provider.protocol!=ProviderProtocol.OpenAIResponses) { "OpenAI Responses 即将支持" }
+            val (key,headers)=credentials(provider)
+            val ids=provider.models.map { it.id }.filter { it.isNotBlank() }.ifEmpty { fetchModels(provider).map { it.id } }
+            val result=dev.hoshino.bridge.ProviderLiveTest().test(if(provider.protocol==ProviderProtocol.Anthropic)"anthropic" else "openai-compatible",provider.baseUrl,key,headers,ids)
+            val message=redactWith(key,headers,result.message)
+            if(result.ok)Result.success(message) else Result.failure(IllegalStateException(message))
+        }
     } catch(cancelled: CancellationException) { throw cancelled } catch(e: Exception) { Result.failure(IllegalStateException((e.message?.removePrefix("拉取模型失败：")?.let { "连接失败：$it" }) ?: "连接失败，请检查协议、地址和凭据")) }
+    /** Server error text can echo the request; never show the draft's key or header values. */
+    private fun redactWith(key:String,headers:Map<String,String>,text:String)=dev.hoshino.bridge.redactCredentials(vault.redact(text),(listOf(key)+headers.values).filter{it.length>=8})
+
+    // ---------- 用账号登录 › OpenRouter ----------
+    val openRouterAccount:dev.hoshino.bridge.OpenRouterAccount get()=dev.hoshino.bridge.OpenRouterAccount.get(context)
+    fun beginOpenRouterLogin(openBrowser:(String)->Unit)=openRouterAccount.beginLogin(openBrowser){key->saveOpenRouterProvider(key)}
+    /**
+     * 授权换来的 Key 存成单独的供应商 openrouter-oauth（不碰手填 Key 的 OpenRouter）。首次登录的模型 = openrouter/auto + 列表里按版本挑的几个；
+     * 重新登录保留用户已选的模型。
+     */
+    private suspend fun saveOpenRouterProvider(key:String){
+        val id=dev.hoshino.bridge.OpenRouterAccount.PROVIDER_ID;val base=dev.hoshino.bridge.oauth.OpenRouterAuth.API_BASE
+        val prior=vault.list().firstOrNull { it.id==id }
+        val ids=if(prior!=null&&prior.models.isNotEmpty())prior.models else {
+            val listed=runCatching{dev.hoshino.bridge.ProviderProbe().models(StoredProvider(id,"openai-compatible",base,emptyList()),key,emptyMap()).rows().map{it.getString("id")}}.getOrDefault(emptyList())
+            (listOf(dev.hoshino.bridge.OpenRouterAccount.AUTO_MODEL)+dev.hoshino.bridge.LiveTestRules.candidates(listed,6)).distinct()
+        }
+        val rows=JSONArray(ids.map { m -> priorModel(prior,m) ?: JSONObject().put("id",m).put("displayName",m) })
+        val metadata=JSONObject().put("name",dev.hoshino.bridge.OpenRouterAccount.DISPLAY_NAME).put("catalogId","openrouter").put("enabled",prior?.metadata?.optBoolean("enabled",true) ?: true).put("headerRefs",JSONArray()).put("models",rows)
+        vault.save(StoredProvider(id,"openai-compatible",base,ids,metadata),key)
+        providerRows.value=readProviders();if(connection.value==ConnectionState.Connected)runCatching{api().reloadProviders()}
+    }
+    /** 退出只清本机：删掉供应商与 Keystore 里的 Key，不调用 OpenRouter。 */
+    suspend fun signOutOpenRouter(){ deleteProvider(dev.hoshino.bridge.OpenRouterAccount.PROVIDER_ID) }
 }
 
