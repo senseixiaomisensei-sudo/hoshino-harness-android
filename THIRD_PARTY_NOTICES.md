@@ -143,3 +143,14 @@ Copyright 2026 wangzan101
 - ONNX 导出与托管：RapidOCR（https://github.com/RapidAI/RapidOCR ，Apache License 2.0），固定到 https://huggingface.co/SWHL/RapidOCR 的提交 `1cfba2e90fc938db55889873735088de210cc173`
 - 使用方式：**不随 APK 分发**；用户在「设置手机操作」里点下载时才获取，按 SHA-256 校验（det `d2a7720d…f49da9`，rec `48fc40f2…83683b`，完整值见 `app/src/main/java/app/hoshino/harness/phone/ocr/OcrModels.kt`）。字符表取自识别模型自带的 `character` 元数据。
 - 本仓库实现的前后处理（DB 后处理、CTC 解码、缩放归一化）按 PaddleOCR/RapidOCR 公开的参数独立编写：`app/src/main/java/app/hoshino/harness/phone/ocr/OcrPipeline.kt`。
+
+## Mika：测试连接真调模型与 OpenRouter 账号登录（分支 feat/m2.10-provider-test-openrouter）
+
+- 项目与许可同上「Mika」段：https://github.com/wangzan101/mika ，Apache License 2.0（`licenses/mika-LICENSE`），NOTICE：`Mika / Copyright 2026 wangzan101`。参照版本 v0.1.26（OpenRouter 登录）与 19c92ac（测试并保存 5xx 换候选）。
+- 被移植/改写的文件头部保留出处说明。文件清单（Mika 源文件 → 本仓库文件）：
+  - `core/src/main/kotlin/com/wangzan101/mika/core/oauth/OpenRouterAuth.kt`（含 `signInWithOpenRouter`）、`AccountSession.kt`（`AccountSignInFailure`/`AccountSignInException`，只取用到的部分）→ `core-bridge/src/main/java/dev/hoshino/bridge/oauth/OpenRouterAuth.kt`（JSON 改用 org.json，HTTP 复用本仓库 `executeRaw`，Key 名字改为 Hoshino Harness，加中文失败说明）
+  - `core/src/main/kotlin/com/wangzan101/mika/core/oauth/Pkce.kt` → `core-bridge/src/main/java/dev/hoshino/bridge/oauth/Pkce.kt`（ChatGPT 登录的 S256 也改用它）
+  - `core/src/main/kotlin/com/wangzan101/mika/core/oauth/LoopbackCallback.kt`（共用化：`redirectUri(host)`、可挂起的结果页、`OwnListeningPorts` 登记）→ `core-bridge/src/main/java/dev/hoshino/bridge/oauth/LoopbackCallback.kt`（由原 `core-bridge/.../chatgpt/LoopbackCallback.kt` 移动而来，ChatGPT 与 OpenRouter 共用）
+  - `app/src/main/java/com/wangzan101/mika/settings/ModelOptions.kt` 的 `ModelVersion`（按模型名版本排序）与 `candidates` 思路、`core/.../model/ModelAccessErrors.kt` 的报错词表（没开通/已下线/零额度/找不到模型）、`app/.../ui/ModelSetupViewModel.kt` 的 `probe` 规则（5xx 换下一个、全 5xx 才判整家不可用，19c92ac）→ `core-bridge/src/main/java/dev/hoshino/bridge/ProviderLiveTest.kt`（按 dsh 的供应商配置重写：OpenAI 兼容 `chat/completions` / Anthropic `messages` 极小请求，不做工具调用探测；家族间轮流取候选）
+  - `core/src/test/kotlin/com/wangzan101/mika/core/oauth/OpenRouterAuthTest.kt` → `core-bridge/src/test/java/dev/hoshino/bridge/oauth/OpenRouterAuthTest.kt`；`app/src/test/.../ModelSetupViewModelTest.kt` 中 19c92ac 的三个场景 → `core-bridge/src/test/java/dev/hoshino/bridge/ProviderLiveTestTest.kt`
+- 本项目原创（未移植）：`core-bridge/.../OpenRouterAccount.kt`、`app/.../ui/settings/AccountSignIn.kt`、`DshHarnessClient` 中的保存/退出逻辑。

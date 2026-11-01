@@ -216,3 +216,7 @@
 - 闪退根因：拉取失败的异常从 Compose 协程抛出未捕获。改为捕获并显示原因。
 - 连接：探测超时 2s→连接 6s/读 12s；无 scheme 的地址补 http://；404 时回退 Ollama 原生 /api/tags；错误按类型给出中文原因（连接被拒→提示 OLLAMA_HOST=0.0.0.0 与防火墙、127.0.0.1 是手机自己、超时、TLS 用 http）。
 - 内核：开代理时 NO_PROXY 加入局域网供应商主机（RFC1918/CGNAT/.local），避免局域网模型请求被送进代理。
+
+## 2026-11-01 M2.10 测试连接真调模型、OpenRouter 账号登录
+- 测试连接：以前只拉 `/models` 数个数，死模型、零额度、5xx 都显示通过。改为按候选真调一次（OpenAI 兼容 `chat/completions` 或 Anthropic `messages`，`max_tokens`=16；OpenAI 推理模型要求时改发 `max_completion_tokens`）。候选取草稿里的模型（没有就先拉列表），同一家族版本新的/正式版在前，家族之间轮流取，最多 4 个。401、非模型原因的 403、网络错误立刻判失败；5xx、零额度/没开通/已下线/没有该模型、402、429 换下一个；全 5xx 才判整家暂时不可用，否则逐个列出原因（参照 Mika 19c92ac）。连接超时、不走代理、中文网络原因沿用 m2.9.5，读取放宽到 30 s（Ollama 冷启动）。
+- OpenRouter：官方 PKCE（`https://openrouter.ai/auth?callback_url=…&code_challenge=…` → `POST /api/v1/auth/keys` 换 Key），回调复用 ChatGPT 登录的本机回调（`dev.hoshino.bridge.oauth.LoopbackCallback`，只绑 127.0.0.1，回调地址写 localhost）。Key 存 Keystore，单独存成供应商 `openrouter-oauth`「OpenRouter（账号登录）」，不顶掉手填 Key 的 OpenRouter；首次模型 = `openrouter/auto` + 列表里按版本挑的 6 个，重新登录保留已选模型。退出只清本机（删供应商与 Key），Key 仍在用户 OpenRouter 账号里，界面给出「管理 Key」入口。
