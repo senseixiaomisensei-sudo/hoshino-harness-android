@@ -57,6 +57,7 @@ object HIcons {
     val ArrowDown by lazy { line("arrow_down", "M12 5v14M6 13l6 6 6-6") }
     val Stop by lazy { solid("stop", "M8 7h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z") }
     val Play by lazy { solid("play", "M8 5.5v13a.8.8 0 0 0 1.2.7l10-6.5a.8.8 0 0 0 0-1.4l-10-6.5A.8.8 0 0 0 8 5.5z") }
+    val Mic by lazy { line("mic", "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6") }
     val Pause by lazy { line("pause", "M8 5v14M16 5v14", 2f) }
     val ChevronDown by lazy { line("chevron_down", "M6 9l6 6 6-6") }
     val ChevronUp by lazy { line("chevron_up", "M6 15l6-6 6 6") }

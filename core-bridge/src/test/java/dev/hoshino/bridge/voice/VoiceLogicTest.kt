@@ -163,6 +163,19 @@ class VoiceLogicTest {
         assertEquals(VoiceRouting.Route.Interject("先停一下"), VoiceRouting.route("先停一下", "草稿", running = true, edit = false))
         assertEquals(VoiceRouting.Route.Fill("草稿先停一下"), VoiceRouting.route("先停一下", "草稿", running = true, edit = true))
         assertEquals(VoiceRouting.Route.Fill("hello world"), VoiceRouting.route("world", "hello", running = false, edit = false))
+        assertEquals(VoiceRouting.Route.Stop, VoiceRouting.route("停止。", "", running = true, edit = false))
+        assertEquals(VoiceRouting.Route.Stop, VoiceRouting.route("Stop!", "", running = true, edit = false))
+        assertEquals("不在跑时「停止」只是普通文字", VoiceRouting.Route.Fill("停止。"), VoiceRouting.route("停止。", "", running = false, edit = false))
+        assertEquals(VoiceRouting.Route.Interject("停止下载那个文件"), VoiceRouting.route("停止下载那个文件", "", running = true, edit = false))
+    }
+
+    @Test fun capsuleAimPicksTarget() {
+        val edit = intArrayOf(100, 500, 300, 600)
+        val cancel = intArrayOf(400, 500, 600, 600)
+        assertEquals(HoldToTalk.Target.Edit, CapsuleAim.target(150f, 550f, edit, cancel))
+        assertEquals(HoldToTalk.Target.Cancel, CapsuleAim.target(590f, 610f, edit, cancel, slop = 20))
+        assertEquals(HoldToTalk.Target.Send, CapsuleAim.target(350f, 300f, edit, cancel, slop = 20))
+        assertEquals(HoldToTalk.Target.Send, CapsuleAim.target(150f, 550f, null, null))
     }
 
     @Test fun micGateIsExclusive() {

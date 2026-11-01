@@ -110,6 +110,7 @@ fun HoshinoApp() {
             custom.raw.optJSONArray("pages")?.let{pages->for(i in 0 until pages.length()){val page=pages.getJSONObject(i);composable(page.getString("route")){PageScaffold(page.getString("title"),back){DiyNode(page.getJSONObject("root"),custom.raw,go)}}}}
             composable(Routes.APPEARANCE) { AppearanceScreen(app, back) }
             composable(Routes.MODELS) { ModelsScreen(viewModel(), back, go) }
+            composable(Routes.SPEECH) { app.hoshino.harness.ui.settings.SpeechModelScreen(back) }
             composable(Routes.PROVIDER, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
                 ProviderEditScreen(viewModel(), entry.arguments?.getString("id") ?: "", back)
             }

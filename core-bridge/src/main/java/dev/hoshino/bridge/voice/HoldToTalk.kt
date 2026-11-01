@@ -218,17 +218,28 @@ class HoldToTalk(private val clock: () -> Long, private val maxMs: Long = MAX_HO
 }
 
 /**
- * 说完的话交到哪（对话输入栏用）：任务在跑时直接作为插话交给当前任务；不在跑时接在输入框后面，让用户再改。
+ * 说完的话交到哪（对话输入栏、悬浮胶囊共用）：任务在跑时直接作为插话交给当前任务（dsh `session/prompt mode=steer`）；
+ * 整句只是「停 / 停止 / 别做了 / stop」时按停止处理（和点停止按钮同一条路）；不在跑时接在输入框后面，让用户再改。
  * 拖到「改一改」时无论在不在跑都填进输入框。纯逻辑。
  */
 object VoiceRouting {
     sealed interface Route {
         data class Fill(val text: String) : Route
         data class Interject(val text: String) : Route
+        data object Stop : Route
     }
 
-    fun route(spoken: String, existing: String, running: Boolean, edit: Boolean): Route =
-        if (running && !edit) Route.Interject(spoken) else Route.Fill(HoldToTalk.join(existing, spoken))
+    private val STOP_WORDS = setOf("停", "停止", "停下", "停一下", "别做了", "不要做了", "取消任务", "stop", "stop it", "stop now")
+
+    /** 去掉标点和空白、转小写后整句是停止词。 */
+    fun isStop(spoken: String): Boolean =
+        spoken.lowercase().replace(Regex("[\\p{P}\\p{S}\\s]+"), " ").trim() in STOP_WORDS
+
+    fun route(spoken: String, existing: String, running: Boolean, edit: Boolean): Route = when {
+        running && !edit && isStop(spoken) -> Route.Stop
+        running && !edit -> Route.Interject(spoken)
+        else -> Route.Fill(HoldToTalk.join(existing, spoken))
+    }
 }
 
 /** 麦克风同一时刻只给一处用（对话输入栏、悬浮胶囊）：后按的一处拿不到就报 [SpeechFailure.InUse]。 */
@@ -244,4 +255,19 @@ object MicGate {
     @Synchronized fun release(who: Any) { if (owner === who) owner = null }
 
     @Synchronized fun holder(): Any? = owner
+}
+
+/**
+ * 悬浮胶囊长按说话时手指落在哪：两个落点（「改一改」「取消」）各是屏幕上的一块矩形，四周各放宽 [slop] 像素，
+ * 好按；都不在就是「发出去」。矩形是 [left, top, right, bottom]。纯逻辑。
+ */
+object CapsuleAim {
+    fun target(x: Float, y: Float, edit: IntArray?, cancel: IntArray?, slop: Int = 0): HoldToTalk.Target = when {
+        cancel != null && inside(x, y, cancel, slop) -> HoldToTalk.Target.Cancel
+        edit != null && inside(x, y, edit, slop) -> HoldToTalk.Target.Edit
+        else -> HoldToTalk.Target.Send
+    }
+
+    private fun inside(x: Float, y: Float, r: IntArray, slop: Int) =
+        r.size == 4 && x >= r[0] - slop && x <= r[2] + slop && y >= r[1] - slop && y <= r[3] + slop
 }

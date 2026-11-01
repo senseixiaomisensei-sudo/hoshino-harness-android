@@ -124,7 +124,14 @@ fun ChatScreen(
     var input by remember { mutableStateOf(TextFieldValue("")) }
     val shared by app.hoshino.harness.core.M2Intents.pending.collectAsStateWithLifecycle()
     LaunchedEffect(shared?.id){shared?.let{task->if(task.newTask)vm.newSession();if(task.text.isNotBlank())input=TextFieldValue(if(input.text.isBlank())task.text else input.text+"\n"+task.text);task.attachment?.let{vm.attach(it)};app.hoshino.harness.core.M2Intents.pending.value=null}}
-    val voice=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()){result->if(result.resultCode==android.app.Activity.RESULT_OK){val text=result.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty();if(text.isNotBlank())input=TextFieldValue(if(input.text.isBlank())text else input.text+" "+text)}}
+    // 按住说话：任务在跑时松手就是插话（整句「停止」按停止处理），不在跑时接在输入框后面；拖到改一改总是填进输入框
+    val voiceHold=rememberVoiceHold(onDone={ text, edit ->
+        when(val r=dev.hoshino.bridge.voice.VoiceRouting.route(text,input.text,running,edit)){
+            is dev.hoshino.bridge.voice.VoiceRouting.Route.Fill->input=TextFieldValue(r.text,androidx.compose.ui.text.TextRange(r.text.length))
+            is dev.hoshino.bridge.voice.VoiceRouting.Route.Interject->vm.interject(r.text)
+            dev.hoshino.bridge.voice.VoiceRouting.Route.Stop->{vm.stop();vm.toast("已按你说的停止当前任务")}
+        }
+    },onProblem={vm.toast(it)})
     var showTier by remember { mutableStateOf(false) }
     var showRisk by remember { mutableStateOf(false) }
     var showShizuku by remember { mutableStateOf(false) }
@@ -247,7 +254,6 @@ fun ChatScreen(
             // ---------------- 顶栏
             DiySlot("topbar",onNavigate={navigate(it)},onPrompt={input=TextFieldValue(it)}) { Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconBtn(HIcons.Menu, stringResource(R.string.cd_sidebar), { scope.launch { drawer.open() } })
-                app.hoshino.harness.ui.components.HButton("语音",{runCatching{voice.launch(android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))}.onFailure{vm.toast("系统没有可用的语音识别应用")}},compact=true)
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(current?.title ?: stringResource(R.string.new_session), style = HoshinoTheme.type.bodyMedium, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -332,6 +338,8 @@ fun ChatScreen(
                     approval = approval,
                     onOpenApproval = { showApproval = true },
                     summarizing = currentId != null && currentId in summarizingSessions,
+                    voice = voiceHold,
+                    onVoiceProblem = { vm.toast(it) },
                 )
                 }
             }

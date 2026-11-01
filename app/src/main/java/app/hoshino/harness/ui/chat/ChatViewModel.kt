@@ -295,6 +295,18 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch(errors) { client.stop(id) }
     }
 
+    /**
+     * 语音插话：任务在跑时按住说话松手，整句直接走 dsh 原生插话（`session/prompt mode=steer`），
+     * 和排队消息里的「插话」同一条路；内核没收下（这一轮刚结束）时由 [app.hoshino.harness.core.SteerState.Deferred] 排到下一条。
+     */
+    fun interject(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val id = _currentId.value ?: return send(trimmed)
+        viewModelScope.launch(errors) { client.steer(id, trimmed) }
+        _messages.tryEmit("已作为插话交给当前任务")
+    }
+
     fun steer(queuedId: String) {
         val id = _currentId.value ?: return
         val q = session.value.queued.firstOrNull { it.id == queuedId } ?: return
