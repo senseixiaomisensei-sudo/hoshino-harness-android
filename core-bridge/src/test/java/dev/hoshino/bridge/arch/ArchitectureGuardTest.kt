@@ -13,7 +13,7 @@ import java.io.File
  * 1. 桥接层（core-bridge，`dev.hoshino.bridge`）不认识 App（`app.hoshino.harness`）：下层不引用上层。
  * 2. App 的内核适配层（`app.hoshino.harness.core`）不引用界面（`app.hoshino.harness.ui`）：AGENTS.md「UI 层不包含任何 Agent 业务逻辑」反过来也成立。
  * 3. 能力（手机、网页、记忆、知识……，`app.hoshino.harness.<能力>` 与 `dev.hoshino.bridge.<能力>`）不引用界面，能力之间互不引用。
- * 4. 纯逻辑包（`dev.hoshino.bridge.eval`、`dev.hoshino.bridge.metrics`）不碰 Android API，JVM 单测直接跑。
+ * 4. 纯逻辑包（`dev.hoshino.bridge.eval`、`dev.hoshino.bridge.metrics`、`dev.hoshino.bridge.voice`）不碰 Android API，JVM 单测直接跑。
  * 5. 执行入口唯一：无障碍手势、全局动作、输入注入这些低层动作只能出现在登记过的驱动文件里（RT13：一切手机动作经执行入口 + 审批）。
  *    新增驱动要在 [INPUT_DRIVERS] 里登记，评审时一眼看得到。
  *
@@ -128,7 +128,7 @@ class ArchitectureGuardTest {
     private companion object {
         /** 能力包（App 与桥接层两边都按这个名单查）。新增能力时追加。 */
         val CAPABILITIES = listOf("phone", "web", "memory", "knowledge", "skills", "schedule")
-        val PURE = listOf("eval", "metrics")
+        val PURE = listOf("eval", "metrics", "voice")
         val STRING = Regex(""""(?:[^"\\]|\\.)*"""")
         val ANDROID = Regex("""\b(import\s+)?(android|androidx)\.[a-z]""")
         val INPUT = Regex("""\b(dispatchGesture|performGlobalAction|injectInputEvent)\b""")

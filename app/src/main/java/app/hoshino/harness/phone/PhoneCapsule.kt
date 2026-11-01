@@ -250,6 +250,9 @@ object PhoneCapsule {
         private val autoTakeover = AutoTakeoverModel()
         private var autoJob: Job? = null
         private val doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout().toLong()
+        private val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
+        /** m2.10：长按悬浮球说话（拖到改一改 / 取消），松开发给此刻对着的那件事。 */
+        private val capsuleVoice = CapsuleVoice(ctx, wm, scope, onSend = { deliver(it, voice = true) }, onEdit = { editSpoken(it) }, toast = { toast(it) })
 
         /** Which display the preview is bound to, and whether through Bitmaps (fallback) or the zero-copy relay. */
         private var bound: AgentDisplay? = null
@@ -365,6 +368,8 @@ object PhoneCapsule {
             if (d.changed) {
                 if (d.shown && !dotAdded) { runCatching { wm.addView(dot, dotParams); dotAdded = true }; scheduleFade() }
                 if (!d.shown) {
+                    // 胶囊收起（进了 Hoshino、打开应用内虚拟屏、锁屏）：说到一半的话丢掉、麦克风放开，不和应用内的输入栏抢
+                    capsuleVoice.abort()
                     // Screen off / locked: nobody can operate the picture any more, so hand back before hiding.
                     val own = ownApp()
                     if (!own && controller.manual.active.value != null) controller.endManualTakeover()
@@ -382,6 +387,8 @@ object PhoneCapsule {
 
         private fun render(s: PhoneTaskState, count: Int, takeover: PhoneTakeover.Pending?, manual: Boolean) {
             val needsYou = count > 0 || s.status == PhoneTaskState.Status.NeedsUser || s.status == PhoneTaskState.Status.Approval || takeover != null
+            // 说着话时它换成「你来处理」：这段话直接丢掉（不憋着发出去），麦克风放开
+            if (takeover != null && capsuleVoice.active) capsuleVoice.abort("这一步要你来处理，刚才的话没有发出去")
             ring.setStroke(px(3), when { needsYou || manual || s.status == PhoneTaskState.Status.WaitingUnlock -> ORANGE; s.status == PhoneTaskState.Status.Working -> GREEN; else -> GREY })
             badge.text = if (count > 0) count.toString() else ""
             badge.background = if (count > 0) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(ORANGE) } else null
@@ -881,13 +888,35 @@ object PhoneCapsule {
             if (text.isEmpty()) return
             input.setText("")
             focusable(false)
-            questions.value.firstOrNull()?.let { answer(it, text); return }
+            deliver(text, voice = false)
+        }
+
+        /**
+         * 发给此刻对着的那件事：有待回答的问题就回答；任务在跑就插话（语音说的整句「停止」按停止处理）；否则作为新消息发出。
+         * 面板输入和长按说话共用。
+         */
+        private fun deliver(text: String, voice: Boolean) {
+            questions.value.firstOrNull()?.let { answer(it, text); if (voice) toast("已回答：" + text.take(20)); return }
             val sid = controller.state.value.sessionId ?: Hoshino.client.preferredSessionId ?: return toast("先在 Hoshino 里开一个对话")
             scope.launch(Dispatchers.IO) {
                 val running = Hoshino.client.sessions.value.firstOrNull { it.id == sid }?.running == true
+                if (voice && running && dev.hoshino.bridge.voice.VoiceRouting.isStop(text)) {
+                    withContext(Dispatchers.Main) { stopTask(); toast("已按你说的停止当前任务") }
+                    return@launch
+                }
                 runCatching { if (running) Hoshino.client.steer(sid, text) else Hoshino.client.send(sid, text, emptyList(), options(sid)) }
+                    .onSuccess { if (voice) withContext(Dispatchers.Main) { toast((if (running) "已插话：" else "已发送：") + text.take(20)) } }
                     .onFailure { withContext(Dispatchers.Main) { toast("没有发出去：" + (it.message ?: "")) } }
             }
+        }
+
+        /** 长按说话拖到「改一改」：打开面板、把字放进输入框，接着改再发。 */
+        private fun editSpoken(text: String) {
+            if (!cardAdded) expand(withControls = true) else if (!controlsShown) showControls(true)
+            input.setText(text)
+            input.setSelection(text.length)
+            focusable(true)
+            input.requestFocus()
         }
 
         private fun options(sid: String): TurnOptions {
@@ -963,15 +992,41 @@ object PhoneCapsule {
             val taps = TapClassifier(touchSlop.toFloat(), doubleTapTimeout)
             var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
             var pending: Job? = null
+            var longPress: Job? = null
+            var talking = false
             dot.setOnTouchListener { _, e ->
                 val now = e.eventTime
+                // m2.10：长按（没挪动）开始说话；说话时手指移动只用来选落点，不拖球，抬起即松开
+                if (talking) {
+                    when (e.actionMasked) {
+                        MotionEvent.ACTION_MOVE -> capsuleVoice.move(e.rawX, e.rawY)
+                        MotionEvent.ACTION_UP -> { talking = false; capsuleVoice.end(); taps.cancel(); scheduleFade() }
+                        MotionEvent.ACTION_CANCEL -> { talking = false; capsuleVoice.abort(); taps.cancel() }
+                    }
+                    return@setOnTouchListener true
+                }
                 when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { pending?.cancel(); taps.down(now, e.rawX, e.rawY); downX = e.rawX; downY = e.rawY; startX = dotParams.x; startY = dotParams.y; dot.alpha = 1f; fadeJob?.cancel() }
+                    MotionEvent.ACTION_DOWN -> {
+                        pending?.cancel(); taps.down(now, e.rawX, e.rawY); downX = e.rawX; downY = e.rawY; startX = dotParams.x; startY = dotParams.y; dot.alpha = 1f; fadeJob?.cancel()
+                        longPress?.cancel()
+                        longPress = scope.launch {
+                            delay(longPressTimeout)
+                            if (taps.dragging || capsuleVoice.active) return@launch
+                            // 长按到点：无论能不能说，这一下都不再算单击/双击
+                            taps.cancel()
+                            if (capsuleVoice.begin(dotParams.y, dot.height)) {
+                                talking = true
+                                dot.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                            }
+                        }
+                    }
                     MotionEvent.ACTION_MOVE -> if (taps.move(e.rawX, e.rawY)) {
+                        longPress?.cancel()
                         dotParams.x = startX + (e.rawX - downX).toInt(); dotParams.y = startY + (e.rawY - downY).toInt()
                         runCatching { wm.updateViewLayout(dot, dotParams) }
                     }
                     MotionEvent.ACTION_UP -> {
+                        longPress?.cancel()
                         val wasDrag = taps.dragging
                         when (taps.up(now)) {
                             TapClassifier.Click.Double -> { if (cardAdded) collapse(); scheduleFade() }
@@ -984,7 +1039,7 @@ object PhoneCapsule {
                         }
                         if (wasDrag) snap() else scheduleFade()
                     }
-                    MotionEvent.ACTION_CANCEL -> { if (taps.dragging) snap(); taps.cancel() }
+                    MotionEvent.ACTION_CANCEL -> { longPress?.cancel(); if (taps.dragging) snap(); taps.cancel() }
                 }
                 true
             }
@@ -1020,6 +1075,7 @@ object PhoneCapsule {
         private fun toast(text: String) { Toast.makeText(ctx, text, Toast.LENGTH_SHORT).show() }
 
         fun dispose() {
+            capsuleVoice.abort()
             hideJob?.cancel()
             visibility.reset()
             if (controller.manual.active.value != null) controller.endManualTakeover()

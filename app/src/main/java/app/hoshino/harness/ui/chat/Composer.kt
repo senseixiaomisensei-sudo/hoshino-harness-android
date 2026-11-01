@@ -122,6 +122,9 @@ fun Composer(
     approval: app.hoshino.harness.core.ApprovalState? = null,
     onOpenApproval: () -> Unit = {},
     summarizing: Boolean = false,
+    /** 按住说话（null 时只能打字）。 */
+    voice: VoiceHoldController? = null,
+    onVoiceProblem: (String) -> Unit = {},
 ) {
     val c = HoshinoTheme.colors
     val t = HoshinoTheme.type
@@ -206,6 +209,8 @@ fun Composer(
             }
         }
 
+        // ---- 按住说话时的听写卡片
+        if (voice != null) VoiceFloat(voice, running)
         // ---- 输入卡
         Column(Modifier.fillMaxWidth().hairlineCard(c.surface, c.line)) {
             if (state.attachments.isNotEmpty()) {
@@ -276,6 +281,7 @@ fun Composer(
                 Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onOpenContext), contentAlignment = Alignment.Center) {
                     UsageRing(contextFraction, size = 18.dp)
                 }
+                if (voice != null) VoiceMicButton(voice, onVoiceProblem)
                 Spacer(Modifier.width(4.dp))
                 val canSend = value.text.isNotBlank() || state.attachments.isNotEmpty()
                 val showStop = running && !canSend

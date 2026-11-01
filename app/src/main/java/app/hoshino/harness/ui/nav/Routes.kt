@@ -6,6 +6,8 @@ object Routes {
     const val M2 = "settings/m2"
     const val APPEARANCE = "settings/appearance"
     const val MODELS = "settings/models"
+    /** 设置 › 模型 › 语音转文字（按住说话用的转写模型，单独一种用途）。 */
+    const val SPEECH = "settings/speech"
     const val PROVIDER = "settings/provider/{id}"
     fun provider(id: String) = "settings/provider/$id"
     const val PRESETS = "settings/presets"

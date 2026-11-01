@@ -32,6 +32,7 @@ import app.hoshino.harness.ui.extensions.PluginsScreen
 import app.hoshino.harness.ui.extensions.SkillsScreen
 import app.hoshino.harness.ui.nav.Routes
 import app.hoshino.harness.ui.settings.AboutScreen
+import app.hoshino.harness.ui.settings.SpeechModelScreen
 import app.hoshino.harness.ui.settings.AppearanceScreen
 import app.hoshino.harness.ui.settings.CredentialsScreen
 import app.hoshino.harness.ui.settings.PhoneSetupScreen
@@ -110,6 +111,7 @@ fun HoshinoApp() {
             custom.raw.optJSONArray("pages")?.let{pages->for(i in 0 until pages.length()){val page=pages.getJSONObject(i);composable(page.getString("route")){PageScaffold(page.getString("title"),back){DiyNode(page.getJSONObject("root"),custom.raw,go)}}}}
             composable(Routes.APPEARANCE) { AppearanceScreen(app, back) }
             composable(Routes.MODELS) { ModelsScreen(viewModel(), back, go) }
+            composable(Routes.SPEECH) { SpeechModelScreen(back) }
             composable(Routes.PROVIDER, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
                 ProviderEditScreen(viewModel(), entry.arguments?.getString("id") ?: "", back)
             }

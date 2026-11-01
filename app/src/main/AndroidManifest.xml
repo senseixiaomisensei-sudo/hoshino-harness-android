@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 按住说话：只在按住时录音，录音不保存（m2.10 语音输入）。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -8,6 +10,8 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <queries><package android:name="moe.shizuku.privileged.api" /></queries>
+    <!-- 安卓 11 起要声明查询识别服务，SpeechRecognizer.isRecognitionAvailable 才看得见手机自带识别。 -->
+    <queries><intent><action android:name="android.speech.RecognitionService" /></intent></queries>
     <!-- m2.8 phone control: only granted by the helper (pm grant) after the user ticks it in the setup wizard; used to turn wireless debugging back on when the user allowed that. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <!-- m2.8 phone control: list launcher apps for phone_list_apps / phone_launch_app. -->

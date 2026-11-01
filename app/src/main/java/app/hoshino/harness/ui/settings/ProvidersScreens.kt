@@ -103,6 +103,15 @@ fun ModelsScreen(vm: ConfigViewModel, onBack: () -> Unit, onNavigate: (String) -
                 ListRow(name, value = label(ref), showChevron = true, onClick = { routeSlot = i })
             }
         }
+        SectionLabel("语音转文字")
+        GroupCard {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val voice = remember { app.hoshino.harness.voice.VoiceInput.of(ctx) }
+            val speech by voice.settings.choice.collectAsStateWithLifecycle()
+            val silent by voice.settings.systemSilent.collectAsStateWithLifecycle()
+            val summary = remember(speech, silent, providers) { speechSummary(speech, voice.capability(), voice.endpoints(keys = false)) }
+            ListRow("按住说话用的模型", value = summary, icon = HIcons.Mic, showChevron = true, onClick = { onNavigate(Routes.SPEECH) })
+        }
         Text("每个模型的默认推理等级在供应商详情中设置；输入框中可临时切换。", style = HoshinoTheme.type.caption, color = c.text3, modifier = Modifier.padding(20.dp))
     }
 
