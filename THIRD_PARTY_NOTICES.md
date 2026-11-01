@@ -143,3 +143,16 @@ Copyright 2026 wangzan101
 - ONNX 导出与托管：RapidOCR（https://github.com/RapidAI/RapidOCR ，Apache License 2.0），固定到 https://huggingface.co/SWHL/RapidOCR 的提交 `1cfba2e90fc938db55889873735088de210cc173`
 - 使用方式：**不随 APK 分发**；用户在「设置手机操作」里点下载时才获取，按 SHA-256 校验（det `d2a7720d…f49da9`，rec `48fc40f2…83683b`，完整值见 `app/src/main/java/app/hoshino/harness/phone/ocr/OcrModels.kt`）。字符表取自识别模型自带的 `character` 元数据。
 - 本仓库实现的前后处理（DB 后处理、CTC 解码、缩放归一化）按 PaddleOCR/RapidOCR 公开的参数独立编写：`app/src/main/java/app/hoshino/harness/phone/ocr/OcrPipeline.kt`。
+
+## Mika（续）：关于页检查更新与 skill_save 加固（分支 feat/m2.10-about-update-skillsave，参照 Mika v0.1.27 / `279a5ca`）
+
+- 项目与许可同上文「Mika」段：Apache License 2.0，全文见 `licenses/mika-LICENSE`；NOTICE：`Mika` / `Copyright 2026 wangzan101`。
+- 被移植或改写的文件头部保留：
+  `// Portions derived from Mika (https://github.com/wangzan101/mika), Copyright 2026 wangzan101, Apache-2.0. Modified by Hoshino Harness contributors.`
+- 文件清单（Mika 源文件 → 本仓库文件）：
+  - `app/src/main/java/com/wangzan101/mika/about/Releases.kt`（GitHub Releases 解析）→ `app/src/main/java/app/hoshino/harness/about/Releases.kt`（改为读 `releases` 列表、含预发布、按 Release 说明里的 versionCode 比较、只选 `*-arm64-v8a.apk`；kotlinx.serialization 换成 org.json）
+  - `app/src/main/java/com/wangzan101/mika/about/ApkIntegrity.kt`（地址、大小、SHA-256、签名证书核对）→ `app/src/main/java/app/hoshino/harness/about/ApkIntegrity.kt`（加包名与 versionCode 核对，改为纯函数）
+  - `app/src/main/java/com/wangzan101/mika/about/UpdateChecker.kt`、`ApkUpdater.kt`（检查、下载、安装前核对、交系统安装器）→ `app/src/main/java/app/hoshino/harness/about/AppUpdates.kt`（DownloadManager 换成进程内 HttpURLConnection 下载，安装走 PackageInstaller 会话 + 现有 `M2InstallReceiver`）
+  - `app/src/test/.../about/*Test.kt` 的测试思路 → `app/src/test/java/app/hoshino/harness/about/AppUpdateTest.kt`
+  - `core/src/main/kotlin/com/wangzan101/mika/core/skills/SkillDrafter.kt`（`validate`：名字/描述/五个小节/长度/工具名）、`core/memory/SensitiveFilter.kt`、`core/record/Redactor.kt`（敏感内容规则）、`core/skills/PersonalSkills.kt`（`version` = 原文 SHA-256 前 12 位）、`core/general/SkillSave.kt`（内置名保护、改已有须带 version、写后读回核对才回 ok）→ `plugins/hoshino-self/skill-check.ts` 与 `plugins/hoshino-self/index.ts` 的 `create-skill`（TypeScript 改写）
+  - `core/src/main/resources/prompts/system/principles.md` 新增的一条「没有结果确认就不说已经建好/存好/改好」→ `plugins/hoshino-m2/index.ts` 的 `hoshino-tool-protocol` 段（措辞压缩以守住 EV3 预算门）
