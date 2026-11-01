@@ -9,6 +9,7 @@ import '@deepseek-ai/dsh-api-session-controller';
 import type {} from '../hoshino-self/index.js';
 import { providerBaseURL } from './provider-config.js';
 import { installAnthropicCompatFetch, setThirdPartyAnthropicBases } from './anthropic-compat.js';
+import { installStreamGuardFetch } from './stream-guard.js';
 import { installHostedSearchFetch, setHostedSearchRoutes } from './hosted-search.js';
 import { buildProviderRoutes } from './routes.js';
 export const name = 'android-api';
@@ -21,6 +22,8 @@ export async function apply(ctx: Context): Promise<void> {
     // pi-ai exports ./api/<file>; the Anthropic wire file is anthropic-messages. Warm-up only: a failure here must never stop the kernel.
     const {map, search} = buildProviderRoutes(providers);
     await Promise.all([...new Set(Object.values(map).map(r=>String((r as {api?:string}).api)))].map(api=>import('@earendil-works/pi-ai/api/'+api).catch(()=>undefined)));
+    // Innermost wrapper (installed first): a reply whose end reason arrived survives a reset before [DONE] (m2.10 T4).
+    installStreamGuardFetch();
     installAnthropicCompatFetch();
     installHostedSearchFetch();
     setThirdPartyAnthropicBases(providers.filter(p=>p.type==='anthropic').map(p=>{try{return providerBaseURL(p.type,p.baseURL);}catch{return '';}}));
