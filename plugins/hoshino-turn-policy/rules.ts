@@ -107,6 +107,10 @@ const QUOTA = ['insufficient_quota', 'quota', 'balance', 'billing', 'credit', 'u
 const CONTEXT = ['context length', 'context_length', 'context window', 'maximum context', 'too many tokens', 'prompt is too long', 'input is too long', 'reduce the length', '上下文长度', '超出上下文', '输入过长'];
 const REFUSED = ['content_filter', 'content policy', 'safety', 'data_inspection_failed', '敏感', '内容安全', '违规'];
 const NETWORK = ['fetch failed', 'network', 'socket', 'econnreset', 'econnrefused', 'etimedout', 'enotfound', 'eai_again', 'timeout', 'timed out', 'terminated', 'connection'];
+// m2.10 T4 (Mika 0.1.24 2d5ca72): a connection the upstream dropped mid-reply (pi-ai/undici wording) is not a setup problem.
+const DISCONNECT = ['terminated', 'econnreset', 'socket hang up', 'other side closed', 'premature close', 'stream ended', 'und_err_socket', 'connection reset'];
+/** The request reached the model service and the service (or a relay) hung up before the reply was finished. */
+export const isDisconnect = (message: string) => has(String(message ?? '').toLowerCase(), DISCONNECT);
 export type FailureFacts = { code?: string; status?: number; message?: string };
 export function classify(f: FailureFacts): FailureKind {
   const lower = String(f.message ?? '').toLowerCase();
@@ -148,7 +152,10 @@ export function userReason(kind: FailureKind, model: string, detail: string): st
     case 'context_too_long': return '对话内容超出了模型的上下文长度，自动压缩后仍放不下。可以在上下文用量里点「压缩」，或换用上下文更长的模型、把任务拆小。';
     case 'refused': return '模型拒绝处理这段内容（内容安全策略）。请调整任务描述或换一个模型。';
     case 'rate_limited': return '模型服务限流，重试后仍然请求太频繁。请稍后再试，或检查账户的调用频率限制；配置备用模型后会自动换用。';
-    case 'network': return '连接模型服务失败，重试后仍然不通。请检查网络、代理和 Base URL。';
+    // Honest wording: a mid-reply drop is the upstream's doing, and a connect failure is the network; neither is the Base URL.
+    case 'network': return isDisconnect(detail)
+      ? '连接在上游被断开：模型服务的回复还没发完，网络连接就被对方断了，自动重试后仍然如此。多半是服务商或中转站一时故障，稍后再发一次即可；一直这样可以换个时段，或在 设置 › 模型 › 路由 配置备用模型。'
+      : '连不上模型服务（网络不通），自动重试后仍然如此。请检查手机网络和代理；这个服务商在国内可能需要代理，或换一个能直连的中转站。';
     case 'server': return '模型服务暂时出错，重试后仍未恢复。请稍后再试，或在 设置 › 模型 › 路由 配置备用模型。';
     case 'bad_response': return `模型服务返回了无法使用的结果${detail ? `（${detail}）` : ''}。请检查 Base URL 和接口类型（OpenAI 兼容 / Anthropic）是否匹配。`;
     default: return detail ? `请求没有完成：${detail}` : '请求没有完成，内核没有返回可识别的原因。';
